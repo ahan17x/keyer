@@ -348,4 +348,41 @@ module loom_core (
     assign dbg_tid    = tid;
     assign dbg_pc     = pc_cur;
     assign dbg_ir     = ir;
+
+`ifdef FORMAL
+    // Properties checked by formal/core.sby. f_past_valid guards $past.
+    reg f_past_valid = 1'b0;
+    always @(posedge clk) f_past_valid <= 1'b1;
+    always @(*) if (!f_past_valid) assume(!rst_n);
+
+    integer ft;
+    always @(posedge clk) if (f_past_valid && $past(rst_n) && rst_n) begin
+        for (ft = 0; ft < 2; ft = ft + 1) begin
+            // P1. A pending tick is never lost: it clears only through this
+            //     thread's completed WAITT/CLRT, a SETT, or a host soft reset.
+            if ($past(tick[ft]) && !$past(exec && do_clrt && tid == ft)
+                && !$past(exec && do_sett && tid == ft) && !$past(host_rst[ft]))
+                assert(tick[ft]);
+            // P2. A disabled timer (period 0) never ticks.
+            if ($past(period[ft] == 16'd0) && !$past(exec && do_sett && tid == ft)
+                && $past(!tick[ft]))
+                assert(!tick[ft]);
+            // P3. The PC changes only when that thread commits an instruction
+            //     or the host writes it while stopped.
+            if (!$past(commit && tid == ft) && !$past(host_pc_we[ft] && !running[ft]))
+                assert(pc[ft] == $past(pc[ft]));
+            // P4. A thread starts only through the host or the other thread's START.
+            if (!$past(running[ft]) && running[ft])
+                assert($past(host_run_we && host_run_val[ft]) || $past(exec && do_start && tid != ft));
+            // P5. Halted implies not running, unless the host restarted it this cycle.
+            if (halted[ft] && !$past(host_run_we))
+                assert(!running[ft]);
+        end
+        // P6. Thread parity: the executing thread alternates every cycle.
+        assert(tid != $past(tid));
+        // P7. Only the executing thread's slot can commit, and a blocked
+        //     thread's PC does not move.
+        if ($past(exec && !done)) assert(pc[$past(tid)] == $past(pc_cur));
+    end
+`endif
 endmodule

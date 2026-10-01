@@ -6,5 +6,10 @@ test/*.fst
 test/*.vcd
 *.hex
 *.lst
-synth/
+synth/*.log
+synth/run*.ys
 .pytest_cache/
+formal/fifo_*/
+formal/pins/
+formal/core*/
+formal/*.out

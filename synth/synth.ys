@@ -1,0 +1,9 @@
+# Area estimate against the IHP CMOS5L standard-cell library (typ corner).
+read_verilog -I../src ../src/loom_fifo.v ../src/loom_imem.v ../src/loom_pins.v ../src/loom_core.v ../src/loom_host.v ../src/tt_um_ahan17x_loom.v
+hierarchy -check -top tt_um_ahan17x_loom
+proc; flatten; opt -full; memory -nomap; opt; memory_map; opt -full
+techmap; opt -fast
+dfflibmap -liberty LIB
+abc -liberty LIB
+opt_clean
+stat -liberty LIB

@@ -1,0 +1,23 @@
+# loom_fifo: occupancy and first-in-first-out data integrity.
+# Proved on the DEPTH=4 / WIDTH=4 instance; the RTL is parameter-generic.
+[tasks]
+prove
+bmc
+
+[options]
+prove: mode prove
+prove: depth 12
+bmc: mode bmc
+bmc: depth 30
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal loom_fifo.v
+read -formal fifo_props.sv
+prep -top fifo_props
+
+[files]
+../src/loom_fifo.v
+fifo_props.sv
