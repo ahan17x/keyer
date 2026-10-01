@@ -230,6 +230,37 @@ def test_setpin_visible_next_cycle_and_sync_latency():
     assert m.threads[0].regs[0] == 1
 
 
+def test_sync_latency_is_exactly_two_cycles():
+    """A pad change during cycle c is visible to level() from cycle c+2, on
+    both thread parities (this is where a one-cycle error would hide)."""
+    for start_cycle in (6, 7):
+        m = Machine(trace=True)
+        words, syms = asm("""
+        t0: inr r0, ui3
+            bra t0
+        t1: inr r0, ui3
+            bra t1
+        """)
+        m.load(words)
+        m.host_set_pc(1, syms["t1"])
+        m.host_run(0, True)
+        m.host_run(1, True)
+        m.ext_ui = 0
+        m.run(start_cycle)
+        m.ext_ui = 0x08                     # pad high from cycle start_cycle
+        seen = {}
+        for _ in range(8):
+            c = m.cycle
+            m.step()
+            r = m.trace[-1]
+            if isa.disasm(r.word).startswith("INR"):
+                seen[c] = m.threads[c & 1].regs[0]
+        assert len(seen) >= 3
+        # samples at start_cycle and start_cycle+1 still read 0; from +2 on they read 1
+        for c, v in seen.items():
+            assert v == (1 if c >= start_cycle + 2 else 0), (start_cycle, c, v)
+
+
 def test_wait_edge():
     m = Machine(trace=True)
     words, _ = asm("""

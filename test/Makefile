@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v
+PROJECT_SOURCES = loom_fifo.v loom_imem.v loom_pins.v loom_core.v loom_host.v tt_um_ahan17x_loom.v
 
 ifneq ($(GATES),yes)
 
@@ -31,6 +31,12 @@ endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
+# Waveform dump is opt-in: make DUMP=1
+ifeq ($(DUMP),1)
+COMPILE_ARGS    += -DDUMP
+endif
+# The assembler, ISS and protocol models live in ../tools
+export PYTHONPATH := $(PWD)/../tools:$(PYTHONPATH)
 
 # Include the testbench sources:
 VERILOG_SOURCES += $(PWD)/tb.v

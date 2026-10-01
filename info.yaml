@@ -1,56 +1,58 @@
 # Tiny Tapeout project information
 project:
-  title:        ""      # Project title
-  author:       ""      # Your name
-  discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  ""      # One line description of what your project does
-  language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
-  clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
+  title:        "Loom protocol emulator"
+  author:       "Ahan Shah"
+  discord:      ""
+  description:  "Two-thread pin-oriented CPU that bit-bangs UART, SPI, I2C and more from firmware loaded over SPI"
+  language:     "Verilog"
+  clock_hz:     50000000
 
-  # How many tiles your design occupies? A single tile is about 167x108 uM.
-  tiles: "1x1"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2 or 8x2
+  # Jane Street protocol emulator competition allocation (IHP CMOS5L).
+  tiles: "6x4"
 
-  # Your top module name must start with "tt_um_". Make it unique by including your github username:
-  top_module:  "tt_um_example"
+  top_module:  "tt_um_ahan17x_loom"
 
-  # List your project's source files here.
-  # Source files must be in ./src and you must list each source file separately, one per line.
-  # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
+  # Source files must be in ./src and listed one per line.
   source_files:
-    - "project.v"
+    - "loom_isa.vh"
+    - "loom_fifo.v"
+    - "loom_imem.v"
+    - "loom_pins.v"
+    - "loom_core.v"
+    - "loom_host.v"
+    - "tt_um_ahan17x_loom.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
-# This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
-  ui[7]: ""
+  ui[0]: "SCK (host SPI)"
+  ui[1]: "MOSI (host SPI)"
+  ui[2]: "CS_n (host SPI)"
+  ui[3]: "IN3 (firmware pin 11)"
+  ui[4]: "IN4 (firmware pin 12)"
+  ui[5]: "IN5 (firmware pin 13)"
+  ui[6]: "IN6 (firmware pin 14)"
+  ui[7]: "IN7 (firmware pin 15)"
 
   # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
+  uo[0]: "MISO (host SPI)"
+  uo[1]: "IRQ"
+  uo[2]: "OUT2 (firmware pin 18)"
+  uo[3]: "OUT3 (firmware pin 19)"
+  uo[4]: "OUT4 (firmware pin 20)"
+  uo[5]: "OUT5 (firmware pin 21)"
+  uo[6]: "OUT6 (firmware pin 22)"
+  uo[7]: "OUT7 (firmware pin 23)"
 
   # Bidirectional pins
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
+  uio[0]: "IO0 (firmware pin 0)"
+  uio[1]: "IO1 (firmware pin 1)"
+  uio[2]: "IO2 (firmware pin 2, I2C SCL in the demo firmware)"
+  uio[3]: "IO3 (firmware pin 3, I2C SDA in the demo firmware)"
+  uio[4]: "IO4 (firmware pin 4)"
+  uio[5]: "IO5 (firmware pin 5)"
+  uio[6]: "IO6 (firmware pin 6)"
+  uio[7]: "IO7 (firmware pin 7)"
 
 # Do not change!
 yaml_version: 6

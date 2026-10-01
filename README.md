@@ -1,42 +1,59 @@
-![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
+![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg)
 
-# Tiny Tapeout Verilog Project Template
+# Loom: a protocol emulator ASIC
 
-- [Read the documentation for project](docs/info.md)
+Entry for the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/).
+IHP 130 nm CMOS5L through Tiny Tapeout, 6x4 tiles.
 
-## What is Tiny Tapeout?
+Loom is a two-thread, 16-bit, pin-oriented CPU. A host loads a program over
+SPI; the threads bit-bang UART, SPI, I2C (and whatever else fits the timing)
+on the chip's 24 pins with cycle-exact timing. See [docs/info.md](docs/info.md)
+for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 
-Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
+## Layout
 
-To learn more and get started, visit https://tinytapeout.com.
+| Path | What |
+|---|---|
+| `src/` | Verilog RTL. `tt_um_ahan17x_loom.v` is the top. `loom_isa.vh` is generated. |
+| `docs/` | Datasheet source (`info.md`) and the ISA reference (`isa.md`). |
+| `tools/loom_isa.py` | Encoding table, the single source of truth for opcodes. |
+| `tools/loomasm.py` | Assembler. |
+| `tools/loomsim.py` | Cycle-exact instruction-set simulator (the golden model). |
+| `tools/protomodels.py` | UART / SPI / I2C protocol models used by the tests. |
+| `tools/test_*.py` | pytest suites for the assembler, ISS and firmware. |
+| `fw/` | Firmware: `uart.s`, `spi_master.s`, `i2c_master.s`. |
+| `test/` | cocotb tests, including the ISS-vs-RTL lockstep harness. |
+| `synth/` | Yosys area-estimate scripts against the CMOS5L liberty. |
 
-## Set up your Verilog project
+## Running the tests
 
-1. Add your Verilog files to the `src` folder.
-2. Edit the [info.yaml](info.yaml) and update information about your project, paying special attention to the `source_files` and `top_module` properties. If you are upgrading an existing Tiny Tapeout project, check out our [online info.yaml migration tool](https://tinytapeout.github.io/tt-yaml-upgrade-tool/).
-3. Edit [docs/info.md](docs/info.md) and add a description of your project.
-4. Adapt the testbench to your design. See [test/README.md](test/README.md) for more information.
+```sh
+pip install cocotb pytest
+python3 -m pytest tools/ -q          # assembler, ISS, firmware on the ISS
+cd test && make                      # cocotb: host interface + lockstep (needs iverilog)
+```
 
-The GitHub action will automatically build the ASIC files using [LibreLane](https://www.zerotoasiccourse.com/terminology/librelane/).
+Regenerate the Verilog opcode header after editing the ISA table:
 
-## Enable GitHub actions to build the results page
+```sh
+python3 tools/loom_isa.py --vh > src/loom_isa.vh
+```
 
-- [Enabling GitHub Pages](https://tinytapeout.com/faq/#my-github-action-is-failing-on-the-pages-part)
+## Verification approach
 
-## Resources
+`tools/loomsim.py` defines the behaviour; the RTL is checked against it cycle
+by cycle from reset by `test/loom_tb.py`, with every host action (program
+load, run/stop, FIFO traffic, pin modes) mirrored from the RTL into the model.
+Protocol correctness is checked by independent models that know only the
+protocol, not the firmware. Constrained-random instruction streams run on both
+threads with random pin activity.
 
-- [FAQ](https://tinytapeout.com/faq/)
-- [Digital design lessons](https://tinytapeout.com/digital_design/)
-- [Learn how semiconductors work](https://tinytapeout.com/siliwiz/)
-- [Join the community](https://tinytapeout.com/discord)
-- [Build your design locally](https://www.tinytapeout.com/guides/local-hardening/)
+## Status
 
-## What next?
+See `WORKLOG.md` for the running log and `PLAN.md` for the plan. This design is
+being built with AI assistance (Claude), with the design decisions reviewed
+and owned by the author.
 
-- [Submit your design to the next shuttle](https://app.tinytapeout.com/).
-- Edit [this README](README.md) and explain your design, how it works, and how to test it.
-- Share your project on your social network of choice:
-  - LinkedIn [#tinytapeout](https://www.linkedin.com/search/results/content/?keywords=%23tinytapeout) [@TinyTapeout](https://www.linkedin.com/company/100708654/)
-  - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
-  - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
-  - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)
+## License
+
+Apache-2.0.

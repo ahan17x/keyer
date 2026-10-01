@@ -84,8 +84,8 @@ class Machine:
         self.uo_out = 0
         self.ext_uio = 0xFF          # external level when we are not driving (pull-ups)
         self.ext_ui = 0
-        self.lvl_hist = [0] * 4      # level(c-1)..level(c-4), newest last
-        self.pad_hist = [0] * 2      # pad(c-1), pad(c-2)
+        self.pad_hist = [0, 0]       # [pad(c-2), pad(c-1)]: the two synchroniser stages
+        self.lvl_hist = [0, 0]       # [level(c-2), level(c-1)]: for edge detection
         self.trace_enabled = trace
         self.trace = []
         self.pin_events = []         # (cycle, uio_out, uio_oe, uo_out) whenever drive changes
@@ -152,7 +152,7 @@ class Machine:
         return uio | (self.ext_ui << 8) | (self.uo_out << 16)
 
     def _level_now(self):
-        synced = self.pad_hist[-2] & 0xFFFF       # pad(c-2)
+        synced = self.pad_hist[0] & 0xFFFF        # pad(c-2), what the second sync flop holds
         return synced | (self.uo_out << 16)
 
     def _pinwrite(self, p, v, st):
@@ -174,12 +174,10 @@ class Machine:
         c = self.cycle
         # pad level during this cycle, then the synchronised level vector
         pad = self.pad()
-        self.pad_hist.append(pad)
-        level = self._level_now()
-        level2 = self.lvl_hist[-2]                 # level(c-2)
-        self.lvl_hist.append(level)
-        del self.pad_hist[0]
-        del self.lvl_hist[0]
+        level = self._level_now()                  # pad(c-2) for pins 0-15
+        level2 = self.lvl_hist[0]                  # level(c-2)
+        self.pad_hist = [self.pad_hist[1], pad]
+        self.lvl_hist = [self.lvl_hist[1], level]
 
         tid = c & 1
         t = self.threads[tid]
