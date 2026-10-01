@@ -29,4 +29,24 @@ Newest entries at the bottom. Times are US Eastern.
   - Flop-based program memory: 18,956 cells, 429,092 um^2. That is the entire usable budget; 4,096 of the 5,302 flops and most of the 3,932 mux2 are the memory. Confirms the SRAM-macro decision.
   - SRAM macro black-boxed: 6,410 cells, 1,190 flops, 114,169 um^2 of standard cells, plus the 28,127 um^2 macro. About a third of the usable area.
   - Scripts in `synth/`. No timing numbers yet (needs the LibreLane flow).
-- Next: cocotb testbench — SPI host register tests, then cycle-by-cycle lockstep of RTL against the ISS from reset, with every host action mirrored from the RTL into the ISS.
+- 04:40 cocotb testbench: `test/tb.v` models the bidirectional pads (uio_in follows the DUT's drive when enabled, else the test's `uio_ext`). `test/loom_tb.py`: pad driver, SPI master, and the `Lockstep` harness: from reset, every cycle it feeds the RTL's exact inputs to the ISS, compares pin drive registers, PCs, timers, running state, the executing instruction and whether it committed, and the register file after each commit; host effects seen at the RTL host interface (IMEM writes, run/stop, PC writes, FIFO pushes/pops, pin mode, FIFO clear, soft reset) are mirrored into the ISS the same cycle.
+- 04:50 Host interface tests pass at SCK = clk/8, clk/16, clk/32: ID, STAT, PINMODE, LEVELS, PINS, IMEM write + read-back, FIFO round trip through a running thread.
+- 05:10 Lockstep found one real bug, in the ISS not the RTL: the simulator's synchroniser gave 1 cycle of input latency instead of 2. UART/SPI tests were parity-insensitive and passed anyway; the I2C clock-stretch wait polls every slot and caught it. Fixed, and added a test that checks the latency on both thread parities.
+- 05:20 All 9 cocotb tests pass: 3 host-interface, 6 lockstep (ALU/branches, pins/timers/delays with two threads, UART loopback T0->T1, SPI master vs slave model, I2C with repeated start + clock stretching + SPI-fed commands, constrained-random programs on both threads with random pin noise). ~5.5 million simulated ns, 53 s.
+- Filled `info.yaml` (6x4, 50 MHz, pinout), `docs/info.md`, README. Committed (ad24a2d). Delivered `loom.zip` (repo without .git).
+- 05:50 Formal (SymbiYosys via `yowasp-sby`, z3, abc), see `formal/README.md`:
+  - `loom_fifo`: occupancy bookkeeping fully proved by k-induction; FIFO data order checked by BMC to depth 20 (DEPTH=4 instance; RTL is parameter-generic). z3 ran out of memory on the 16-deep instance past depth ~20; the small instance covers the same logic.
+  - `loom_pins`: fully proved: open-drain pins are never driven high under any command/host sequence; uo[1:0] fixed; synchroniser latency exactly 2 cycles; edge history exactly 2 cycles.
+  - `loom_core`: 7 properties (tick never lost, disabled timer never ticks, PC only moves on commit/host write, threads start only via host or START, halted implies stopped, thread parity, blocked threads hold PC) proved by abc PDR in 0.1 s. z3 OOMs on the core; yowasp-sby's parser crashes on the abc engine, so `formal/run_core_pdr.sh` runs abc directly.
+- Committed 090f90e. Delivered updated `loom.zip`.
+
+## Status at end of session 1
+
+Done: plan, ISA v0.1 (79 instructions), assembler, cycle-exact ISS (28 Python tests), UART/SPI/I2C firmware verified against protocol models, complete RTL (lint clean), SPI host interface, 9 cocotb tests including cycle-by-cycle lockstep from reset, formal proofs on FIFO/pins/core, Yosys area estimate (114k um^2 logic + 28k um^2 SRAM macro of ~430k usable), info.yaml at 6x4, datasheet draft, README.
+
+Needs Ahan next:
+1. Create the public GitHub repo (from the zip; `git init` is already done, just add the remote and push) and enable Actions + Pages. The `gds` workflow is the first real test of the flow at 6x4; the `test` workflow runs the cocotb suite.
+2. Decide: project name, 2 vs 4 threads, 256 vs 512 words, SPI host interface (all fine to keep).
+3. Sign-up form; teammates.
+
+Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`), the demo-board Python driver, timing report once the action runs, then stretch features (CRC engine, capture buffer, serializer, USB LS).
