@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Loom cocotb tests. Run `make` in this directory (DUMP=1 for a waveform).
+"""Keyer cocotb tests. Run `make` in this directory (DUMP=1 for a waveform).
 
 Two kinds of test:
   1. Host interface: registers, program memory and FIFOs over the SPI slave.
@@ -14,9 +14,9 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge
 
-import loomasm
+import keyerasm
 import protomodels as pm
-from loom_tb import (Lockstep, Pads, SpiMaster, reset, R_CTRL, R_ID, R_IMEM_ADDR,
+from keyer_tb import (Lockstep, Pads, SpiMaster, reset, R_CTRL, R_ID, R_IMEM_ADDR,
                      R_IMEM_DATA, R_INBOX0, R_LEVELS, R_OUTBOX0, R_PINMODE, R_PINS,
                      R_STAT, R_PINOUT)
 
@@ -25,13 +25,13 @@ FW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fw")
 
 def fw(name, symbols=None):
     with open(os.path.join(FW, name)) as f:
-        words, syms, _ = loomasm.assemble(f.read(), symbols=symbols)
-    return loomasm.to_list(words), syms
+        words, syms, _ = keyerasm.assemble(f.read(), symbols=symbols)
+    return keyerasm.to_list(words), syms
 
 
 def asm(src, symbols=None):
-    words, syms, _ = loomasm.assemble(src, symbols=symbols)
-    return loomasm.to_list(words), syms
+    words, syms, _ = keyerasm.assemble(src, symbols=symbols)
+    return keyerasm.to_list(words), syms
 
 
 async def start(dut, period_ns=20):
@@ -48,7 +48,7 @@ async def test_id_and_registers(dut):
     pads = await start(dut)
     for half in (4, 8, 16):                 # SCK = clk/8 (the limit), clk/16, clk/32
         spi = SpiMaster(dut, pads, half=half)
-        assert await spi.read(R_ID, 2) == [0x4C, 0x01], half
+        assert await spi.read(R_ID, 2) == [0x4B, 0x01], half
         assert await spi.read(R_STAT, 1) == [0]
         await spi.write(R_PINMODE, [0xA5])
         assert await spi.read(R_PINMODE, 1) == [0xA5]
@@ -292,8 +292,8 @@ async def test_lockstep_i2c_master(dut):
 @cocotb.test()
 async def test_lockstep_random_programs(dut):
     """Constrained-random instruction streams, both threads, random pin wiggling."""
-    import loom_isa as I
-    rng = random.Random(int(os.environ.get("LOOM_SEED", "1")))
+    import keyer_isa as I
+    rng = random.Random(int(os.environ.get("KEYER_SEED", "1")))
     words = []
     for _ in range(120):
         ins = rng.choice([i for i in I.INSTRUCTIONS

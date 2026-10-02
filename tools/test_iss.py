@@ -1,17 +1,17 @@
-"""pytest for the Loom ISS and assembler. Run: python3 -m pytest tools/ -q"""
+"""pytest for the Keyer ISS and assembler. Run: python3 -m pytest tools/ -q"""
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import loom_isa as isa  # noqa: E402
-import loomasm  # noqa: E402
-from loomsim import Machine  # noqa: E402
+import keyer_isa as isa  # noqa: E402
+import keyerasm  # noqa: E402
+from keyersim import Machine  # noqa: E402
 
 
 def asm(src):
-    words, syms, _ = loomasm.assemble(src)
-    return loomasm.to_list(words), syms
+    words, syms, _ = keyerasm.assemble(src)
+    return keyerasm.to_list(words), syms
 
 
 def boot(src, cycles=0, t1=False, trace=False):
@@ -67,11 +67,11 @@ def test_asm_labels_and_offsets():
 
 def test_asm_range_errors():
     import pytest
-    with pytest.raises(loomasm.AsmError):
+    with pytest.raises(keyerasm.AsmError):
         asm("ldi r0, 300")
-    with pytest.raises(loomasm.AsmError):
+    with pytest.raises(keyerasm.AsmError):
         asm("set 24")
-    with pytest.raises(loomasm.AsmError):
+    with pytest.raises(keyerasm.AsmError):
         asm("bp0 uio0, far\n" + ".org 100\nfar: nop")
 
 

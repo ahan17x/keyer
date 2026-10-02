@@ -1,12 +1,12 @@
 /*
- * Loom: synchronous FIFO, first-word-fall-through (rd_data shows the head).
+ * Keyer: synchronous FIFO, first-word-fall-through (rd_data shows the head).
  * DEPTH must be a power of two. count is 0..DEPTH.
  * A push when full and a pop when empty are ignored.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
 
-module loom_fifo #(
+module keyer_fifo #(
     parameter WIDTH = 8,
     parameter DEPTH = 16,
     parameter AW    = 4

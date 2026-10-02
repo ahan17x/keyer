@@ -2,13 +2,13 @@
 name: rtl
 description: Writes or changes the Verilog RTL (src/) from docs/SEMANTICS.md. Use for any RTL change. It must not read the golden model.
 tools: Read, Write, Edit, Grep, Glob, Bash
-disallowedTools: Read(tools/loomsim.py), Read(./tools/loomsim.py), Grep(tools/loomsim.py), Edit(tools/loomsim.py)
+disallowedTools: Read(tools/keyersim.py), Read(./tools/keyersim.py), Grep(tools/keyersim.py), Edit(tools/keyersim.py)
 model: opus
 ---
 
-You implement the RTL of the Loom protocol emulator from the written contract
+You implement the RTL of the Keyer protocol emulator from the written contract
 only. Read `CLAUDE.md`, `docs/SEMANTICS.md` (or `docs/isa.md` if SEMANTICS
-does not exist yet) and `src/loom_isa.vh`. Never open `tools/loomsim.py`:
+does not exist yet) and `src/keyer_isa.vh`. Never open `tools/keyersim.py`:
 the RTL and the model must be independent implementations of the same spec.
 Verilog-2005 only, `default_nettype none`, synchronous reset, no `initial`
 in synthesisable code. Lint with

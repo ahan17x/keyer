@@ -1,5 +1,5 @@
 /*
- * Loom host interface: SPI slave (mode 0, MSB first) with a register map.
+ * Keyer host interface: SPI slave (mode 0, MSB first) with a register map.
  * See docs/isa.md section 6. SCK must be at most clk / 8.
  *
  * A transaction is: CS_n low, command byte (bit 7 = write, bits 6:0 =
@@ -9,9 +9,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
-`include "loom_isa.vh"
+`include "keyer_isa.vh"
 
-module loom_host (
+module keyer_host (
     input  wire        clk,
     input  wire        rst_n,
     // SPI pads
@@ -154,7 +154,7 @@ module loom_host (
                 2'd3: rd_byte = uo_out;
                 default: rd_byte = 8'd0;
             endcase
-            R_ID:     rd_byte = byte_idx[0] ? 8'h4C : `LOOM_ISA_VERSION;
+            R_ID:     rd_byte = byte_idx[0] ? 8'h4B : `KEYER_ISA_VERSION;
             R_PINOUT: rd_byte = byte_idx[0] ? uio_out : uio_oe;
             default:  rd_byte = 8'd0;
         endcase

@@ -1,4 +1,4 @@
-# loom_fifo. Occupancy (count/empty/full bookkeeping) is fully proved by
+# keyer_fifo. Occupancy (count/empty/full bookkeeping) is fully proved by
 # k-induction; first-in-first-out data integrity (DATA_CHECK) is checked by
 # BMC to depth 20, since an inductive proof would need an invariant over the
 # memory contents. Proved on the DEPTH=4 / WIDTH=4 instance; the RTL is
@@ -17,11 +17,11 @@ bmc: depth 20
 smtbmc z3
 
 [script]
-read -formal loom_fifo.v
+read -formal keyer_fifo.v
 prove: read -formal fifo_props.sv
 bmc: read -formal -DDATA_CHECK fifo_props.sv
 prep -top fifo_props
 
 [files]
-../src/loom_fifo.v
+../src/keyer_fifo.v
 fifo_props.sv

@@ -1,4 +1,4 @@
-// Formal properties for loom_pins: open-drain safety, reserved outputs,
+// Formal properties for keyer_pins: open-drain safety, reserved outputs,
 // synchroniser latency and edge-history correctness.
 `default_nettype none
 module pins_props (
@@ -9,7 +9,7 @@ module pins_props (
 );
     wire [7:0] uio_out, uio_oe, uo_out, od_mask;
     wire [23:0] level, level2;
-    loom_pins dut (
+    keyer_pins dut (
         .clk(clk), .rst_n(rst_n), .ui_in(ui_in), .uio_in(uio_in),
         .uio_out(uio_out), .uio_oe(uio_oe), .uo_out(uo_out),
         .cmd_valid(cmd_valid), .cmd_op(cmd_op), .cmd_pin(cmd_pin), .cmd_data(cmd_data),

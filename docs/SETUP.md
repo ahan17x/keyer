@@ -67,7 +67,7 @@ after the repo had been moved from `~/Claude/loom` to `~/Desktop/loom`.
    (`.venv/bin/cocotb-config`, `yowasp-sby`, `pytest`, `pip`) carry the
    absolute path of the Python they were created with in their `#!` line.
    After the move every one of them failed with
-   `bad interpreter: /Users/.../Claude/loom/.venv/bin/python3: no such file`.
+   `bad interpreter: /Users/.../Claude/keyer/.venv/bin/python3: no such file`.
    Symptoms: cocotb reported `make: cocotb-config: Command not found` and
    `Makefile.sim: No such file or directory`; all three formal checks
    failed, the FIFO one with the misleading "DATA_CHECK define did not reach

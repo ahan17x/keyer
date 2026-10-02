@@ -31,7 +31,7 @@ module tb ();
   wire VGND = 1'b0;
 `endif
 
-  tt_um_ahan17x_loom user_project (
+  tt_um_ahan17x_keyer user_project (
 `ifdef GL_TEST
       .VPWR   (VPWR),
       .VGND   (VGND),

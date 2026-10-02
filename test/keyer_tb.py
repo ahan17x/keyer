@@ -1,11 +1,11 @@
-"""cocotb helpers for the Loom testbench: pad driver, SPI host master, and the
+"""cocotb helpers for the Keyer testbench: pad driver, SPI host master, and the
 lockstep harness that runs the Python ISS cycle by cycle against the RTL.
 """
 
 import cocotb
 from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge
 
-import loomsim
+import keyersim
 
 R_CTRL, R_STAT, R_PC0, R_PC1, R_IMEM_ADDR, R_IMEM_DATA = 0, 1, 2, 3, 4, 5
 R_INBOX0, R_OUTBOX0, R_INBOX1, R_OUTBOX1, R_LEVELS, R_PINMODE = 6, 7, 8, 9, 10, 11
@@ -124,7 +124,7 @@ class Lockstep:
 
     def __init__(self, dut, pads, models=(), check_regs=True):
         self.dut, self.pads, self.models = dut, pads, list(models)
-        self.m = loomsim.Machine(trace=False)
+        self.m = keyersim.Machine(trace=False)
         self.cycle = 0
         self.check_regs = check_regs
         self.retired = 0

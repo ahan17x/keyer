@@ -4,7 +4,7 @@ This file is used to generate your project datasheet.
 
 ## How it works
 
-Loom is a small processor built for bit-banging wire protocols. A host loads a
+Keyer is a small processor built for bit-banging wire protocols. A host loads a
 program over SPI, then two hardware threads run it with cycle-exact timing
 against the chip's 24 I/O pins. The required protocols (UART, SPI, I2C) are
 firmware; so is anything else that fits the timing: the chip stays
@@ -36,7 +36,7 @@ independent UART, SPI and I2C protocol models and constrained-random programs.
 ## How to test
 
 1. Connect the demo board's RP2350 SPI to `ui[0..2]` and `uo[0]`.
-2. Assemble a program with `tools/loomasm.py` (examples in `fw/`).
+2. Assemble a program with `tools/keyerasm.py` (examples in `fw/`).
 3. Write it through the IMEM_ADDR / IMEM_DATA registers, set PCs, write RUN
    bits to CTRL. Feed data through INBOX0/1; collect results from OUTBOX0/1
    (check LEVELS first).

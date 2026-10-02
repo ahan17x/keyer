@@ -1,9 +1,9 @@
-# Loom ISA, version 0.1 (draft, not yet frozen)
+# Keyer ISA, version 0.1 (draft, not yet frozen)
 
-Loom is a two-thread, 16-bit, pin-oriented processor. This document is the
+Keyer is a two-thread, 16-bit, pin-oriented processor. This document is the
 contract between the assembler, the instruction-set simulator (ISS) and the
-RTL. The encoding table in `tools/loom_isa.py` is the single source of truth
-for opcodes; `src/loom_isa.vh` is generated from it.
+RTL. The encoding table in `tools/keyer_isa.py` is the single source of truth
+for opcodes; `src/keyer_isa.vh` is generated from it.
 
 ## 1. Machine model
 
@@ -295,7 +295,7 @@ during the byte following the command.
 | 0x0C | IRQEN | bit0 outbox0 non-empty, bit1 outbox1 non-empty, bit2 HALTED0, bit3 HALTED1, bit4 inbox0 empty, bit5 inbox1 empty | mask |
 | 0x0D | PINS | - | 3 bytes: uio pad levels, ui levels, uo driven values |
 | 0x0E | FIFOCLR | bit0 inbox0, bit1 outbox0, bit2 inbox1, bit3 outbox1 | - |
-| 0x0F | ID | - | 2 bytes: 0x4C ('L'), ISA version |
+| 0x0F | ID | - | 2 bytes: 0x4B ('K'), ISA version |
 | 0x10 | PINOUT | - | 2 bytes: uio_out, uio_oe |
 
 IRQ (`uo[1]`) is the OR of the enabled conditions.

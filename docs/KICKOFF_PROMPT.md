@@ -53,7 +53,7 @@ Do these in order, stopping where it says to stop:
    as decided in D-014; the pin unit (synchroniser latency, edge
    definition, pin-write visibility, open-drain rules); blocking
    instructions; FIFOs; host-interface effects and their timing. Use
-   docs/isa.md and tools/loomsim.py as the starting statement of the
+   docs/isa.md and tools/keyersim.py as the starting statement of the
    semantics and the cocotb lockstep tests as evidence of the timing. Stop
    for my review after the timer and pin sections.
 4. End the session with a dated WORKLOG.md entry, an updated docs/HANDOFF.md

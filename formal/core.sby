@@ -1,7 +1,7 @@
-# loom_core: timer tick never lost, disabled timer never ticks, PC moves only
+# keyer_core: timer tick never lost, disabled timer never ticks, PC moves only
 # on commit or host write, threads start only via host or START, halted
 # implies stopped, thread parity, blocked threads hold their PC.
-# Properties live in src/loom_core.v under `ifdef FORMAL.
+# Properties live in src/keyer_core.v under `ifdef FORMAL.
 [options]
 mode prove
 depth 6
@@ -10,9 +10,9 @@ depth 6
 smtbmc z3
 
 [script]
-read -formal -DFORMAL -I../src loom_core.v
-prep -top loom_core
+read -formal -DFORMAL -I../src keyer_core.v
+prep -top keyer_core
 
 [files]
-../src/loom_isa.vh
-../src/loom_core.v
+../src/keyer_isa.vh
+../src/keyer_core.v

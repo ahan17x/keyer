@@ -1,8 +1,8 @@
 # Protocol emulator ASIC (Jane Street competition): instructions for Claude Code sessions
 
 Ahan Shah owns this project. Deadline: Monday 2027-01-18. Target: IHP 130 nm
-CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle. Working name
-"Loom" (to be renamed, DECISIONS D-013).
+CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle. Named Keyer
+(DECISIONS D-017; it was "Loom" until 2026-10-02).
 
 ## Read order, every session
 
@@ -22,11 +22,11 @@ or the flow recipe; it is reference material about a parallel entry.
   is the reference. If the spec is wrong or silent, stop, write a DECISIONS
   entry proposing the change with the reason, and ask Ahan. Never quietly
   implement something else.
-- **One encoding table.** `tools/loom_isa.py` is the only place opcodes live.
-  After editing it run `python3 tools/loom_isa.py --vh > src/loom_isa.vh`
+- **One encoding table.** `tools/keyer_isa.py` is the only place opcodes live.
+  After editing it run `python3 tools/keyer_isa.py --vh > src/keyer_isa.vh`
   and commit the result. RTL never compares instruction bits that the header
   does not name.
-- **Independence.** The golden model (`tools/loomsim.py`) and the RTL
+- **Independence.** The golden model (`tools/keyersim.py`) and the RTL
   (`src/`) are written from the spec, not from each other. A session that
   edits one does not open the other. The subagents in `.claude/agents/` carry
   that restriction; use them for any rewrite of either side. Tests
@@ -63,7 +63,7 @@ python3 -m pytest tools/ -q                 # assembler, ISS, firmware on the IS
 cd test && make                             # cocotb: host interface + lockstep (about 1 min)
 cd test && make 'COCOTB_TEST_FILTER=test_lockstep_uart_loopback'   # one test
 cd test && make DUMP=1                      # also writes tb.fst for a waveform viewer
-python3 tools/loomasm.py fw/uart.s -l /tmp/uart.lst   # assemble with a listing
+python3 tools/keyerasm.py fw/uart.s -l /tmp/uart.lst   # assemble with a listing
 cd synth && yosys -q run_sram.ys            # area estimate (see synth/README.md for the liberty path)
 cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh
 ```

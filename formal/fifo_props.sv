@@ -1,11 +1,11 @@
-// Formal properties for loom_fifo (bound with the DUT in fifo.sby).
+// Formal properties for keyer_fifo (bound with the DUT in fifo.sby).
 `default_nettype none
 module fifo_props #(parameter WIDTH = 4, parameter DEPTH = 4, parameter AW = 2) (
     input wire clk, input wire rst_n, input wire clear, input wire push,
     input wire [WIDTH-1:0] wr_data, input wire pop, input wire [WIDTH-1:0] rd_data,
     input wire empty, input wire full, input wire [AW:0] count
 );
-    loom_fifo #(.WIDTH(WIDTH), .DEPTH(DEPTH), .AW(AW)) dut (
+    keyer_fifo #(.WIDTH(WIDTH), .DEPTH(DEPTH), .AW(AW)) dut (
         .clk(clk), .rst_n(rst_n), .clear(clear), .push(push), .wr_data(wr_data),
         .pop(pop), .rd_data(rd_data), .empty(empty), .full(full), .count(count));
 

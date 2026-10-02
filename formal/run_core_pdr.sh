@@ -1,5 +1,5 @@
 #!/bin/sh
-# Proves the loom_core properties with abc's PDR engine. Some yowasp-sby
+# Proves the keyer_core properties with abc's PDR engine. Some yowasp-sby
 # versions crash in their result parser on the abc engine (tool bug), so sby
 # is used only to build the AIGER model and abc is run directly. Expect
 # "Property proved."

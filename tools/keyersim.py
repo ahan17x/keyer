@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loom instruction-set simulator (cycle-exact golden model).
+"""Keyer instruction-set simulator (cycle-exact golden model).
 
 The simulator advances one core clock cycle per step(). Thread 0 executes on
 even cycles, thread 1 on odd cycles. Everything observable (register
@@ -21,7 +21,7 @@ import sys
 from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import loom_isa as isa  # noqa: E402
+import keyer_isa as isa  # noqa: E402
 
 M16 = 0xFFFF
 FIFO_DEPTH = 16
@@ -488,8 +488,8 @@ class Machine:
 
 def main(argv=None):
     import argparse
-    ap = argparse.ArgumentParser(description="Loom ISS")
-    ap.add_argument("hexfile", help="$readmemh image from loomasm.py")
+    ap = argparse.ArgumentParser(description="Keyer ISS")
+    ap.add_argument("hexfile", help="$readmemh image from keyerasm.py")
     ap.add_argument("-c", "--cycles", type=int, default=10000)
     ap.add_argument("--t1", action="store_true", help="also start thread 1 (PC=--pc1)")
     ap.add_argument("--pc1", type=lambda s: int(s, 0), default=0)

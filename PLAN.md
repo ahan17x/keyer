@@ -1,10 +1,10 @@
-# Loom: master plan
+# Keyer: master plan
 
 Jane Street protocol emulator ASIC competition. Deadline Monday, January 18, 2027.
 Target: IHP 130 nm CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle.
 
-Working name is "Loom" (threads through pins). Top module `tt_um_ahan17x_loom`.
-Rename is a find-and-replace; nothing depends on it.
+Named Keyer (DECISIONS D-017): a telegraph keyer turns a program into precisely
+timed marks and spaces on a wire. Top module `tt_um_ahan17x_keyer`.
 
 ## 1. What we are building
 
@@ -16,7 +16,7 @@ Ethernet are stretch goals.
 
 Pitch, in one paragraph: PIO (RP2040) is cycle-exact but has no ALU and 32
 instructions shared by 4 state machines; the PRU (TI) is a real CPU but gets its
-timing from running at 200 MHz. Loom is in between: a real 16-bit CPU with a
+timing from running at 200 MHz. Keyer is in between: a real 16-bit CPU with a
 pin-oriented instruction set, two barrel-interleaved hardware threads so a
 full-duplex protocol is two straight-line programs instead of one interleaved
 one, hardware timers that keep bit edges phase-locked no matter how many

@@ -1,5 +1,5 @@
 /*
- * Loom: protocol emulator for the Jane Street ASIC competition.
+ * Keyer: protocol emulator for the Jane Street ASIC competition.
  * Tiny Tapeout top level. See docs/info.md and docs/isa.md.
  *
  * Pins:
@@ -12,7 +12,7 @@
  */
 `default_nettype none
 
-module tt_um_ahan17x_loom (
+module tt_um_ahan17x_keyer (
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
     input  wire [7:0] uio_in,
@@ -35,7 +35,7 @@ module tt_um_ahan17x_loom (
         else fetch_ok <= ~host_access;
     end
 
-    loom_imem u_imem (
+    keyer_imem u_imem (
         .clk   (clk),
         .we    (host_imem_we),
         .addr  (host_access ? host_imem_addr : fetch_addr),
@@ -53,7 +53,7 @@ module tt_um_ahan17x_loom (
     wire [23:0] level, level2;
     wire [7:0]  uo_fw;
 
-    loom_pins u_pins (
+    keyer_pins u_pins (
         .clk (clk), .rst_n (rst_n),
         .ui_in (ui_in), .uio_in (uio_in),
         .uio_out (uio_out), .uio_oe (uio_oe), .uo_out (uo_fw),
@@ -75,13 +75,13 @@ module tt_um_ahan17x_loom (
     genvar g;
     generate
         for (g = 0; g < 2; g = g + 1) begin : fifos
-            loom_fifo u_inbox (
+            keyer_fifo u_inbox (
                 .clk (clk), .rst_n (rst_n), .clear (fifo_clr[2*g]),
                 .push (inbox_push[g]), .wr_data (inbox_wdata),
                 .pop (inbox_pop[g]), .rd_data (inbox_rdata[g]),
                 .empty (inbox_empty[g]), .full (inbox_full[g]), .count (inbox_count[g])
             );
-            loom_fifo u_outbox (
+            keyer_fifo u_outbox (
                 .clk (clk), .rst_n (rst_n), .clear (fifo_clr[2*g+1]),
                 .push (outbox_push[g]), .wr_data (outbox_wdata),
                 .pop (outbox_pop[g]), .rd_data (outbox_rdata[g]),
@@ -98,7 +98,7 @@ module tt_um_ahan17x_loom (
     wire [7:0] dbg_pc;
     wire [15:0] dbg_ir;
 
-    loom_core u_core (
+    keyer_core u_core (
         .clk (clk), .rst_n (rst_n),
         .fetch_addr (fetch_addr), .imem_rdata (imem_rdata), .fetch_ok (fetch_ok),
         .level (level), .level2 (level2),
@@ -115,7 +115,7 @@ module tt_um_ahan17x_loom (
 
     // ---- host interface ------------------------------------------------------
     wire miso, irq;
-    loom_host u_host (
+    keyer_host u_host (
         .clk (clk), .rst_n (rst_n),
         .sck (ui_in[0]), .mosi (ui_in[1]), .csn (ui_in[2]), .miso (miso), .irq (irq),
         .imem_we (host_imem_we), .imem_re (host_imem_re), .imem_addr (host_imem_addr),

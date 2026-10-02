@@ -109,3 +109,59 @@ stated use, which no entry has; (b) stay deliberately small (routes in
 minutes, every module readable); (c) a Hardcaml implementation of the core.
 At least one must be chosen; a design that only repeats the parallel entry
 with less verification loses.
+
+## D-017 2026-10-02 Ahan: the project is named Keyer (closes D-013)
+
+A telegraph keyer turns a program into precisely timed marks and spaces on a
+wire, which is what this chip does; it is not a weaving metaphor and is
+distinct from the sibling entry. Renamed in one commit: project name, top
+module `tt_um_ahan17x_keyer`, every `loom_` module and file, the tools
+(`keyer_isa.py`, `keyerasm.py`, `keyersim.py`) and their imports, tests, docs,
+scripts, info.yaml, README. The ID register byte changes from 'L' (0x4C) to
+'K' (0x4B). History (DECISIONS, WORKLOG entries before this date) keeps the
+old names. Rejected: Baud, Morse, Edgewise, Tempo; renaming only the public
+name and keeping `loom_` inside (half a rename, still looks like the sibling).
+
+## D-018 2026-10-02 Ahan: per-thread NOW/deadline timer with timeouts on every blocking instruction (closes D-014, proposal B)
+
+The sticky tick goes. Each thread keeps a tick period (`SETT rs`, which
+restarts the timer), a tick counter NOW that advances once per period, and a
+DEADLINE. `SETD k` sets DEADLINE = NOW + k; `WAITD k` blocks until NOW has
+reached DEADLINE + k and then advances DEADLINE by k, so a late loop catches
+up without losing ticks and a multi-period wait is one instruction. Every
+blocking instruction (`WT0 WT1 WTR WTF POP PUSH`) gets a timeout variant that
+also completes when the deadline is reached and reports C = 1 on timeout,
+C = 0 on success. `WAITT`, `CLRT` and `BTP` are replaced (WAITD, SETD, BDR);
+`RDT` reads NOW - DEADLINE; status bit 4 means "deadline reached". `DELAY` is
+unchanged. Instruction count and encodings change as little as possible; the
+exact cycle rules are in `docs/SEMANTICS.md`. Cost: about 32 more flops per
+thread and two 16-bit adders. Why: the I2C firmware hangs forever on a stuck
+SCL today, and the sticky tick loses ticks when a loop falls more than one
+period behind. Rejected: proposal A (timeout bit on the sticky tick: keeps
+lost ticks and multi-period loops); a separate "advance deadline" instruction
+before each wait (halves the peak bit rate); deadlines in core cycles against
+CYC (needs a multiply by the period).
+
+## D-019 2026-10-02 Ahan: two threads; the thread count becomes a module parameter (closes D-015)
+
+The ISA and firmware stay two-thread. The core takes an `NTHREADS` parameter
+(default 2) so a four-thread variant can be synthesised and compared later;
+no other change. Rejected: switching to four now (halves the per-thread rate,
+doubles edge dither, about 256 more flops, and no firmware needs it yet).
+
+## D-020 2026-10-02 Ahan: the differentiator is capture-and-replay plus staying small; Hardcaml is out of scope (closes D-016)
+
+Timestamped edge recording on a pin mask into a buffer the host drains, with
+a trigger condition, and playback of a recorded waveform: the logic-analyser
+half of Jane Street's stated use. Designed after SEMANTICS.md exists, in a
+later session, not this one. Staying small (routes in minutes, every module
+readable) is the second half. Rejected: a Hardcaml port (a toolchain nobody
+on the team knows; it would duplicate the core rather than add to it);
+repeating the sibling entry's feature list with less verification.
+
+## D-021 2026-10-02 Ahan: keep the current core and evolve it; no blank-page redesign
+
+The core passes lockstep, formal and protocol tests; the timer change (D-018)
+and the differentiator (D-020) are additive. Rejected: a redesign from a
+blank page on the same test infrastructure (weeks of schedule for an
+unproven gain, three and a half months before the deadline).

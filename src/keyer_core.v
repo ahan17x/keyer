@@ -1,5 +1,5 @@
 /*
- * Loom core: two barrel-interleaved hardware threads, 16-bit datapath.
+ * Keyer core: two barrel-interleaved hardware threads, 16-bit datapath.
  *
  * Thread 0 executes on even cycles, thread 1 on odd cycles. The instruction
  * for the executing thread was fetched on the previous cycle from
@@ -7,14 +7,14 @@
  * its slot unless it is blocking, in which case the PC does not advance and
  * it is re-evaluated at the thread's next slot.
  *
- * Semantics are defined by docs/isa.md and tools/loomsim.py; cocotb runs both
+ * Semantics are defined by docs/isa.md and tools/keyersim.py; cocotb runs both
  * in lockstep.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
-`include "loom_isa.vh"
+`include "keyer_isa.vh"
 
-module loom_core (
+module keyer_core (
     input  wire        clk,
     input  wire        rst_n,
     // program memory
@@ -127,37 +127,37 @@ module loom_core (
         sum = 17'd0;
 
         case (maj)
-        `LOOM_MAJ_ALU2: begin
+        `KEYER_MAJ_ALU2: begin
             wr_en = 1'b1; z_we = 1'b1;
             case (ir[5:2])
-                `LOOM_ADD: begin sum = {1'b0, A} + {1'b0, B}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
-                `LOOM_SUB: begin sum = {1'b0, A} - {1'b0, B}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
-                `LOOM_AND: wr_val = A & B;
-                `LOOM_OR:  wr_val = A | B;
-                `LOOM_XOR: wr_val = A ^ B;
-                `LOOM_MOV: wr_val = B;
-                `LOOM_CMP: begin sum = {1'b0, A} - {1'b0, B}; wr_val = sum[15:0]; wr_en = 1'b0; c_we = 1'b1; c_val = sum[16]; end
-                `LOOM_TST: begin wr_val = A & B; wr_en = 1'b0; end
-                `LOOM_ADC: begin sum = {1'b0, A} + {1'b0, B} + {16'd0, C}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
-                `LOOM_SBC: begin sum = {1'b0, A} - {1'b0, B} - {16'd0, C}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
+                `KEYER_ADD: begin sum = {1'b0, A} + {1'b0, B}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
+                `KEYER_SUB: begin sum = {1'b0, A} - {1'b0, B}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
+                `KEYER_AND: wr_val = A & B;
+                `KEYER_OR:  wr_val = A | B;
+                `KEYER_XOR: wr_val = A ^ B;
+                `KEYER_MOV: wr_val = B;
+                `KEYER_CMP: begin sum = {1'b0, A} - {1'b0, B}; wr_val = sum[15:0]; wr_en = 1'b0; c_we = 1'b1; c_val = sum[16]; end
+                `KEYER_TST: begin wr_val = A & B; wr_en = 1'b0; end
+                `KEYER_ADC: begin sum = {1'b0, A} + {1'b0, B} + {16'd0, C}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
+                `KEYER_SBC: begin sum = {1'b0, A} - {1'b0, B} - {16'd0, C}; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
                 default: begin wr_en = 1'b0; z_we = 1'b0; end
             endcase
             z_val = (wr_val == 16'd0);
         end
-        `LOOM_MAJ_ALU1: begin
+        `KEYER_MAJ_ALU1: begin
             wr_en = 1'b1; z_we = 1'b1;
             case (ir[8:5])
-                `LOOM_SHL:  begin wr_val = {A[14:0], 1'b0}; c_we = 1'b1; c_val = A[15]; end
-                `LOOM_SHR:  begin wr_val = {1'b0, A[15:1]}; c_we = 1'b1; c_val = A[0]; end
-                `LOOM_RCL:  begin wr_val = {A[14:0], C};    c_we = 1'b1; c_val = A[15]; end
-                `LOOM_RCR:  begin wr_val = {C, A[15:1]};    c_we = 1'b1; c_val = A[0]; end
-                `LOOM_NOT:  wr_val = ~A;
-                `LOOM_NEG:  begin wr_val = 16'd0 - A; c_we = 1'b1; c_val = (A != 16'd0); end
-                `LOOM_INC:  begin sum = {1'b0, A} + 17'd1; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
-                `LOOM_DEC:  begin wr_val = A - 16'd1; c_we = 1'b1; c_val = (A == 16'd0); end
-                `LOOM_SWAP: wr_val = {A[7:0], A[15:8]};
-                `LOOM_REV8: wr_val = {A[15:8], A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7]};
-                `LOOM_DJNZ: begin
+                `KEYER_SHL:  begin wr_val = {A[14:0], 1'b0}; c_we = 1'b1; c_val = A[15]; end
+                `KEYER_SHR:  begin wr_val = {1'b0, A[15:1]}; c_we = 1'b1; c_val = A[0]; end
+                `KEYER_RCL:  begin wr_val = {A[14:0], C};    c_we = 1'b1; c_val = A[15]; end
+                `KEYER_RCR:  begin wr_val = {C, A[15:1]};    c_we = 1'b1; c_val = A[0]; end
+                `KEYER_NOT:  wr_val = ~A;
+                `KEYER_NEG:  begin wr_val = 16'd0 - A; c_we = 1'b1; c_val = (A != 16'd0); end
+                `KEYER_INC:  begin sum = {1'b0, A} + 17'd1; wr_val = sum[15:0]; c_we = 1'b1; c_val = sum[16]; end
+                `KEYER_DEC:  begin wr_val = A - 16'd1; c_we = 1'b1; c_val = (A == 16'd0); end
+                `KEYER_SWAP: wr_val = {A[7:0], A[15:8]};
+                `KEYER_REV8: wr_val = {A[15:8], A[0], A[1], A[2], A[3], A[4], A[5], A[6], A[7]};
+                `KEYER_DJNZ: begin
                     wr_val = A - 16'd1; z_we = 1'b0;
                     if (wr_val != 16'd0) pc_next = pc_rel5;
                 end
@@ -165,88 +165,88 @@ module loom_core (
             endcase
             z_val = (wr_val == 16'd0);
         end
-        `LOOM_MAJ_ADDI: begin
+        `KEYER_MAJ_ADDI: begin
             sum = {1'b0, A} + {1'b0, simm8};
             wr_en = 1'b1; wr_val = sum[15:0]; z_we = 1'b1; z_val = (wr_val == 16'd0); c_we = 1'b1; c_val = sum[16];
         end
-        `LOOM_MAJ_ANDI: begin wr_en = 1'b1; wr_val = A & {8'd0, imm8}; z_we = 1'b1; z_val = (wr_val == 16'd0); end
-        `LOOM_MAJ_ORI:  begin wr_en = 1'b1; wr_val = A | {8'd0, imm8}; z_we = 1'b1; z_val = (wr_val == 16'd0); end
-        `LOOM_MAJ_XORI: begin wr_en = 1'b1; wr_val = A ^ {8'd0, imm8}; z_we = 1'b1; z_val = (wr_val == 16'd0); end
-        `LOOM_MAJ_LDI:  begin wr_en = 1'b1; wr_val = {8'd0, imm8}; end
-        `LOOM_MAJ_LDIH: begin wr_en = 1'b1; wr_val = {imm8, A[7:0]}; end
-        `LOOM_MAJ_CMPI: begin
+        `KEYER_MAJ_ANDI: begin wr_en = 1'b1; wr_val = A & {8'd0, imm8}; z_we = 1'b1; z_val = (wr_val == 16'd0); end
+        `KEYER_MAJ_ORI:  begin wr_en = 1'b1; wr_val = A | {8'd0, imm8}; z_we = 1'b1; z_val = (wr_val == 16'd0); end
+        `KEYER_MAJ_XORI: begin wr_en = 1'b1; wr_val = A ^ {8'd0, imm8}; z_we = 1'b1; z_val = (wr_val == 16'd0); end
+        `KEYER_MAJ_LDI:  begin wr_en = 1'b1; wr_val = {8'd0, imm8}; end
+        `KEYER_MAJ_LDIH: begin wr_en = 1'b1; wr_val = {imm8, A[7:0]}; end
+        `KEYER_MAJ_CMPI: begin
             sum = {1'b0, A} - {9'd0, imm8};
             z_we = 1'b1; z_val = (sum[15:0] == 16'd0); c_we = 1'b1; c_val = sum[16];
         end
-        `LOOM_MAJ_BCC: begin
+        `KEYER_MAJ_BCC: begin
             case (ir[11:9])
-                `LOOM_COND_RA:  pc_next = pc_rel8;
-                `LOOM_COND_EQ:  if (Z)  pc_next = pc_rel8;
-                `LOOM_COND_NE:  if (!Z) pc_next = pc_rel8;
-                `LOOM_COND_CS:  if (C)  pc_next = pc_rel8;
-                `LOOM_COND_CC:  if (!C) pc_next = pc_rel8;
-                `LOOM_COND_FE:  if (in_empty)  pc_next = pc_rel8;
-                `LOOM_COND_FNE: if (!in_empty) pc_next = pc_rel8;
-                `LOOM_COND_TP:  if (tk)  pc_next = pc_rel8;
+                `KEYER_COND_RA:  pc_next = pc_rel8;
+                `KEYER_COND_EQ:  if (Z)  pc_next = pc_rel8;
+                `KEYER_COND_NE:  if (!Z) pc_next = pc_rel8;
+                `KEYER_COND_CS:  if (C)  pc_next = pc_rel8;
+                `KEYER_COND_CC:  if (!C) pc_next = pc_rel8;
+                `KEYER_COND_FE:  if (in_empty)  pc_next = pc_rel8;
+                `KEYER_COND_FNE: if (!in_empty) pc_next = pc_rel8;
+                `KEYER_COND_TP:  if (tk)  pc_next = pc_rel8;
                 default: ;
             endcase
         end
-        `LOOM_MAJ_BPIN: if (blv == ir[11]) pc_next = pc_rel6;
-        `LOOM_MAJ_JMP: begin
+        `KEYER_MAJ_BPIN: if (blv == ir[11]) pc_next = pc_rel6;
+        `KEYER_MAJ_JMP: begin
             pc_next = ir[7:0];
             lr_we = ir[11];
         end
-        `LOOM_MAJ_PIN: begin
+        `KEYER_MAJ_PIN: begin
             case (ir[11:8])
-                `LOOM_SET:  begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = 8'd1; end
-                `LOOM_CLR:  begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = 8'd0; end
-                `LOOM_OEN:  begin pin_valid = 1'b1; pin_op = 3'd1; end
-                `LOOM_OEF:  begin pin_valid = 1'b1; pin_op = 3'd2; end
-                `LOOM_OD:   begin pin_valid = 1'b1; pin_op = 3'd3; end
-                `LOOM_PP:   begin pin_valid = 1'b1; pin_op = 3'd4; end
-                `LOOM_WT0:  done = ~lv;
-                `LOOM_WT1:  done = lv;
-                `LOOM_WTR:  done = lv & ~lv2;
-                `LOOM_WTF:  done = ~lv & lv2;
-                `LOOM_WRC:  begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = {7'd0, C}; end
-                `LOOM_RDC:  begin c_we = 1'b1; c_val = lv; end
-                `LOOM_TSTP: begin z_we = 1'b1; z_val = ~lv; end
+                `KEYER_SET:  begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = 8'd1; end
+                `KEYER_CLR:  begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = 8'd0; end
+                `KEYER_OEN:  begin pin_valid = 1'b1; pin_op = 3'd1; end
+                `KEYER_OEF:  begin pin_valid = 1'b1; pin_op = 3'd2; end
+                `KEYER_OD:   begin pin_valid = 1'b1; pin_op = 3'd3; end
+                `KEYER_PP:   begin pin_valid = 1'b1; pin_op = 3'd4; end
+                `KEYER_WT0:  done = ~lv;
+                `KEYER_WT1:  done = lv;
+                `KEYER_WTR:  done = lv & ~lv2;
+                `KEYER_WTF:  done = ~lv & lv2;
+                `KEYER_WRC:  begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = {7'd0, C}; end
+                `KEYER_RDC:  begin c_we = 1'b1; c_val = lv; end
+                `KEYER_TSTP: begin z_we = 1'b1; z_val = ~lv; end
                 default: ;
             endcase
         end
-        `LOOM_MAJ_PINR: begin
+        `KEYER_MAJ_PINR: begin
             case (ir[8:6])
-                `LOOM_OUTR: begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = {7'd0, A[0]}; end
-                `LOOM_INR:  begin wr_en = 1'b1; wr_val = {15'd0, lv}; z_we = 1'b1; z_val = ~lv; end
+                `KEYER_OUTR: begin pin_valid = 1'b1; pin_op = 3'd0; pin_data = {7'd0, A[0]}; end
+                `KEYER_INR:  begin wr_en = 1'b1; wr_val = {15'd0, lv}; z_we = 1'b1; z_val = ~lv; end
                 default: ;
             endcase
         end
-        `LOOM_MAJ_XFER: begin
+        `KEYER_MAJ_XFER: begin
             case (ir[8:5])
-                `LOOM_PUSH: begin done = ~out_full; outbox_push[tid] = ~out_full; end
-                `LOOM_POP:  begin done = ~in_empty; inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, inbox_rdata}; end
-                `LOOM_RDS:  begin wr_en = 1'b1; wr_val = {9'd0, tid, running[otid], tk, out_full, out_empty, in_full, in_empty}; end
-                `LOOM_RDCYC: begin wr_en = 1'b1; wr_val = cyc; end
-                `LOOM_SETT: do_sett = 1'b1;
-                `LOOM_RDT:  begin wr_en = 1'b1; wr_val = count[tid]; end
-                `LOOM_PUSHNB: begin outbox_push[tid] = ~out_full; c_we = 1'b1; c_val = ~out_full; end
-                `LOOM_POPNB:  begin inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, inbox_rdata}; c_we = 1'b1; c_val = ~in_empty; end
-                `LOOM_OUTB:  begin pin_valid = 1'b1; pin_op = 3'd5; pin_data = A[7:0]; end
-                `LOOM_INB:   begin wr_en = 1'b1; wr_val = {8'd0, level[7:0]}; z_we = 1'b1; z_val = (level[7:0] == 8'd0); end
-                `LOOM_INW:   begin wr_en = 1'b1; wr_val = level[15:0]; z_we = 1'b1; z_val = (level[15:0] == 16'd0); end
-                `LOOM_OUTOE: begin pin_valid = 1'b1; pin_op = 3'd6; pin_data = A[7:0]; end
-                `LOOM_RDLR:  begin wr_en = 1'b1; wr_val = {8'd0, lr[tid]}; end
-                `LOOM_JMPR:  pc_next = A[7:0];
+                `KEYER_PUSH: begin done = ~out_full; outbox_push[tid] = ~out_full; end
+                `KEYER_POP:  begin done = ~in_empty; inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, inbox_rdata}; end
+                `KEYER_RDS:  begin wr_en = 1'b1; wr_val = {9'd0, tid, running[otid], tk, out_full, out_empty, in_full, in_empty}; end
+                `KEYER_RDCYC: begin wr_en = 1'b1; wr_val = cyc; end
+                `KEYER_SETT: do_sett = 1'b1;
+                `KEYER_RDT:  begin wr_en = 1'b1; wr_val = count[tid]; end
+                `KEYER_PUSHNB: begin outbox_push[tid] = ~out_full; c_we = 1'b1; c_val = ~out_full; end
+                `KEYER_POPNB:  begin inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, inbox_rdata}; c_we = 1'b1; c_val = ~in_empty; end
+                `KEYER_OUTB:  begin pin_valid = 1'b1; pin_op = 3'd5; pin_data = A[7:0]; end
+                `KEYER_INB:   begin wr_en = 1'b1; wr_val = {8'd0, level[7:0]}; z_we = 1'b1; z_val = (level[7:0] == 8'd0); end
+                `KEYER_INW:   begin wr_en = 1'b1; wr_val = level[15:0]; z_we = 1'b1; z_val = (level[15:0] == 16'd0); end
+                `KEYER_OUTOE: begin pin_valid = 1'b1; pin_op = 3'd6; pin_data = A[7:0]; end
+                `KEYER_RDLR:  begin wr_en = 1'b1; wr_val = {8'd0, lr[tid]}; end
+                `KEYER_JMPR:  pc_next = A[7:0];
                 default: ;
             endcase
         end
-        `LOOM_MAJ_MISC: begin
+        `KEYER_MAJ_MISC: begin
             case (ir[11:8])
-                `LOOM_NOP:   ;
-                `LOOM_HALT:  do_halt = 1'b1;
-                `LOOM_RET:   pc_next = lr[tid];
-                `LOOM_WAITT: begin done = tk; do_clrt = tk; end
-                `LOOM_DELAY: begin
+                `KEYER_NOP:   ;
+                `KEYER_HALT:  do_halt = 1'b1;
+                `KEYER_RET:   pc_next = lr[tid];
+                `KEYER_WAITT: begin done = tk; do_clrt = tk; end
+                `KEYER_DELAY: begin
                     if (delay[tid] == 8'd0) begin
                         if (imm8 == 8'd0) done = 1'b1;
                         else begin done = 1'b0; delay_load = 1'b1; end
@@ -255,11 +255,11 @@ module loom_core (
                         done = (delay[tid] == 8'd1);
                     end
                 end
-                `LOOM_SETC:  begin c_we = 1'b1; c_val = 1'b1; end
-                `LOOM_CLC:   begin c_we = 1'b1; c_val = 1'b0; end
-                `LOOM_START: do_start = 1'b1;
-                `LOOM_STOP:  do_stop = 1'b1;
-                `LOOM_CLRT:  do_clrt = 1'b1;
+                `KEYER_SETC:  begin c_we = 1'b1; c_val = 1'b1; end
+                `KEYER_CLC:   begin c_we = 1'b1; c_val = 1'b0; end
+                `KEYER_START: do_start = 1'b1;
+                `KEYER_STOP:  do_stop = 1'b1;
+                `KEYER_CLRT:  do_clrt = 1'b1;
                 default: ;
             endcase
         end

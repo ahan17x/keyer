@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Loom assembler.
+"""Keyer assembler.
 
-Usage: loomasm.py input.s [-o out.hex] [-l out.lst]
+Usage: keyerasm.py input.s [-o out.hex] [-l out.lst]
 
 Syntax
   label:            labels end with a colon; may share a line with an instruction
@@ -26,7 +26,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import loom_isa as isa  # noqa: E402
+import keyer_isa as isa  # noqa: E402
 
 
 class AsmError(Exception):
@@ -301,7 +301,7 @@ def to_list(words, size=256):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Loom assembler")
+    ap = argparse.ArgumentParser(description="Keyer assembler")
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="hex output ($readmemh format)")
     ap.add_argument("-l", "--listing", help="listing file")

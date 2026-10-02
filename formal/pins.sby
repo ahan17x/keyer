@@ -1,4 +1,4 @@
-# loom_pins: open-drain pins never driven high, host-owned outputs fixed,
+# keyer_pins: open-drain pins never driven high, host-owned outputs fixed,
 # two-cycle input synchroniser, two-cycle edge history. Full proof.
 [options]
 mode prove
@@ -8,10 +8,10 @@ depth 8
 smtbmc z3
 
 [script]
-read -formal loom_pins.v
+read -formal keyer_pins.v
 read -formal pins_props.sv
 prep -top pins_props
 
 [files]
-../src/loom_pins.v
+../src/keyer_pins.v
 pins_props.sv

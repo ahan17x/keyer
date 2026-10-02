@@ -1,6 +1,6 @@
 # Tiny Tapeout project information
 project:
-  title:        "Loom protocol emulator"
+  title:        "Keyer protocol emulator"
   author:       "Ahan Shah"
   discord:      ""
   description:  "Two-thread pin-oriented CPU that bit-bangs UART, SPI, I2C and more from firmware loaded over SPI"
@@ -10,17 +10,17 @@ project:
   # Jane Street protocol emulator competition allocation (IHP CMOS5L).
   tiles: "6x4"
 
-  top_module:  "tt_um_ahan17x_loom"
+  top_module:  "tt_um_ahan17x_keyer"
 
   # Source files must be in ./src and listed one per line.
   source_files:
-    - "loom_isa.vh"
-    - "loom_fifo.v"
-    - "loom_imem.v"
-    - "loom_pins.v"
-    - "loom_core.v"
-    - "loom_host.v"
-    - "tt_um_ahan17x_loom.v"
+    - "keyer_isa.vh"
+    - "keyer_fifo.v"
+    - "keyer_imem.v"
+    - "keyer_pins.v"
+    - "keyer_core.v"
+    - "keyer_host.v"
+    - "tt_um_ahan17x_keyer.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 pinout:

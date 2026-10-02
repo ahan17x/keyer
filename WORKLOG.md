@@ -1,4 +1,6 @@
-# Loom work log
+# Keyer work log
+
+(The project was called Loom until 2026-10-02, DECISIONS D-017; entries before that date use the old names.)
 
 Newest entries at the bottom. Times are US Eastern.
 

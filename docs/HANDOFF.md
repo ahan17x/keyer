@@ -7,18 +7,18 @@ what exists, what is decided, what is open, what to do next.
 
 - `docs/isa.md`: ISA v0.1 (79 instructions), pin space, timer, FIFOs, host
   register map. Not yet a cycle-exact contract; see task 2.
-- `tools/loom_isa.py` (encoding table, generates `src/loom_isa.vh`),
-  `tools/loomasm.py` (assembler), `tools/loomsim.py` (cycle-exact golden
+- `tools/keyer_isa.py` (encoding table, generates `src/keyer_isa.vh`),
+  `tools/keyerasm.py` (assembler), `tools/keyersim.py` (cycle-exact golden
   model), `tools/protomodels.py` (UART/SPI/I2C models, host feeder),
   `tools/test_iss.py` + `tools/test_fw.py` (28 tests).
 - `fw/uart.s` (full duplex on two threads), `fw/spi_master.s`,
   `fw/i2c_master.s` (bytecode from the host; repeated start; clock
   stretching). All verified against the protocol models.
-- `src/`: `loom_fifo.v`, `loom_imem.v` (behavioural + SRAM macro wrapper
-  under `LOOM_IMEM_SRAM`), `loom_pins.v`, `loom_core.v`, `loom_host.v`,
-  `tt_um_ahan17x_loom.v`. Verilator `-Wall` clean.
+- `src/`: `keyer_fifo.v`, `keyer_imem.v` (behavioural + SRAM macro wrapper
+  under `KEYER_IMEM_SRAM`), `keyer_pins.v`, `keyer_core.v`, `keyer_host.v`,
+  `tt_um_ahan17x_keyer.v`. Verilator `-Wall` clean.
 - `test/`: cocotb, 9 tests: 3 host-interface, 6 lockstep (ISS vs RTL every
-  cycle from reset, host actions mirrored). `test/loom_tb.py` is the harness.
+  cycle from reset, host actions mirrored). `test/keyer_tb.py` is the harness.
 - `formal/`: FIFO (induction + BMC), pins (induction; open-drain never drives
   high), core (7 properties, abc pdr). See `formal/README.md`.
 - `synth/`: Yosys against the CMOS5L liberty. Result: 6,410 cells, 1,190
@@ -42,11 +42,11 @@ first session resolves these with Ahan before changing code.
 2. **Write `docs/SEMANTICS.md`**, the cycle-exact contract: for every
    instruction, what state changes on which clock, including the blocking
    rules, the timer, the synchroniser latency, pin write visibility, host
-   effects. Use `docs/isa.md` and `tools/loomsim.py` as the starting point
+   effects. Use `docs/isa.md` and `tools/keyersim.py` as the starting point
    (the ISS is the current best statement of the semantics; the lockstep
    tests pin down the timing). From then on SEMANTICS wins.
 3. **Re-derive one side independently** (D-012): with the `golden-model`
-   subagent (cannot read `src/`), rewrite `tools/loomsim.py` from
+   subagent (cannot read `src/`), rewrite `tools/keyersim.py` from
    SEMANTICS alone, then run `cd test && make`. Every mismatch is decided by
    quoting SEMANTICS and logged in `docs/BUGS.md`.
 4. **Push to GitHub, get the first `gds` run** at 6x4 with the flop memory,

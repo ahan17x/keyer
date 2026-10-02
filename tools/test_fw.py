@@ -6,10 +6,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import loom_isa  # noqa: E402
-import loomasm  # noqa: E402
+import keyer_isa  # noqa: E402
+import keyerasm  # noqa: E402
 import protomodels as pm  # noqa: E402
-from loomsim import Machine  # noqa: E402
+from keyersim import Machine  # noqa: E402
 
 FW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fw")
 
@@ -17,9 +17,9 @@ FW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fw")
 def load_fw(name, symbols=None):
     with open(os.path.join(FW, name)) as f:
         src = f.read()
-    words, syms, _ = loomasm.assemble(src, symbols=symbols)
+    words, syms, _ = keyerasm.assemble(src, symbols=symbols)
     assert max(words) < 256, "program too large: %d words" % (max(words) + 1)
-    return loomasm.to_list(words), syms
+    return keyerasm.to_list(words), syms
 
 
 def run(m, cycles, models):
@@ -66,7 +66,7 @@ def test_uart_rx_sample_point_is_centred():
     run(m, stim.done_at, [stim])
     edge = 21                                # start bit begins at this cycle
     samples = [r.cycle for r in m.trace if r.done and r.tid == 1
-               and loom_isa.disasm(r.word) == "RDC 11"]
+               and keyer_isa.disasm(r.word) == "RDC 11"]
     # RDC reads the level, i.e. the pad two cycles earlier
     for k, c in enumerate(samples[:8]):
         assert abs((c - 2) - (edge + 1.5 * P + k * P)) <= 4, (k, c - 2 - edge)

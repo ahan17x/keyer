@@ -1,23 +1,23 @@
 /*
- * Loom: 256 x 16 program memory with a one-cycle synchronous read.
+ * Keyer: 256 x 16 program memory with a one-cycle synchronous read.
  *
  * Default: behavioural array (simulation, FPGA block RAM, and the fallback
  * for the ASIC flow if the macro cannot be placed).
- * With `LOOM_IMEM_SRAM defined: wraps the IHP RM_IHPSG13_1P_256x16_c2_bm_bist
+ * With `KEYER_IMEM_SRAM defined: wraps the IHP RM_IHPSG13_1P_256x16_c2_bm_bist
  * macro (the CMOS5L SRAM library is the SG13G2 one). The macro's read data is
  * registered inside the macro, so timing matches the behavioural model.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
 
-module loom_imem (
+module keyer_imem (
     input  wire        clk,
     input  wire        we,
     input  wire [7:0]  addr,
     input  wire [15:0] wdata,
     output wire [15:0] rdata
 );
-`ifdef LOOM_IMEM_SRAM
+`ifdef KEYER_IMEM_SRAM
     RM_IHPSG13_1P_256x16_c2_bm_bist u_sram (
         .A_CLK      (clk),
         .A_MEN      (1'b1),

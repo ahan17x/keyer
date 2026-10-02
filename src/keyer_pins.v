@@ -1,5 +1,5 @@
 /*
- * Loom: pin unit.
+ * Keyer: pin unit.
  *
  * Pin space seen by firmware: 0-7 uio (bidirectional, push-pull or
  * open-drain per pin), 8-15 ui (inputs), 16-23 uo (outputs; 16 and 17 are
@@ -15,7 +15,7 @@
  */
 `default_nettype none
 
-module loom_pins (
+module keyer_pins (
     input  wire        clk,
     input  wire        rst_n,
     // pads
