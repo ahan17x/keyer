@@ -18,7 +18,12 @@ Hardening results from the GitHub `gds` workflow are appended below.
 | 2026-10-02 | d979e82 | whole design, program memory as the RM_IHPSG13_1P_256x16 macro (black box; add 28,127 um^2 for the macro) | 6,948 | 1,253 | 121,796 |
 | 2026-10-02 | d979e82 | keyer_core alone, NTHREADS = 2 | 3,825 | 459 | 55,691 |
 | 2026-10-02 | d979e82 | keyer_core alone, NTHREADS = 4 | 6,132 | 900 | 94,265 |
+| 2026-10-02 | 6e02d4b | whole design with capture and replay, macro black-boxed (add 28,127 um^2 for the macro) | 8,336 | 1,463 | 142,277 |
+| 2026-10-02 | 6e02d4b | whole design with capture and replay, program memory as flops | 24,559 | 5,575 | 450,369 |
+| 2026-10-02 | 6e02d4b | keyer_capture alone (rtl subagent's run) | 1,152 | 203 | 18,548 |
 
+Capture and replay (D-024) cost 210 flops and 20,481 um^2; with the macro the
+design is 170,404 um^2, 18.9% of the core (limit for the feature: 25%).
 The D-018 timer and timeouts cost 63 flops and about 7,600 um^2 over the
 pre-D-018 core; the whole logic sits at 28% of the placeable area with the
 macro (121,796 + 28,127 = 149,923 um^2 of 430,000). NTHREADS = 4 adds 441
