@@ -25,12 +25,12 @@ tx_loop:
         shl   r0                ; bit 0 = start bit (0), bits 8:1 = data, bit 9 = stop
         ldi   r2, 10            ; start + 8 data + stop
         sett  r1                ; restart the bit timer
-        waitt                   ; align with the tick grid
+        waitd 1                   ; align with the tick grid
         rcr   r0                ; first bit (the start bit) into C
 tx_bit:
         wrc   TX                ; drive it: always two slots after a tick
         rcr   r0                ; prepare the next bit (LSB first); DJNZ keeps C
-        waitt
+        waitd 1
         djnz  r2, tx_bit
         bra   tx_loop
 
@@ -43,12 +43,12 @@ rx_loop:
         sett  r3                ; 1.5 periods to the middle of bit 0
         ldi   r2, 8
         ldi   r0, 0
-        waitt
+        waitd 1
         sett  r1                ; one period per bit from here
 rx_bit:
         rdc   RX                ; sample
         rcr   r0                ; shift in at the top; after 8 bits the byte is in r0[15:8]
-        waitt
+        waitd 1
         djnz  r2, rx_bit
         swap  r0
         rdc   RX                ; stop bit should be 1

@@ -9,9 +9,9 @@ positions per major (msb:lsb):
   9 Bcc    c[11:9]  x[8]    off8[7:0]
   A BPIN   l[11]    pin[10:6] off6[5:0]
   B JMP    c[11]    abs11[10:0]
-  C PIN    f[11:8]  x[7:5]  pin[4:0]
+  C PIN    f[11:8]  t[7] x[6:5] pin[4:0]     (t = timeout bit for the waits)
   D PINR   r[11:9]  f[8:6]  x[5]  pin[4:0]
-  E XFER   r[11:9]  f[8:5]  x[4:0]
+  E XFER   r[11:9]  f[8:5]  t[4] x[3:0]      (t = timeout bit for PUSH/POP)
   F MISC   f[11:8]  imm8[7:0]
 
 The assembler (keyerasm.py), the simulator (keyersim.py) and the generated
@@ -20,7 +20,7 @@ Verilog header (src/keyer_isa.vh) all derive from the tables below.
 
 from collections import namedtuple
 
-ISA_VERSION = 0x01
+ISA_VERSION = 0x02
 
 # Operand kinds and the field they live in, per major.
 #   name -> (lsb, width, signed)
@@ -37,21 +37,23 @@ FIELDS = {
     0x9: {"c": (9, 3, False), "off8": (0, 8, True)},
     0xA: {"l": (11, 1, False), "pin": (6, 5, False), "off6": (0, 6, True)},
     0xB: {"c": (11, 1, False), "abs11": (0, 11, False)},
-    0xC: {"f": (8, 4, False), "pin": (0, 5, False)},
+    0xC: {"f": (8, 4, False), "pin": (0, 5, False), "t": (7, 1, False)},
     0xD: {"r": (9, 3, False), "f": (6, 3, False), "pin": (0, 5, False)},
-    0xE: {"r": (9, 3, False), "f": (5, 4, False)},
+    0xE: {"r": (9, 3, False), "f": (5, 4, False), "t": (4, 1, False)},
     0xF: {"f": (8, 4, False), "n8": (0, 8, False)},
 }
 
-Instr = namedtuple("Instr", "name major sub operands flags blocking desc")
+Instr = namedtuple("Instr", "name major sub operands flags blocking desc fixed")
 # operands: tuple of (assembly operand name, field name). Field "f"/"c"/"l"
-# values are fixed by `sub` (or the tuple in `sub` for BPIN/JMP).
+# values are fixed by `sub`. `fixed` holds further fields with a fixed value
+# (the timeout bit "t"); an instruction without an entry for a field accepts
+# either value of it.
 
 _I = []
 
 
-def _add(name, major, sub, operands=(), flags="", blocking=False, desc=""):
-    _I.append(Instr(name, major, sub, tuple(operands), flags, blocking, desc))
+def _add(name, major, sub, operands=(), flags="", blocking=False, desc="", fixed=None):
+    _I.append(Instr(name, major, sub, tuple(operands), flags, blocking, desc, dict(fixed or {})))
 
 
 # --- ALU2: rd op= rs -------------------------------------------------------
@@ -95,10 +97,10 @@ _add("LDIH", 0x7, None, (("rd", "rd"), ("imm", "imm8")), "", desc="rd[15:8] = im
 _add("CMPI", 0x8, None, (("rs", "rs"), ("imm", "imm8")), "ZC", desc="flags(rs - zext(imm8))")
 
 # --- branches --------------------------------------------------------------
-COND = {"RA": 0, "EQ": 1, "NE": 2, "CS": 3, "CC": 4, "FE": 5, "FNE": 6, "TP": 7}
+COND = {"RA": 0, "EQ": 1, "NE": 2, "CS": 3, "CC": 4, "FE": 5, "FNE": 6, "DR": 7}
 COND_DESC = {
     "RA": "always", "EQ": "Z=1", "NE": "Z=0", "CS": "C=1", "CC": "C=0",
-    "FE": "inbox empty", "FNE": "inbox not empty", "TP": "timer tick pending",
+    "FE": "inbox empty", "FNE": "inbox not empty", "DR": "deadline reached (NOW - DEADLINE >= 0 signed)",
 }
 for cn, cv in COND.items():
     _add("B" + cn, 0x9, cv, (("off", "off8"),), desc="branch if " + COND_DESC[cn])
@@ -108,6 +110,7 @@ _add("JMP", 0xB, 0, (("addr", "abs11"),), desc="PC = addr")
 _add("CALL", 0xB, 1, (("addr", "abs11"),), desc="LR = PC+1; PC = addr")
 
 # --- pin, immediate pin index ---------------------------------------------
+BY_SUB_PIN = {"WT0": 6, "WT1": 7, "WTR": 8, "WTF": 9}
 for f, (n, blk, d) in enumerate([
     ("SET", False, "pinwrite(p, 1)"),
     ("CLR", False, "pinwrite(p, 0)"),
@@ -123,7 +126,13 @@ for f, (n, blk, d) in enumerate([
     ("RDC", False, "C = level[p]"),
     ("TSTP", False, "Z = (level[p] == 0)"),
 ]):
-    _add(n, 0xC, f, (("pin", "pin"),), "C" if n == "RDC" else ("Z" if n == "TSTP" else ""), blk, d)
+    _add(n, 0xC, f, (("pin", "pin"),), "C" if n == "RDC" else ("Z" if n == "TSTP" else ""), blk, d,
+         fixed={"t": 0} if blk else None)
+# timeout forms of the waits: same sub-opcode, t = 1; C = 0 on the pin
+# condition, C = 1 when the deadline was reached first
+for n, d in [("WT0T", "wait level[p] = 0 or deadline"), ("WT1T", "wait level[p] = 1 or deadline"),
+             ("WTRT", "wait rising edge or deadline"), ("WTFT", "wait falling edge or deadline")]:
+    _add(n, 0xC, BY_SUB_PIN[n[:3]], (("pin", "pin"),), "C", True, d + " (C = 1 on timeout)", fixed={"t": 1})
 
 # --- pin with register -----------------------------------------------------
 _add("OUTR", 0xD, 0, (("pin", "pin"), ("rs", "r")), desc="pinwrite(p, rs[0])")
@@ -135,8 +144,8 @@ for f, (n, op, fl, blk, d) in enumerate([
     ("POP", "rd", "", True, "rd = inbox byte"),
     ("RDS", "rd", "", False, "rd = status"),
     ("RDCYC", "rd", "", False, "rd = cycle counter"),
-    ("SETT", "rs", "", False, "timer period = rs; restart"),
-    ("RDT", "rd", "", False, "rd = timer count"),
+    ("SETT", "rs", "", False, "timer period = rs; restart (NOW = DEADLINE = 0)"),
+    ("RDT", "rd", "", False, "rd = NOW - DEADLINE"),
     ("PUSHNB", "rs", "C", False, "non-blocking push, C = success"),
     ("POPNB", "rd", "C", False, "non-blocking pop, C = success"),
     ("OUTB", "rs", "", False, "pinwrite(i, rs[i]) for uio"),
@@ -146,19 +155,21 @@ for f, (n, op, fl, blk, d) in enumerate([
     ("RDLR", "rd", "", False, "rd = LR"),
     ("JMPR", "rs", "", False, "PC = rs"),
 ]):
-    _add(n, 0xE, f, ((op, "r"),), fl, blk, d)
+    _add(n, 0xE, f, ((op, "r"),), fl, blk, d, fixed={"t": 0} if blk else None)
+_add("PUSHT", 0xE, 0, (("rs", "r"),), "C", True, "outbox <- rs[7:0], or deadline (C = 1 on timeout)", fixed={"t": 1})
+_add("POPT", 0xE, 1, (("rd", "r"),), "C", True, "rd = inbox byte, or deadline (C = 1 on timeout)", fixed={"t": 1})
 
 # --- misc ------------------------------------------------------------------
 _add("NOP", 0xF, 0, (), desc="nothing")
 _add("HALT", 0xF, 1, (), desc="stop this thread")
 _add("RET", 0xF, 2, (), desc="PC = LR")
-_add("WAITT", 0xF, 3, (), blocking=True, desc="wait timer tick, clear it")
+_add("WAITD", 0xF, 3, (("k", "n8"),), blocking=True, desc="wait until NOW reaches DEADLINE + k, then DEADLINE += k")
 _add("DELAY", 0xF, 4, (("n", "n8"),), blocking=True, desc="occupy 1+n slots")
 _add("SETC", 0xF, 5, (), "C", desc="C = 1")
 _add("CLC", 0xF, 6, (), "C", desc="C = 0")
 _add("START", 0xF, 7, (), desc="start other thread")
 _add("STOP", 0xF, 8, (), desc="stop other thread")
-_add("CLRT", 0xF, 9, (), desc="clear timer tick")
+_add("SETD", 0xF, 9, (("k", "n8"),), desc="DEADLINE = NOW + k")
 
 INSTRUCTIONS = tuple(_I)
 BY_NAME = {i.name: i for i in INSTRUCTIONS}
@@ -199,6 +210,9 @@ def encode(name, **ops):
     if ins.sub is not None:
         lsb, width, _ = fields[SUB_FIELD[ins.major]]
         word |= (ins.sub & _mask(width)) << lsb
+    for fname, v in ins.fixed.items():
+        lsb, width, _ = fields[fname]
+        word |= (v & _mask(width)) << lsb
     for opname, fname in ins.operands:
         if opname not in ops:
             raise ValueError("%s: missing operand %s" % (name, opname))
@@ -216,7 +230,8 @@ def decode(word):
         lsb, width, _ = fields[SUB_FIELD[major]]
         sub = (word >> lsb) & _mask(width)
     for ins in INSTRUCTIONS:
-        if ins.major == major and ins.sub == sub:
+        if ins.major == major and ins.sub == sub and all(
+                ((word >> fields[fn][0]) & _mask(fields[fn][1])) == v for fn, v in ins.fixed.items()):
             ops = {}
             for opname, fname in ins.operands:
                 lsb, width, signed = fields[fname]
@@ -260,11 +275,17 @@ def gen_verilog_header():
     for m, n in majors.items():
         out.append("`define KEYER_MAJ_%-5s 4'h%X" % (n, m))
     out.append("")
+    seen = set()
     for ins in INSTRUCTIONS:
-        if ins.sub is None:
-            continue
+        if ins.sub is None or (ins.major, ins.sub) in seen:
+            continue                      # timeout forms share the base sub-opcode
+        seen.add((ins.major, ins.sub))
         lsb, width, _ = FIELDS[ins.major][SUB_FIELD[ins.major]]
         out.append("`define KEYER_%-7s %d'd%d  // major %X: %s" % (ins.name, width, ins.sub, ins.major, ins.desc))
+    out.append("")
+    out.append("// timeout bit: set in WT0 WT1 WTR WTF (major C) and PUSH POP (major E)")
+    out.append("`define KEYER_PIN_TBIT  %d" % FIELDS[0xC]["t"][0])
+    out.append("`define KEYER_XFER_TBIT %d" % FIELDS[0xE]["t"][0])
     out.append("")
     for cn, cv in COND.items():
         out.append("`define KEYER_COND_%-4s 3'd%d" % (cn, cv))

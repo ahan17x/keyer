@@ -11,6 +11,20 @@ Pin timing, matching the RTL's two-flop input synchroniser:
   level(c) = pad(c-2) for pins 0-15; the driven register for pins 16-23
   an edge at cycle c compares level(c) with level(c-2)
 
+Timer (docs/SEMANTICS.md section 6, DECISIONS D-018), per thread: 16-bit
+period, prescale, now and deadline. At the end of every cycle, for both
+threads whether running or not, unless the thread commits SETT in that cycle:
+  period == 0   -> nothing changes (timer disabled, now frozen)
+  prescale == 0 -> prescale = period - 1, now += 1   (a tick)
+  otherwise     -> prescale -= 1
+SETT rs restarts it (period = rs, prescale = rs - 1 or 0, now = deadline = 0).
+SETD k, WAITD k, RDT, BDR, RDS bit 4 and the timeout forms (WT0T WT1T WTRT
+WTFT POPT PUSHT) observe now and deadline as they are during the slot;
+"deadline reached" is reached(now, deadline), a signed 16-bit comparison.
+A host soft reset (Thread.soft_reset(), called between two step() calls)
+zeroes all four registers after that cycle's tick, which is the same as
+"no tick, then cleared".
+
 Usage as a library:
   m = Machine(); m.load(words); m.host_run(0, True)
   for _ in range(1000): m.step()
@@ -30,20 +44,35 @@ PC_MASK = IMEM_WORDS - 1
 RESERVED_UO = 0x03          # uo[0] = MISO, uo[1] = IRQ: owned by the host interface
 
 
+def reached(a, b):
+    """SEMANTICS 1: the signed 16-bit difference a - b is zero or positive."""
+    return ((a - b) & M16) < 0x8000
+
+
 class Thread:
+    """Architectural state of one thread (SEMANTICS 13).
+
+    Timer registers (SEMANTICS 6), all 16-bit: `period` (cycles per tick,
+    0 = disabled), `prescale` (counts down once per cycle; `now` increments
+    at the end of a cycle in which it is 0), `now` (tick counter) and
+    `deadline`.
+    """
+
     def __init__(self, tid):
         self.tid = tid
         self.reset()
 
     def reset(self):
+        """Hard reset (SEMANTICS 3.1): everything 0, FIFOs empty, stopped."""
         self.regs = [0] * 8
         self.pc = 0
         self.lr = 0
         self.z = 0
         self.c = 0
         self.period = 0
-        self.count = 0
-        self.tick = 0
+        self.prescale = 0
+        self.now = 0
+        self.deadline = 0
         self.inbox = deque()
         self.outbox = deque()
         self.running = False
@@ -52,13 +81,28 @@ class Thread:
         self.blocked = False
 
     def soft_reset(self):
-        """Host RSTn: timer, flags, LR, FIFOs; PC and registers kept."""
+        """Host RSTn (SEMANTICS 3.2): LR, Z, C, period, prescale, now,
+        deadline and the DELAY count become 0, inbox and outbox are emptied;
+        PC, registers, running and halted are kept."""
         self.lr = 0
         self.z = self.c = 0
-        self.period = self.count = self.tick = 0
+        self.period = self.prescale = self.now = self.deadline = 0
         self.inbox.clear()
         self.outbox.clear()
         self.delay_left = 0
+
+    def _advance_timer(self):
+        """End-of-cycle timer update (SEMANTICS 6.1)."""
+        if self.period == 0:
+            return
+        if self.prescale == 0:
+            self.prescale = (self.period - 1) & M16
+            self.now = (self.now + 1) & M16
+        else:
+            self.prescale -= 1
+
+    def deadline_reached(self):
+        return reached(self.now, self.deadline)
 
 
 class Retire:
@@ -183,8 +227,7 @@ class Machine:
         t = self.threads[tid]
         st = {"uio_out": self.uio_out, "uio_oe": self.uio_oe, "uo_out": self.uo_out,
               "od_mask": self.od_mask}
-        sett = None       # (thread, period) if SETT executed
-        clr_tick = False
+        self._sett = False                         # set by _exec when SETT commits
         done = False
         t.blocked = False
         if t.running:
@@ -193,34 +236,17 @@ class Machine:
             done = self._exec(t, ins, ops, word, level, level2, st)
             if done is None:
                 done = True
-            # bookkeeping for the timer-affecting instructions
-            if ins is not None:
-                if ins.name == "SETT":
-                    sett = t.regs[ops["rs"]]
-                elif ins.name in ("WAITT", "CLRT") and done:
-                    clr_tick = True
             t.blocked = not done
             if self.trace_enabled:
                 self.trace.append(Retire(c, tid, t.pc, word, done))
             if done:
                 t.pc = self._next_pc if self._next_pc is not None else (t.pc + 1) & PC_MASK
                 t.delay_left = 0
-        # timers (both threads, every cycle)
+        # timers (both threads, every cycle, running or not); the thread that
+        # committed SETT this cycle already holds its restarted values
         for th in self.threads:
-            hit = 0
-            if th is t and sett is not None:
-                th.period = sett
-                th.count = (sett - 1) & M16 if sett else 0
-                th.tick = 0
-                continue
-            if th.period:
-                if th.count == 0:
-                    hit = 1
-                    th.count = (th.period - 1) & M16
-                else:
-                    th.count -= 1
-            clear = clr_tick if th is t else False
-            th.tick = 1 if hit else (0 if clear else th.tick)
+            if not (th is t and self._sett):
+                th._advance_timer()
         # commit pin drive registers
         changed = (st["uio_out"], st["uio_oe"], st["uo_out"]) != (self.uio_out, self.uio_oe, self.uo_out)
         self.uio_out, self.uio_oe, self.uo_out, self.od_mask = st["uio_out"], st["uio_oe"], st["uo_out"], st["od_mask"]
@@ -255,7 +281,12 @@ class Machine:
         return r & M16
 
     def _exec(self, t, ins, ops, word, level, level2, st):
-        """Execute one slot. Returns True if the instruction completed."""
+        """Execute one slot. Returns True if the instruction completed.
+
+        Runs before the end-of-cycle timer update, so t.now / t.deadline are
+        NOW(c) / DEADLINE(c). A blocking instruction that returns False must
+        not have changed any state.
+        """
         self._next_pc = None
         if ins is None:
             return True                       # illegal: treated as NOP
@@ -348,7 +379,7 @@ class Machine:
         if ins.major == 0x9:
             cond = n[1:]
             take = {"RA": True, "EQ": t.z == 1, "NE": t.z == 0, "CS": t.c == 1, "CC": t.c == 0,
-                    "FE": not t.inbox, "FNE": bool(t.inbox), "TP": t.tick == 1}[cond]
+                    "FE": not t.inbox, "FNE": bool(t.inbox), "DR": t.deadline_reached()}[cond]
             if take:
                 self._next_pc = (t.pc + 1 + ops["off"]) & PC_MASK
             return True
@@ -384,14 +415,19 @@ class Machine:
             elif n == "PP":
                 if p < 8:
                     st["od_mask"] &= ~bit
-            elif n == "WT0":
-                return lv(p) == 0
-            elif n == "WT1":
-                return lv(p) == 1
-            elif n == "WTR":
-                return lv(p) == 1 and ((level2 >> p) & 1) == 0
-            elif n == "WTF":
-                return lv(p) == 0 and ((level2 >> p) & 1) == 1
+            elif n in ("WT0", "WT1", "WTR", "WTF", "WT0T", "WT1T", "WTRT", "WTFT"):
+                base = n[:3]
+                if base == "WT0":
+                    ok = lv(p) == 0
+                elif base == "WT1":
+                    ok = lv(p) == 1
+                elif base == "WTR":
+                    ok = lv(p) == 1 and ((level2 >> p) & 1) == 0
+                else:
+                    ok = lv(p) == 0 and ((level2 >> p) & 1) == 1
+                if n == base:
+                    return ok
+                return self._timed(t, ok)
             elif n == "WRC":
                 self._pinwrite(p, t.c, st)
             elif n == "RDC":
@@ -407,25 +443,32 @@ class Machine:
             return True
         if ins.major == 0xE:
             r = ops.get("rs", ops.get("rd"))
-            if n == "PUSH":
-                if len(t.outbox) >= FIFO_DEPTH:
-                    return False
-                t.outbox.append(R[r] & 0xFF)
-            elif n == "POP":
-                if not t.inbox:
-                    return False
-                R[r] = t.inbox.popleft()
+            if n in ("PUSH", "PUSHT"):
+                ok = len(t.outbox) < FIFO_DEPTH
+                if ok:
+                    t.outbox.append(R[r] & 0xFF)
+                return ok if n == "PUSH" else self._timed(t, ok)
+            elif n in ("POP", "POPT"):
+                ok = bool(t.inbox)
+                if ok:
+                    R[r] = t.inbox.popleft()
+                return ok if n == "POP" else self._timed(t, ok)
             elif n == "RDS":
                 s = (int(not t.inbox) | (int(len(t.inbox) >= FIFO_DEPTH) << 1)
                      | (int(not t.outbox) << 2) | (int(len(t.outbox) >= FIFO_DEPTH) << 3)
-                     | (t.tick << 4) | (int(other.running) << 5) | (t.tid << 6))
+                     | (int(t.deadline_reached()) << 4) | (int(other.running) << 5) | (t.tid << 6))
                 R[r] = s
             elif n == "RDCYC":
                 R[r] = self.cyc
             elif n == "SETT":
-                pass  # handled by step()
+                v = R[r]
+                t.period = v
+                t.prescale = (v - 1) & M16 if v else 0
+                t.now = 0
+                t.deadline = 0
+                self._sett = True                   # step() skips this thread's tick
             elif n == "RDT":
-                R[r] = t.count
+                R[r] = (t.now - t.deadline) & M16
             elif n == "PUSHNB":
                 if len(t.outbox) < FIFO_DEPTH:
                     t.outbox.append(R[r] & 0xFF)
@@ -460,8 +503,11 @@ class Machine:
                 t.halted = True
             elif n == "RET":
                 self._next_pc = t.lr & PC_MASK
-            elif n == "WAITT":
-                return t.tick == 1
+            elif n == "WAITD":
+                target = (t.deadline + ops["k"]) & M16
+                if not reached(t.now, target):
+                    return False
+                t.deadline = target
             elif n == "DELAY":
                 if t.delay_left == 0:
                     if ops["n"] == 0:
@@ -480,10 +526,24 @@ class Machine:
             elif n == "STOP":
                 other.running = False
                 other.delay_left = 0
-            elif n == "CLRT":
-                pass  # handled by step()
+            elif n == "SETD":
+                t.deadline = (t.now + ops["k"]) & M16
             return True
         return True
+
+    @staticmethod
+    def _timed(t, ok):
+        """Completion of a timeout form (SEMANTICS 7.4). `ok` is the base
+        condition; the caller has already applied the base effect if it
+        held. Completes with C = 0 on the base condition, C = 1 if only the
+        deadline was reached; blocks otherwise. Z and deadline unchanged."""
+        if ok:
+            t.c = 0
+            return True
+        if t.deadline_reached():
+            t.c = 1
+            return True
+        return False
 
 
 def main(argv=None):

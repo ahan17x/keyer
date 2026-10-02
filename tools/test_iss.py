@@ -162,48 +162,176 @@ def test_delay_slots():
     assert [r.cycle for r in done] == [6, 8, 10]
 
 
-def test_timer_tick_timing():
-    # SETT executes at cycle 2 (second instruction). Period 10 -> ticks at the
-    # ends of cycles 12, 22, 32, ... WAITT sees the tick from cycle 13 on, so
-    # the first WAITT completes at slot 14 (first even cycle >= 13).
+def _done_cycles(m, prefix):
+    return [r.cycle for r in m.trace if r.done and isa.disasm(r.word).startswith(prefix)]
+
+
+def test_timer_waitd_timing():
+    # SEMANTICS 6.3. SETT executes at cycle 2 (second instruction). Period 10:
+    # NOW becomes 1 at the end of cycle 12, 2 at 22, 5 at 52. WAITD 1 sees
+    # NOW = 1 from cycle 13 on, so it completes at slot 14 (first even cycle
+    # >= 13); the second at 24; WAITD 3 (target 5) at 54.
     m, _ = boot("""
         ldi r0, 10
         sett r0
-        waitt
-        waitt
+        waitd 1
+        waitd 1
+        waitd 3
         halt
     """, trace=True)
     run_until_halt(m)
-    done = [r for r in m.trace if r.done and isa.disasm(r.word) == "WAITT"]
-    assert [r.cycle for r in done] == [14, 24]
+    assert _done_cycles(m, "WAITD") == [14, 24, 54]
+    assert m.threads[0].deadline == 5 and m.threads[0].now == 5
 
 
-def test_timer_sticky_tick_no_drift():
-    # A loop that is sometimes slower than the period: edges still land on ticks.
+def test_setd_and_timed_waits():
+    # SETD 3 at slot 4 (NOW = 0): DEADLINE = 3, reached when NOW = 3, i.e.
+    # from cycle 33 -> the timed wait gives up at slot 34 with C = 1.
+    m, _ = boot("""
+        ldi r0, 10
+        sett r0
+        setd 3
+        wt1t ui3
+        halt
+    """, trace=True)
+    m.ext_ui = 0
+    run_until_halt(m)
+    assert _done_cycles(m, "WT1T") == [34] and m.threads[0].c == 1
+    # pin already high: completes at once with C = 0, deadline untouched
+    m, _ = boot("""
+        ldi r0, 10
+        sett r0
+        setd 3
+        wt1t ui3
+        halt
+    """, trace=True)
+    m.ext_ui = 0x08
+    run_until_halt(m)
+    assert _done_cycles(m, "WT1T") == [6] and m.threads[0].c == 0 and m.threads[0].deadline == 3
+    # POPT on an empty inbox: SETT at slot 4, SETD 2 at slot 6, NOW = 2 from cycle 25 -> slot 26, rd unchanged
+    m, _ = boot("""
+        ldi r0, 10
+        ldi r1, 0x77
+        sett r0
+        setd 2
+        popt r1
+        halt
+    """, trace=True)
+    run_until_halt(m)
+    assert _done_cycles(m, "POPT") == [26] and m.threads[0].c == 1 and m.threads[0].regs[1] == 0x77
+    # POPT with data: immediate, C = 0
+    m, _ = boot("""
+        ldi r0, 10
+        sett r0
+        setd 2
+        popt r1
+        halt
+    """, trace=True)
+    m.host_inbox_push(0, 0x42)
+    run_until_halt(m)
+    assert _done_cycles(m, "POPT") == [6] and m.threads[0].c == 0 and m.threads[0].regs[1] == 0x42
+    # PUSHT on a full outbox times out, nothing pushed
+    m, _ = boot("""
+        ldi r0, 16
+    fill: push r0
+        djnz r0, fill
+        ldi r0, 10
+        sett r0
+        setd 1
+        pusht r0
+        halt
+    """)
+    run_until_halt(m)
+    assert m.threads[0].c == 1 and len(m.threads[0].outbox) == 16
+
+
+def test_rdt_bdr_and_status_bit():
+    # SETD 2 at slot 4: DEADLINE = 2. RDT at 6: NOW - DEADLINE = -2. RDS at 8:
+    # bit 4 clear. BDR at 10 not taken. WAITD 0 blocks until NOW = 2 (slot 24).
+    # Then RDT = 0, RDS bit 4 set, BDR taken.
+    m, syms = boot("""
+        ldi r0, 10
+        sett r0
+        setd 2
+        rdt r1
+        rds r2
+        bdr bad
+        waitd 0
+        rdt r3
+        rds r4
+        bdr good
+    bad: ldi r5, 1
+    good: halt
+    """, trace=True)
+    run_until_halt(m)
+    t = m.threads[0]
+    assert t.regs[1] == 0xFFFE and not (t.regs[2] & 0x10)
+    assert _done_cycles(m, "WAITD") == [24]
+    assert t.regs[3] == 0 and (t.regs[4] & 0x10) and t.regs[5] == 0
+
+
+def test_timer_disabled_freezes_now():
+    m, _ = boot("""
+        ldi r0, 0
+        sett r0
+        setd 0
+        waitd 1
+        halt
+    """)
+    m.run(200)
+    t = m.threads[0]
+    assert t.blocked and t.running and t.now == 0 and t.deadline == 0
+
+
+def test_waitd_edges_on_grid_when_loop_is_on_time():
+    # Period 20, two WAITD 1 per iteration, loop shorter than two periods.
+    # SETT at cycle 2: NOW = k from cycle 20k + 3; WAITD completes at the
+    # even slot 20k + 4, the pin instruction runs at 20k + 6, the pad changes
+    # at 20k + 7. Every edge must sit on that grid.
+    m, _ = boot("""
+        ldi r0, 20
+        sett r0
+    loop:
+        waitd 1
+        set uo2
+        waitd 1
+        clr uo2
+        delay 3
+        bra loop
+    """)
+    m.run(600)
+    ev = [e for e in m.pin_events if e[0] > 10]
+    assert len(ev) >= 20
+    assert all((e[0] - 7) % 20 == 0 for e in ev), ev
+
+
+def test_waitd_catches_up_without_losing_ticks():
+    # The loop starts about ten periods late (DELAY 40 = 41 slots = 82 cycles
+    # at period 8). Each WAITD 1 then completes at once while DEADLINE is
+    # behind NOW, DEADLINE advancing by one per WAITD, until the loop is back
+    # on the tick grid. Nothing is lost: the number of completed WAITDs equals
+    # the deadline count, and the late edges come out as a burst followed by
+    # edges exactly one period apart.
     m, _ = boot("""
         ldi r0, 8
         sett r0
+        delay 40
     loop:
-        waitt
+        waitd 1
         set uo2
-        waitt
+        waitd 1
         clr uo2
-        delay 6        ; 7 slots = 14 cycles > period: next tick already pending
         bra loop
-    """)
+    """, trace=True)
     m.run(400)
-    ev = [e for e in m.pin_events if e[0] > 10]
-    assert len(ev) >= 10
-    # SETT executes at cycle 2 -> ticks at the ends of cycles 10, 18, 26, ...
-    # An on-time WAITT completes at the first even cycle >= tick+1, the pin
-    # instruction runs one slot later and the pad changes the cycle after that,
-    # so an on-grid event cycle e has w = e - 3 even with (w - 11) % 8 in {0, 1}.
-    # The first WAITT of each iteration is late (the DELAY is longer than the
-    # period) and completes immediately on the sticky tick; the second WAITT,
-    # one slot later, must be back on the tick grid: no accumulated drift.
-    on_grid = [(e[0] - 3) % 2 == 0 and ((e[0] - 3) - 11) % 8 in (0, 1) for e in ev]
-    assert all(on_grid[1::2]), ev          # every CLR edge is on the grid
-    assert not all(on_grid[0::2])          # some SET edges were late (sticky tick)
+    t = m.threads[0]
+    n_waits = len(_done_cycles(m, "WAITD"))
+    assert n_waits == t.deadline, (n_waits, t.deadline)
+    assert t.now - t.deadline in (0, 1)          # caught up (within the tick in flight)
+    ev = [e[0] for e in m.pin_events if e[0] > 10]
+    gaps = [b - a for a, b in zip(ev, ev[1:])]
+    assert min(gaps[:6]) < 8, gaps[:6]           # the catch-up burst
+    assert all(g == 8 for g in gaps[-6:]), gaps[-6:]   # back on the grid, one edge per tick
 
 
 def test_setpin_visible_next_cycle_and_sync_latency():

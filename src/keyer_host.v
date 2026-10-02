@@ -1,6 +1,7 @@
 /*
  * Keyer host interface: SPI slave (mode 0, MSB first) with a register map.
- * See docs/isa.md section 6. SCK must be at most clk / 8.
+ * See docs/isa.md section 6 and docs/SEMANTICS.md section 10. SCK must be at
+ * most clk / 8.
  *
  * A transaction is: CS_n low, command byte (bit 7 = write, bits 6:0 =
  * register), then data bytes until CS_n rises. For reads, data byte k is
@@ -36,6 +37,8 @@ module keyer_host (
     input  wire [1:0]  running,
     input  wire [1:0]  halted,
     input  wire [1:0]  blocked,
+    input  wire [7:0]  pc0,             // PC[0], PC[1], read back through PC0 / PC1
+    input  wire [7:0]  pc1,
     // FIFOs
     output reg  [1:0]  inbox_push,
     output wire [7:0]  inbox_wdata,
@@ -83,6 +86,7 @@ module keyer_host (
     reg       byte_done;            // one-cycle pulse: rx_byte holds a complete byte
     reg [7:0] rx_byte;
     reg [7:0] byte_idx;             // 0 = command byte, n = n-th data byte (saturating)
+    reg       imem_hi;              // IMEM_DATA phase: the next data byte is a high byte
     reg       is_write;
     reg [6:0] reg_sel;
     reg       load_pending;         // present the next read byte on the next falling edge
@@ -100,7 +104,7 @@ module keyer_host (
     always @(posedge clk) begin
         if (!rst_n || !active) begin
             bitcnt <= 3'd0; byte_done <= 1'b0; byte_idx <= 8'd0; load_pending <= 1'b0;
-            shift_in <= 7'd0; rx_byte <= 8'd0;
+            shift_in <= 7'd0; rx_byte <= 8'd0; imem_hi <= 1'b0;
             if (!rst_n) begin is_write <= 1'b0; reg_sel <= 7'd0; end
         end else begin
             byte_done <= 1'b0;
@@ -114,6 +118,9 @@ module keyer_host (
             end
             if (byte_done) begin
                 if (byte_idx != 8'hFF) byte_idx <= byte_idx + 8'd1;
+                // IMEM_DATA alternates low/high for the whole transaction, however
+                // long (SEMANTICS 10.2); byte_idx saturates, so it has its own phase
+                imem_hi <= ~cmd_phase & (reg_sel == R_IMEM_DATA) & ~imem_hi;
                 if (cmd_phase) begin
                     is_write <= rx_byte[7];
                     reg_sel  <= rx_byte[6:0];
@@ -136,8 +143,11 @@ module keyer_host (
         case (reg_sel)
             R_CTRL:    rd_byte = {6'd0, running};
             R_STAT:    rd_byte = {2'd0, blocked, halted, running};
-            R_PC0, R_PC1, R_IMEM_ADDR: rd_byte = 8'd0;   // PCs are not readable in this version
-            R_IMEM_DATA: rd_byte = (byte_idx[0]) ? imem_rd_q[7:0] : imem_rd_q[15:8];
+            // two-byte registers: the value, then 0 (SEMANTICS 10.4)
+            R_PC0:       rd_byte = byte_idx[0] ? pc0 : 8'd0;
+            R_PC1:       rd_byte = byte_idx[0] ? pc1 : 8'd0;
+            R_IMEM_ADDR: rd_byte = byte_idx[0] ? imem_addr_q : 8'd0;
+            R_IMEM_DATA: rd_byte = imem_hi ? imem_rd_q[15:8] : imem_rd_q[7:0];
             R_OUTBOX0: rd_byte = outbox0_rdata;
             R_OUTBOX1: rd_byte = outbox1_rdata;
             R_LEVELS: case (byte_idx[1:0])
@@ -207,7 +217,7 @@ module keyer_host (
                     R_PC1: if (data_idx == 8'd0) pc_we[1] <= 1'b1;
                     R_IMEM_ADDR: if (data_idx == 8'd0) imem_addr_q <= rx_byte;
                     R_IMEM_DATA: begin
-                        if (!data_idx[0]) imem_lo <= rx_byte;
+                        if (!imem_hi) imem_lo <= rx_byte;
                         else if (imem_allowed) imem_we <= 1'b1;   // address increments after the write cycle
                     end
                     R_INBOX0: inbox_push[0] <= 1'b1;
@@ -222,7 +232,7 @@ module keyer_host (
                 // reads: fetch the first word at the command, pop at each byte end
                 if (cmd_done && !rx_byte[7] && rx_byte[6:0] == R_IMEM_DATA && imem_allowed)
                     imem_re <= 1'b1;
-                if (data_done && reg_sel == R_IMEM_DATA && data_idx[0] && imem_allowed) begin
+                if (data_done && reg_sel == R_IMEM_DATA && imem_hi && imem_allowed) begin
                     imem_addr_q <= imem_addr_q + 8'd1;
                     imem_re <= 1'b1;
                 end

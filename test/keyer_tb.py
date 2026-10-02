@@ -161,12 +161,14 @@ class Lockstep:
             th = m.threads[t]
             if ival(c.pc[t]) != th.pc:
                 self._fail("pc[%d]" % t, "%02X" % th.pc, "%02X" % ival(c.pc[t]))
-            if ival(c.tick[t]) != th.tick:
-                self._fail("tick[%d]" % t, th.tick, ival(c.tick[t]))
             if ival(c.period[t]) != th.period:
                 self._fail("period[%d]" % t, th.period, ival(c.period[t]))
-            if ival(c.count[t]) != th.count:
-                self._fail("count[%d]" % t, th.count, ival(c.count[t]))
+            if ival(c.prescale[t]) != th.prescale:
+                self._fail("prescale[%d]" % t, th.prescale, ival(c.prescale[t]))
+            if ival(c.now[t]) != th.now:
+                self._fail("now[%d]" % t, th.now, ival(c.now[t]))
+            if ival(c.deadline[t]) != th.deadline:
+                self._fail("deadline[%d]" % t, th.deadline, ival(c.deadline[t]))
 
     def _check_regs(self, tid):
         th = self.m.threads[tid]

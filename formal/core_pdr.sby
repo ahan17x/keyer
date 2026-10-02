@@ -1,6 +1,12 @@
-# keyer_core: timer tick never lost, disabled timer never ticks, PC moves only
-# on commit or host write, threads start only via host or START, halted
-# implies stopped, thread parity, blocked threads hold their PC.
+# keyer_core. Timer (SEMANTICS 6, 7.4): T1 a reached deadline completes WAITD k
+# and the timeout-form waits in the same slot; T2 a disabled timer (period 0)
+# never changes NOW; T3 NOW changes only by +1 on a tick or to 0 on SETT/soft
+# reset, and a due tick is never lost; T4 DEADLINE changes only through SETD,
+# a completed WAITD, SETT or soft reset; T5 a completed WAITD k adds exactly k
+# to DEADLINE, SETD k sets NOW + k; T6 timeout forms report C = !base, base
+# forms leave C alone. Control: P3 PC moves only on commit or host write; P4
+# threads start only via host or START; P5 halted implies stopped; P6 thread
+# parity; P7 blocked threads hold their PC.
 # Properties live in src/keyer_core.v under `ifdef FORMAL.
 [options]
 mode prove

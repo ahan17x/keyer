@@ -192,3 +192,28 @@ def test_i2c_clock_stretching():
     assert slave.errors == []
     assert out == [0, 0, 0, 0x5C]
     assert slave.mem[0x10] == 0x5C
+
+
+def test_i2c_stuck_scl_times_out():
+    """A slave that never releases SCL must not hang the thread: the WRITE is
+    abandoned with status 0xFF, its queued bytes drained, the lines released,
+    and the following STOP (SCL still held) also reports 0xFF. The thread is
+    back at the command loop afterwards (DECISIONS D-018)."""
+    Q = 40
+    words, syms = load_fw("i2c_master.s", {"I2C_Q": Q, "I2C_TMO_PERIOD": 40, "I2C_TMO_TICKS": 10})
+    cmds = [0x01, 0x03, 3, 0xA0, 0x10, 0x5C, 0x02]
+    m = Machine()
+    m.load(words)
+    host = pm.HostFeeder(0, cmds)
+    m.host_run(0, True)
+    slave = pm.I2cSlaveModel(scl=2, sda=3, address=0x50, stretch=10 ** 9, min_high=Q, min_low=Q)
+    run(m, 30000, [host, slave])
+    assert not host.pending
+    out = []
+    while m.threads[0].outbox:
+        out.append(m.host_outbox_pop(0))
+    assert out == [0xFF, 0xFF], out
+    t = m.threads[0]
+    assert t.running and t.blocked and t.pc == syms["i2c_cmd"] + 1     # waiting for the next command
+    assert m.uio_oe & 0x0C == 0                                       # both lines released
+    assert slave.mem[0x10] == 0xFF                                    # the write never landed

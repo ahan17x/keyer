@@ -71,18 +71,19 @@ module tt_um_ahan17x_keyer (
     wire [4:0] inbox_count [0:1];
     wire [4:0] outbox_count [0:1];
     wire [3:0] fifo_clr;
+    wire [1:0] rst_pulse;               // host soft reset of thread n: also empties its FIFOs
 
     genvar g;
     generate
         for (g = 0; g < 2; g = g + 1) begin : fifos
             keyer_fifo u_inbox (
-                .clk (clk), .rst_n (rst_n), .clear (fifo_clr[2*g]),
+                .clk (clk), .rst_n (rst_n), .clear (fifo_clr[2*g] | rst_pulse[g]),
                 .push (inbox_push[g]), .wr_data (inbox_wdata),
                 .pop (inbox_pop[g]), .rd_data (inbox_rdata[g]),
                 .empty (inbox_empty[g]), .full (inbox_full[g]), .count (inbox_count[g])
             );
             keyer_fifo u_outbox (
-                .clk (clk), .rst_n (rst_n), .clear (fifo_clr[2*g+1]),
+                .clk (clk), .rst_n (rst_n), .clear (fifo_clr[2*g+1] | rst_pulse[g]),
                 .push (outbox_push[g]), .wr_data (outbox_wdata),
                 .pop (outbox_pop[g]), .rd_data (outbox_rdata[g]),
                 .empty (outbox_empty[g]), .full (outbox_full[g]), .count (outbox_count[g])
@@ -92,8 +93,8 @@ module tt_um_ahan17x_keyer (
 
     // ---- core ----------------------------------------------------------------
     wire       run_we;
-    wire [1:0] run_val, rst_pulse, pc_we, running, halted, blocked;
-    wire [7:0] pc_val;
+    wire [1:0] run_val, pc_we, running, halted, blocked;
+    wire [7:0] pc_val, core_pc0, core_pc1;
     wire       dbg_retire, dbg_tid;
     wire [7:0] dbg_pc;
     wire [15:0] dbg_ir;
@@ -103,13 +104,14 @@ module tt_um_ahan17x_keyer (
         .fetch_addr (fetch_addr), .imem_rdata (imem_rdata), .fetch_ok (fetch_ok),
         .level (level), .level2 (level2),
         .pin_valid (pin_valid), .pin_op (pin_op), .pin_pin (pin_pin), .pin_data (pin_data),
-        .inbox0_rdata (inbox_rdata[0]), .inbox1_rdata (inbox_rdata[1]),
+        .inbox_rdata ({inbox_rdata[1], inbox_rdata[0]}),
         .inbox_empty (inbox_empty), .inbox_full (inbox_full), .inbox_pop (inbox_pop),
         .outbox_wdata (outbox_wdata), .outbox_push (outbox_push),
         .outbox_full (outbox_full), .outbox_empty (outbox_empty),
         .host_run_we (run_we), .host_run_val (run_val), .host_rst (rst_pulse),
         .host_pc_we (pc_we), .host_pc_val (pc_val),
         .running (running), .halted (halted), .blocked (blocked),
+        .pc0_out (core_pc0), .pc1_out (core_pc1),
         .dbg_retire (dbg_retire), .dbg_tid (dbg_tid), .dbg_pc (dbg_pc), .dbg_ir (dbg_ir)
     );
 
@@ -124,6 +126,7 @@ module tt_um_ahan17x_keyer (
         .run_we (run_we), .run_val (run_val), .rst_pulse (rst_pulse),
         .pc_we (pc_we), .pc_val (pc_val),
         .running (running), .halted (halted), .blocked (blocked),
+        .pc0 (core_pc0), .pc1 (core_pc1),
         .inbox_push (inbox_push), .inbox_wdata (inbox_wdata), .outbox_pop (outbox_pop),
         .outbox0_rdata (outbox_rdata[0]), .outbox1_rdata (outbox_rdata[1]),
         .inbox0_count (inbox_count[0]), .outbox0_count (outbox_count[0]),

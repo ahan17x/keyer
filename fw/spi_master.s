@@ -32,16 +32,16 @@ spi_byte:
 spi_bit:                        ; high phase is a full half period
         rcl   r0                ; C = next bit out
         wrc   MOSI
-        waitt                   ; half period with SCK low
+        waitd 1                   ; half period with SCK low
         set   SCK
         rdc   MISO              ; sample on the rising edge
         rcl   r4                ; collect, MSB first
-        waitt                   ; half period with SCK high
+        waitd 1                   ; half period with SCK high
         clr   SCK
         djnz  r2, spi_bit
         push  r4
         dec   r3
         bne   spi_byte
-        waitt
+        waitd 1
         set   CSN
         bra   spi_frame

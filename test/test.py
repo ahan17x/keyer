@@ -18,7 +18,7 @@ import keyerasm
 import protomodels as pm
 from keyer_tb import (Lockstep, Pads, SpiMaster, reset, R_CTRL, R_ID, R_IMEM_ADDR,
                      R_IMEM_DATA, R_INBOX0, R_LEVELS, R_OUTBOX0, R_PINMODE, R_PINS,
-                     R_STAT, R_PINOUT)
+                     R_STAT, R_PINOUT, R_PC0, R_PC1)
 
 FW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fw")
 
@@ -48,7 +48,7 @@ async def test_id_and_registers(dut):
     pads = await start(dut)
     for half in (4, 8, 16):                 # SCK = clk/8 (the limit), clk/16, clk/32
         spi = SpiMaster(dut, pads, half=half)
-        assert await spi.read(R_ID, 2) == [0x4B, 0x01], half
+        assert await spi.read(R_ID, 2) == [0x4B, 0x02], half
         assert await spi.read(R_STAT, 1) == [0]
         await spi.write(R_PINMODE, [0xA5])
         assert await spi.read(R_PINMODE, 1) == [0xA5]
@@ -57,6 +57,34 @@ async def test_id_and_registers(dut):
         pads.set_fw_inputs(0xF8, 0x3C)
         await ClockCycles(dut.clk, 4)
         assert await spi.read(R_PINS, 3) == [0x3C, 0xF8, 0x00], half   # uio pads, ui (CS_n is low during the read), uo
+
+
+@cocotb.test()
+async def test_pc_readback_and_soft_reset(dut):
+    """SEMANTICS 3.2 and 10.4: PC0/PC1 and IMEM_ADDR read back; CTRL RSTn
+    empties the thread's FIFOs and leaves its PC alone (BUGS 12, 13)."""
+    pads = await start(dut)
+    spi = SpiMaster(dut, pads, half=4)
+    words, syms = asm("""
+        ldi  r0, 1
+        push r0
+        halt
+    """)
+    await spi.load_program(words)
+    await spi.write(R_IMEM_ADDR, [0x20, 0])
+    assert await spi.read(R_IMEM_ADDR, 2) == [0x20, 0]
+    await spi.set_pc(1, 0x40)
+    assert await spi.read(R_PC1, 2) == [0x40, 0]
+    await spi.run(0b01)
+    await ClockCycles(dut.clk, 40)
+    assert await spi.read(R_STAT, 1) == [0b000100]               # T0 halted
+    assert await spi.read(R_PC0, 2) == [3, 0]                    # PC after HALT
+    await spi.write(R_INBOX0, [1, 2, 3])
+    assert await spi.read(R_LEVELS, 4) == [3, 1, 0, 0]
+    await spi.write(R_CTRL, [0b0100])                            # RST0, RUN bits 0
+    assert await spi.read(R_LEVELS, 4) == [0, 0, 0, 0]
+    assert await spi.read(R_PC0, 2) == [3, 0]                    # PC unchanged by RSTn
+    assert await spi.read(R_STAT, 1) == [0b000100]               # still halted, not running
 
 
 @cocotb.test()
@@ -73,6 +101,17 @@ async def test_imem_write_read(dut):
         # the memory itself
         for i, w in enumerate(words):
             assert int(dut.user_project.u_imem.mem[0x20 + i].value) == w
+    # a full 256-word image in one transaction, read back in one transaction
+    # (BUGS 14: the byte counter must not stop the low/high alternation)
+    spi = SpiMaster(dut, pads, half=4)
+    words = [random.randrange(0x10000) for _ in range(256)]
+    await spi.load_program(words, base=0)
+    for a in (0x7E, 0x7F, 0x80, 0xFF):
+        assert int(dut.user_project.u_imem.mem[a].value) == words[a], ("word", a)
+    await spi.write(R_IMEM_ADDR, [0, 0])
+    rb = await spi.read(R_IMEM_DATA, 512)
+    got = [rb[2 * i] | (rb[2 * i + 1] << 8) for i in range(256)]
+    assert got == words, [i for i in range(256) if got[i] != words[i]][:8]
 
 
 @cocotb.test()
@@ -193,9 +232,9 @@ async def test_lockstep_pins_timer_delay(dut):
         outb r1
         ldi  r2, 0xF0
         outoe r2
-        waitt
+        waitd 1
         set  uo2
-        waitt
+        waitd 1
         clr  uo2
         delay 5
         wt1  ui3
@@ -211,14 +250,26 @@ async def test_lockstep_pins_timer_delay(dut):
         set  uo4
     skip: setc
         clc
-        clrt
+        setd 0
         rdt  r6
+        setd 2
+        wt0t ui4
+        popt r7
+        bdr  skip2
+        nop
+    skip2: rds r6
+        waitd 2
+        pusht r6
         start
         halt
     t1: ldi r0, 20
         sett r0
-        waitt
+        waitd 1
         set uo5
+        setd 3
+        wtrt ui3
+        waitd 1
+        wtft ui3
         halt
     """)
 
@@ -290,6 +341,23 @@ async def test_lockstep_i2c_master(dut):
 
 
 @cocotb.test()
+async def test_lockstep_i2c_timeout(dut):
+    """Stuck SCL: the slave never releases the clock after its ACK. The WRITE
+    and the following STOP must each end with status 0xFF and the thread must
+    be back waiting for a command, in lockstep with the model (D-018)."""
+    Q = 30
+    words, syms = fw("i2c_master.s", {"I2C_Q": Q, "I2C_TMO_PERIOD": 30, "I2C_TMO_TICKS": 8})
+    cmds = [0x01, 0x03, 3, 0xA0, 0x10, 0x5C, 0x02]
+    slave = pm.I2cSlaveModel(scl=2, sda=3, address=0x50, stretch=10 ** 9, min_high=Q, min_low=Q)
+    ls, spi = await lockstep_firmware(dut, words, 20000, models=[slave], inbox0=cmds)
+    got = await spi.drain_outbox(0)
+    assert got == [0xFF, 0xFF], got
+    t = ls.m.threads[0]
+    assert t.running and t.blocked and t.pc == syms["i2c_cmd"] + 1
+    assert int(dut.uio_oe.value) & 0x0C == 0
+
+
+@cocotb.test()
 async def test_lockstep_random_programs(dut):
     """Constrained-random instruction streams, both threads, random pin wiggling."""
     import keyer_isa as I
@@ -298,8 +366,9 @@ async def test_lockstep_random_programs(dut):
     for _ in range(120):
         ins = rng.choice([i for i in I.INSTRUCTIONS
                           if i.name not in ("HALT", "STOP", "JMP", "JMPR", "CALL", "RET",
-                                            "WT0", "WT1", "WTR", "WTF", "WAITT", "POP",
-                                            "PUSH", "DELAY")])
+                                            "WT0", "WT1", "WTR", "WTF", "WAITD", "POP",
+                                            "PUSH", "DELAY", "WT0T", "WT1T", "WTRT", "WTFT",
+                                            "POPT", "PUSHT")])
         ops = {}
         for opname, fname in ins.operands:
             if fname in ("rd", "rs", "r"):

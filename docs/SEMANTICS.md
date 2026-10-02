@@ -75,8 +75,9 @@ and therefore observable from cycle c + 1 on".
 - If a host RUN write and a core-initiated change land in the same cycle, the
   host's value wins for every thread (a RUN write names both threads).
 - A thread that is not running does nothing at its slots and holds all its
-  state. When restarted it resumes at `PC[t]`, re-evaluating whatever
-  instruction is there, including a blocking one it was stopped in.
+  state except the timer, which keeps ticking (section 6.1). When restarted
+  it resumes at `PC[t]`, re-evaluating whatever instruction is there,
+  including a blocking one it was stopped in.
 
 ### 2.4 Program counter and control flow
 
@@ -104,7 +105,10 @@ behavioural model and the simulators read unwritten words as 0.
 For the named thread, at the end of the cycle in which the pulse is applied
 (section 10.3): `LR`, `Z`, `C`, `period`, `prescale`, `NOW`, `DEADLINE` and
 the `DELAY` count become 0, and the thread's inbox and outbox are emptied.
-`PC`, `R[0..7]`, `running`, `halted` are unchanged. Pins are unchanged.
+`PC`, `R[0..7]`, `running`, `halted` are unchanged. Pins are unchanged. If
+the thread commits an instruction in the same cycle (possible when one CTRL
+write sets both RSTn and RUNn), the reset wins for everything it clears; the
+instruction's other effects (PC, registers, pins) stand.
 
 ## 4. Registers and flags
 
@@ -275,7 +279,8 @@ landing at the end of cycle c is seen by a `POP` at slot c + 2, not c.
 ### 7.4 Timeout forms
 
 `WT0T WT1T WTRT WTFT POPT PUSHT` are the same encodings with the T bit set
-(`tools/keyer_isa.py`). Each completes iff its base condition holds **or**
+(`tools/keyer_isa.py`). The T bit has no meaning for any other instruction of
+the PIN and XFER majors and is ignored there. Each completes iff its base condition holds **or**
 `reached(NOW(c), DEADLINE(c))`. On completion `C <= 0` if the base condition
 held (whether or not the deadline had also been reached) and `C <= 1`
 otherwise; the base effect (register write, FIFO pop or push) happens only
@@ -345,8 +350,11 @@ e + 2. Outside these constraints the behaviour is undefined.
 
 ### 10.2 Byte timing
 
-Let e be the cycle of the pad rising edge of the eighth SCK pulse of a byte.
-The byte is complete in cycle e + 3. For a write, the register's side effect
+A transaction may carry any number of data bytes; in particular one
+IMEM_DATA transaction can load or read back all 256 words, the low/high
+byte phase alternating for the whole transaction. Let e be the cycle of the
+pad rising edge of the eighth SCK pulse of a byte. The byte is complete in
+cycle e + 3. For a write, the register's side effect
 is asserted to the core, FIFOs or pin unit during cycle e + 4 and is
 registered at the end of e + 4, so it is observable from cycle e + 5. For a
 read, data byte k is sampled from the state during the cycle in which the
