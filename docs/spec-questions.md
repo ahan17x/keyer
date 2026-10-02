@@ -78,3 +78,100 @@ part of the two-thread contract.
 4. Noted; NTHREADS > 2 is a synthesis experiment, not part of the two-thread
    contract (DECISIONS D-019).
 
+## 2026-10-02 (golden model rewritten from SEMANTICS v0.2, D-012)
+
+### Q5. `level2` for pins 18-23 in cycles 2 and 3
+
+Section 5.2: "`level2(c)[p] = level(c - 2)[p]` for all 24 pins (0 for cycles
+0 to 3)". For pins 18-23, `level(1)[p] = uo_out(1)[p - 16]`, which is 1 if
+thread 0 commits `SET uo2` at cycle 0, so the formula gives `level2(3)[18] =
+1` while the parenthesis says 0. (For pins 0-15 the two agree, since
+`level` is 0 in cycles 0 and 1.)
+
+**Chosen in `tools/keyersim.py`:** the formula: `level2` is a two-stage
+delay of the whole `level` vector, reset to 0, so it is 0 in cycles 0 and 1
+only. That is the simplest hardware (no special case for the uo pins).
+Proposed wording: "(0 for cycles 0 and 1, and for pins 0-15 also in cycles 2
+and 3)".
+
+### Q6. Pin indices 24-31
+
+The 5-bit pin field of majors A, C and D can name pins 24-31, which do not
+exist (the assembler rejects them, but the encoding allows them). Section 5
+is silent.
+
+**Chosen in `tools/keyersim.py`:** every read of such a pin (`RDC TSTP INR
+BP0 BP1` and the waits) sees 0, and every write or mode change (`SET CLR WRC
+OUTR OEN OEF OD PP`) has no effect. This is the simplest hardware: the
+24-bit level vector is zero-extended, and the write decoder has no case for
+these indices. Proposed wording for 5.1: "Pin indices 24-31 read 0; writes to
+them have no effect."
+
+### Q7. Host RUN write in the same cycle as a core START, STOP or HALT
+
+Section 2.3 says the host's RUN value wins for `running` when a CTRL write
+and a core-initiated change land in the same cycle. It does not say what
+happens to the core change's other effects in that cycle: the `DELAY` count
+cleared by `STOP` (the host writes RUN = 1 for the stopped thread), the
+`halted` bit cleared by `START` (the host writes RUN = 0), and the `halted`
+bit set by `HALT` (the host writes RUN = 1 for the halting thread).
+
+**Chosen in `tools/keyersim.py`:** only `running` takes the host's value.
+The `DELAY` count is cleared by any stop event (the core's `STOP` included,
+even though the host keeps the thread running). `halted` is cleared by
+`START`, and by a host RUN = 1, which has priority over a same-cycle `HALT`.
+So `HALT` + RUN = 1 gives running = 1 and halted = 0; `START` + RUN = 0 gives
+running = 0 and halted = 0; `STOP` + RUN = 1 gives running = 1 and a `DELAY`
+that starts over. In hardware the clears are ORs of their events and the
+host's write enable has priority on `running` and `halted`. These cycles
+cannot be reached from firmware alone; they need a CTRL write timed to the
+cycle.
+
+### Q8. Full and empty for a host FIFO operation in the cycle the thread uses the FIFO
+
+Section 8 says that a push on a full FIFO and a pop on an empty FIFO are
+ignored, and that a same-cycle push and pop both take effect "provided
+neither is ignored". It does not say explicitly that "full" and "empty" mean
+the occupancy during the cycle. The question is whether a host push into an
+inbox that is full during cycle c is ignored when the thread pops it in c,
+and whether a host pop of an outbox that is empty during c is ignored when
+the thread pushes in c.
+
+**Chosen in `tools/keyersim.py`:** yes, both are ignored. Full and empty
+are the registered occupancy during the cycle (observe, then commit; this is
+also what 7.3 says for the thread side). The flags need no bypass, which is
+the simplest hardware. In the model, a host call between `step(c)` and
+`step(c + 1)` checks the occupancy during cycle c plus its own earlier calls
+in that window. Consequence for test writers: right after a step in which
+the thread pushed into an empty outbox, `host_outbox_pop` returns None
+although `outbox` holds the byte, so a loop `while m.threads[t].outbox:
+m.host_outbox_pop(t)` must not directly follow such a step. Proposed wording
+for 8: "Full and empty are the occupancy during the cycle: a push on a FIFO
+that is full during cycle c is ignored even if it is popped in c, and a pop
+of a FIFO that is empty during c is ignored even if it is pushed in c."
+
+### Q9. Pad bits for `uo[0]` and `uo[1]` in the model
+
+Section 5.1 says the pad level of `uo` is `uo_out(c)`, and 5.3 makes
+`uo_out` the firmware register `uo_out[7:2]`. The physical pads `uo[0]` and
+`uo[1]` carry MISO and IRQ.
+
+**Chosen in `tools/keyersim.py`:** `Machine.pad()` returns 0 in bits 16 and
+17. The model has no SPI slave, and `irq()` reports the IRQ separately.
+Firmware cannot see the difference, because `level` reads 0 on pins 16 and
+17. If a protocol model ever needs the IRQ pad, bit 17 should become
+`irq()`.
+
+### Resolutions 2026-10-02, second batch (coordinating session)
+
+5. Resolved by the formula: `level2` is a two-stage delay of `level`, reset
+   to 0; SEMANTICS 5.2 reworded.
+6. Resolved as chosen: pin indices 24-31 are reserved, read 0 and are ignored
+   by writes, waits and mode changes (SEMANTICS 5.1). The RTL aliased writes
+   to 26-31 onto uo[2..7]: BUGS 15, fixed; the random lockstep test now
+   generates pin indices 0-31.
+7. Resolved as chosen (matches the RTL's assignment order); SEMANTICS 2.3.
+8. Resolved as chosen (registered occupancy, no bypass); SEMANTICS 8.
+9. Resolved as chosen: `pad()` bits 16 and 17 are 0 in the pin unit's view;
+   SEMANTICS 5.1.
+

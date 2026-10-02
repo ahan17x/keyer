@@ -67,7 +67,7 @@ module keyer_pins (
 
     // ---- drive registers -----------------------------------------------
     wire [7:0] pin_bit  = (cmd_pin < 5'd8) ? (8'd1 << cmd_pin[2:0]) : 8'd0;
-    wire       pin_is_uo = (cmd_pin >= 5'd16);
+    wire       pin_is_uo = (cmd_pin >= 5'd16) && (cmd_pin < 5'd24);   // 24-31 reserved: no effect
     wire [7:0] uo_bit   = 8'd1 << cmd_pin[2:0];
     wire [7:0] uo_allowed = 8'hFC;                      // 16, 17 reserved
 

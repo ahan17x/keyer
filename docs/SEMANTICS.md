@@ -72,8 +72,11 @@ and therefore observable from cycle c + 1 on".
   (which also sets `halted[t]`), the other thread commits `STOP`, or the host
   writes a RUN bit of 0 for t. Any of these also clears the `DELAY` count of
   t.
-- If a host RUN write and a core-initiated change land in the same cycle, the
-  host's value wins for every thread (a RUN write names both threads).
+- If a host RUN write and a core-initiated change land in the same cycle,
+  `running` takes the host's value for every thread (a RUN write names both
+  threads); `halted` is cleared by a RUN bit of 1 even against a same-cycle
+  `HALT`, and otherwise follows the core's change (`HALT` sets it, `START`
+  clears it); the `DELAY` count is cleared by a RUN bit of 0 and by `STOP`.
 - A thread that is not running does nothing at its slots and holds all its
   state except the timer, which keeps ticking (section 6.1). When restarted
   it resumes at `PC[t]`, re-evaluating whatever instruction is there,
@@ -129,10 +132,13 @@ instruction's other effects (PC, registers, pins) stand.
 ### 5.1 Pad vector
 
 The 24 firmware pins map to the pads as in `docs/isa.md`: 0-7 `uio`, 8-15
-`ui`, 16-23 `uo`. The pad level during cycle c is `pad(c)`: for `uio[i]` it is
+`ui`, 16-23 `uo`. The 5-bit pin field can also encode 24-31: those indices
+are reserved, read as 0 and are ignored by every pin write, wait and mode
+change (the assembler rejects them). The pad level during cycle c is `pad(c)`: for `uio[i]` it is
 the driven value if `uio_oe[i](c)` is 1, otherwise whatever the outside world
 drives (pull-ups in the tests); for `ui` it is the input; for `uo` it is
-`uo_out(c)`.
+`uo_out(c)`. Pads `uo[0]` and `uo[1]` carry MISO and IRQ, which belong to the
+host interface; in the pin unit's view (and the model's `pad()`) they are 0.
 
 ### 5.2 Synchroniser and level
 
@@ -141,7 +147,8 @@ drives (pull-ups in the tests); for `ui` it is the input; for `uo` it is
   cycles 0 and 1 regardless of the pads.
 - For pins 16-23, `level(c)[p] = uo_out(c)[p - 16]`, the value being driven
   during cycle c (zero latency). Pins 16 and 17 (MISO, IRQ) always read 0.
-- `level2(c)[p] = level(c - 2)[p]` for all 24 pins (0 for cycles 0 to 3).
+- `level2(c)[p] = level(c - 2)[p]` for all 24 pins (0 for cycles 0 and 1,
+  and for pins 0-15 also for cycles 2 and 3).
 - Every pin read (`RDC TSTP INR INB INW BP0 BP1 WT0 WT1`) observes `level(c)`.
   A **rising edge** is observed at slot c when `level(c)[p] = 1` and
   `level2(c)[p] = 0`, a **falling edge** when the reverse holds. Because a
@@ -306,7 +313,9 @@ takes one slot.
   16 entries of 8 bits, first-in first-out, with the head readable before it
   is popped. Occupancy 0..16 is reported in LEVELS; "empty" is occupancy 0,
   "full" is 16.
-- A push on a full FIFO and a pop on an empty FIFO are ignored. This applies
+- A push on a full FIFO and a pop on an empty FIFO are ignored, where "full"
+  and "empty" are the occupancy during that cycle: a same-cycle pop does not
+  make room for a push, nor a same-cycle push data for a pop. This applies
   to host inbox writes (bytes are dropped) and to host outbox reads (which
   then return the stale head).
 - A push and a pop in the same cycle both take effect (occupancy unchanged)

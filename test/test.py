@@ -362,7 +362,11 @@ async def test_lockstep_random_programs(dut):
     """Constrained-random instruction streams, both threads, random pin wiggling."""
     import keyer_isa as I
     rng = random.Random(int(os.environ.get("KEYER_SEED", "1")))
-    words = []
+    # directed prefix: writes to the reserved pin indices 24-31 must do nothing
+    # (SEMANTICS 5.1, BUGS 15); the assembler rejects them, so encode by hand
+    words = [I.encode("SET", pin=p) for p in range(24, 32)]
+    words += [I.encode("CLR", pin=p) for p in range(24, 32)]
+    words += [I.encode("SETC"), I.encode("WRC", pin=26), I.encode("OUTR", pin=27, rs=0)]
     for _ in range(120):
         ins = rng.choice([i for i in I.INSTRUCTIONS
                           if i.name not in ("HALT", "STOP", "JMP", "JMPR", "CALL", "RET",
@@ -374,7 +378,7 @@ async def test_lockstep_random_programs(dut):
             if fname in ("rd", "rs", "r"):
                 ops[opname] = rng.randrange(8)
             elif fname == "pin":
-                ops[opname] = rng.randrange(24)
+                ops[opname] = rng.randrange(32)        # 24-31 are reserved (SEMANTICS 5.1)
             elif fname in ("off8", "off6", "off5"):
                 ops[opname] = rng.choice([1, 2, 3])          # forward only: no infinite loops
             elif fname == "imm8" or fname == "n8":
