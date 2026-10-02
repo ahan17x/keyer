@@ -1,0 +1,10 @@
+# keyer_core alone, NTHREADS from the command line (-D not needed: chparam).
+read_verilog -I../src ../src/keyer_core.v
+chparam -set NTHREADS @N@ keyer_core
+hierarchy -check -top keyer_core
+proc; flatten; opt -full; memory -nomap; opt; memory_map; opt -full
+techmap; opt -fast
+dfflibmap -liberty LIB
+abc -liberty LIB
+opt_clean
+stat -liberty LIB

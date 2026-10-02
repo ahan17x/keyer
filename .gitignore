@@ -7,7 +7,9 @@ test/*.vcd
 *.hex
 *.lst
 synth/*.log
-synth/run*.ys
+synth/run.ys
+synth/run_*_lib.ys
+synth/run_core[0-9]*.ys
 .pytest_cache/
 formal/fifo_*/
 formal/pins/

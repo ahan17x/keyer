@@ -11,5 +11,8 @@ LIB=$PWD/ihp-pdk/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/lib/sg13cmos5l_stdce
 cd synth && sed "s|LIB|$LIB|g" synth.ys > run.ys && yosys -q -l synth.log run.ys
 ```
 
-Results so far (2026-10-01): flop memory 18,956 cells / 429,092 um^2; with the
-macro black-boxed 6,410 cells, 1,190 flops, 114,169 um^2 (+28,127 um^2 macro).
+`core_only.ys` synthesises `keyer_core` alone with the thread count
+substituted for `@N@` (`sed "s|LIB|$LIB|g; s|@N@|4|" core_only.ys > run_core4.ys`).
+The generated `run*.ys` files are ignored by git; the three sources are not.
+
+Results are logged in `docs/AREA.md`.
