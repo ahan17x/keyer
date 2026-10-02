@@ -37,6 +37,10 @@ COMPILE_ARGS    += -DDUMP
 endif
 # The assembler, ISS and protocol models live in ../tools
 export PYTHONPATH := $(PWD)/../tools:$(PYTHONPATH)
+# Use the repo's virtualenv if scripts/setup_mac.sh created one
+ifneq ($(wildcard $(PWD)/../.venv/bin),)
+export PATH := $(PWD)/../.venv/bin:$(PATH)
+endif
 
 # Include the testbench sources:
 VERILOG_SOURCES += $(PWD)/tb.v

@@ -84,7 +84,7 @@ module loom_core (
     wire [4:0]  bpin = ir[10:6];
     wire        Z    = fz[tid];
     wire        C    = fc[tid];
-    wire        T    = tick[tid];
+    wire        tk   = tick[tid];
     wire [7:0]  inbox_rdata = tid ? inbox1_rdata : inbox0_rdata;
     wire        in_empty  = inbox_empty[tid];
     wire        in_full   = inbox_full[tid];
@@ -187,7 +187,7 @@ module loom_core (
                 `LOOM_COND_CC:  if (!C) pc_next = pc_rel8;
                 `LOOM_COND_FE:  if (in_empty)  pc_next = pc_rel8;
                 `LOOM_COND_FNE: if (!in_empty) pc_next = pc_rel8;
-                `LOOM_COND_TP:  if (T)  pc_next = pc_rel8;
+                `LOOM_COND_TP:  if (tk)  pc_next = pc_rel8;
                 default: ;
             endcase
         end
@@ -225,7 +225,7 @@ module loom_core (
             case (ir[8:5])
                 `LOOM_PUSH: begin done = ~out_full; outbox_push[tid] = ~out_full; end
                 `LOOM_POP:  begin done = ~in_empty; inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, inbox_rdata}; end
-                `LOOM_RDS:  begin wr_en = 1'b1; wr_val = {9'd0, tid, running[otid], T, out_full, out_empty, in_full, in_empty}; end
+                `LOOM_RDS:  begin wr_en = 1'b1; wr_val = {9'd0, tid, running[otid], tk, out_full, out_empty, in_full, in_empty}; end
                 `LOOM_RDCYC: begin wr_en = 1'b1; wr_val = cyc; end
                 `LOOM_SETT: do_sett = 1'b1;
                 `LOOM_RDT:  begin wr_en = 1'b1; wr_val = count[tid]; end
@@ -245,7 +245,7 @@ module loom_core (
                 `LOOM_NOP:   ;
                 `LOOM_HALT:  do_halt = 1'b1;
                 `LOOM_RET:   pc_next = lr[tid];
-                `LOOM_WAITT: begin done = T; do_clrt = T; end
+                `LOOM_WAITT: begin done = tk; do_clrt = tk; end
                 `LOOM_DELAY: begin
                     if (delay[tid] == 8'd0) begin
                         if (imm8 == 8'd0) done = 1'b1;

@@ -13,3 +13,5 @@ formal/fifo_*/
 formal/pins/
 formal/core*/
 formal/*.out
+.venv/
+test/make.log
