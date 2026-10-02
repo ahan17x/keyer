@@ -1,0 +1,23 @@
+# Full check suite in CI: Python tests, firmware, Verilator lint, Icarus,
+# cocotb host-interface and lockstep tests, formal proofs. This is the
+# project's own workflow (not from the Tiny Tapeout template) and is the
+# signal to trust: the template's `test` workflow fails on cocotb 2 result
+# files (DECISIONS D-023).
+name: check
+on: [push, workflow_dispatch]
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y iverilog verilator yosys z3
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install pytest cocotb yowasp-yosys
+      - run: bash scripts/check_all.sh
+      - name: test results
+        uses: test-summary/action@v2.4
+        with:
+          paths: "test/results.xml"
+        if: always()

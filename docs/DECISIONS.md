@@ -177,3 +177,17 @@ tool commits must not start one, and two pushes in quick succession should
 not harden both. Manual runs on a chosen commit use the dispatch. Rejected:
 the template trigger (every push hardens); a second workflow file (the
 template's jobs would still run on every push).
+
+## D-023 2026-10-02 OPEN: the template's `test` workflow fails on a passing run
+
+`.github/workflows/test.yaml` (Tiny Tapeout template) ends its test step with
+`! grep failure results.xml`. cocotb 2 writes `failures="0"` into every
+results file, so the step fails whenever the suite passes (first CI run on
+GitHub, 2026-10-02: 11 of 11 tests passed, step exit code 1). The rule in
+CLAUDE.md is not to edit the template's jobs, so this entry proposes the
+fix and waits for Ahan: change that line to `! grep '<failure' results.xml`
+(one token; the template's intent is "no <failure> element"). Alternative,
+rejected: pin cocotb 1.x (the harness uses the cocotb 2 API). Meanwhile the
+project's own `check` workflow (renamed from `lint`, now the full
+`scripts/check_all.sh` including cocotb and formal) is the CI signal to
+trust, and the `test` badge stays red until this is decided.
