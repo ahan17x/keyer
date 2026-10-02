@@ -5,9 +5,10 @@
 Entry for the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/).
 IHP 130 nm CMOS5L through Tiny Tapeout, 6x4 tiles.
 
-Keyer is a two-thread, 16-bit, pin-oriented CPU. A host loads a program over
-SPI; the threads bit-bang UART, SPI, I2C (and whatever else fits the timing)
-on the chip's 24 pins with cycle-exact timing. See [docs/info.md](docs/info.md)
+Keyer is a two-thread, 16-bit, pin-oriented CPU, named after the telegraph
+keyer: a program becomes precisely timed marks and spaces on a wire. A host
+loads a program over SPI; the threads bit-bang UART, SPI, I2C (and whatever
+else fits the timing) on the chip's 24 pins with cycle-exact timing. See [docs/info.md](docs/info.md)
 for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 
 ## Layout
@@ -15,7 +16,7 @@ for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 | Path | What |
 |---|---|
 | `src/` | Verilog RTL. `tt_um_ahan17x_keyer.v` is the top. `keyer_isa.vh` is generated. |
-| `docs/` | Datasheet source (`info.md`) and the ISA reference (`isa.md`). |
+| `docs/` | Datasheet source (`info.md`), the ISA reference (`isa.md`), the cycle-exact contract (`SEMANTICS.md`), decisions and bug ledger. |
 | `tools/keyer_isa.py` | Encoding table, the single source of truth for opcodes. |
 | `tools/keyerasm.py` | Assembler. |
 | `tools/keyersim.py` | Cycle-exact instruction-set simulator (the golden model). |
@@ -41,8 +42,10 @@ python3 tools/keyer_isa.py --vh > src/keyer_isa.vh
 
 ## Verification approach
 
-`tools/keyersim.py` defines the behaviour; the RTL is checked against it cycle
-by cycle from reset by `test/keyer_tb.py`, with every host action (program
+`docs/SEMANTICS.md` defines the behaviour cycle by cycle. The Python model
+(`tools/keyersim.py`) and the RTL are written from it independently, by
+sessions that cannot read each other's side; `test/keyer_tb.py` then runs the
+model in lockstep with the RTL from reset, with every host action (program
 load, run/stop, FIFO traffic, pin modes) mirrored from the RTL into the model.
 Protocol correctness is checked by independent models that know only the
 protocol, not the firmware. Constrained-random instruction streams run on both

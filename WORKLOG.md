@@ -62,3 +62,65 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
 - Handoff to Claude Code prepared: `CLAUDE.md` (read order, rules, commands, compact instructions), `docs/HANDOFF.md`, `docs/DECISIONS.md` (D-001 to D-016, four OPEN), `docs/BUGS.md` (10 rows), `docs/SETUP.md`, `docs/KICKOFF_PROMPT.md`, `.claude/agents/golden-model.md` and `rtl.md` (deny rules so neither can read the other's code), `scripts/setup_mac.sh`, `scripts/check_all.sh`, `.github/workflows/lint.yaml`.
 - Bug 10: the FIFO data-integrity BMC had been passing vacuously (the `-DDATA_CHECK` line was lost from the sby file). Fixed; real BMC to depth 20 passes in ~90 s; check_all now verifies the define reached the model.
 - Full check suite green at hand-off: 28 Python tests, 9 cocotb tests, lint, 3 formal groups.
+
+## 2026-10-02, Claude Code session 1 (Keyer)
+
+- Environment on the Mac (BUGS 11, docs/SETUP.md section 3): the venv had
+  been created at `~/Claude/loom` and the repo moved, so every launcher
+  failed with "bad interpreter"; macOS has no `timeout`; `formal/fifo_props.sv`
+  had been deleted by commit 0b2d0af, so the FIFO proof had not run since.
+  Rebuilt the venv on Homebrew Python 3.13, made the scripts detect a moved
+  venv, restored the property file, untracked two generated files. Full check
+  suite green on this machine (commit 37f9213).
+- Decisions D-017 to D-021 taken by Ahan: name Keyer; NOW/DEADLINE timer with
+  timeouts (proposal B); two threads with an NTHREADS parameter; capture and
+  replay plus staying small as the differentiator, Hardcaml out; keep the core.
+- Renamed Loom to Keyer everywhere in one commit (a9dd6e3): modules, files,
+  tools, tests, docs, info.yaml, top module `tt_um_ahan17x_keyer`, ID byte
+  'K'. History and the review of the sibling entry keep the old name.
+- Wrote `docs/SEMANTICS.md` v0.2, the cycle-exact contract (da573d9); isa.md
+  aligned (85 instructions, ISA v0.2). Reading the RTL against the spec found
+  BUGS 12 (soft reset did not clear FIFOs) and 13 (PC/IMEM_ADDR not readable).
+- D-018 implemented (f713984) by two restricted subagents working in parallel
+  from SEMANTICS alone: golden-model (no `src/`) and rtl (no model). The ISA
+  table, header, firmware (`WAITT` -> `WAITD 1`, timing unchanged; I2C
+  stretch timeout with status 0xFF) and tests were written by the
+  coordinating session. The subagents raised four spec questions
+  (`docs/spec-questions.md`); all resolved into SEMANTICS (timer ticks while
+  stopped; soft reset wins a same-cycle commit; T bit ignored elsewhere;
+  NTHREADS > 2 is not part of the contract).
+- First lockstep run: 9 of 11 passed, model and RTL in agreement everywhere,
+  but both I2C tests failed functionally. Traced to BUGS 14: the host's
+  byte counter saturates at 255, so IMEM_DATA stopped writing after word 127
+  and the 136-word I2C firmware ran off into zeros. The lockstep comparison
+  cannot see a wrong program load; the functional checks did. Fixed in the
+  host (separate low/high phase bit); `test_imem_write_read` now loads and
+  reads back all 256 words.
+- Formal: core properties T1-T8 for the timer (a reached deadline completes
+  the wait in the same slot, exact completion rule, NOW/DEADLINE move only as
+  specified, timeout forms set C = !base, timed-out waits have no side
+  effects) plus P3-P7; abc pdr in about 2 s. The rtl subagent also ran 19
+  mutations (all caught) and a Yosys equivalence check between the two-thread
+  core before and after parameterisation.
+- Area (generic Yosys cells, not the CMOS5L library): core 397 -> 459 flops
+  for the timer and timeouts; NTHREADS = 4 about 7,200 cells vs 4,580.
+- End of step 3: 33 Python tests, 11 cocotb tests, lint, Icarus, three
+  formal groups green.
+- Step 4, independent re-derivation (D-012): the golden-model subagent
+  rewrote `tools/keyersim.py` from SEMANTICS.md alone (first action on the
+  path was a full overwrite; it never saw the old model or `src/`). 978
+  lines against the previous 582, a dispatch table with one handler per
+  encoding-table entry. All 33 Python tests passed on its first run, and the
+  lockstep suite passed 11 of 11 with zero cycles of disagreement against
+  the RTL, so there is no mismatch to log. Its five spec questions (Q5-Q9:
+  level2 at reset, reserved pin indices 24-31, RUN write against a
+  same-cycle START/STOP/HALT, FIFO occupancy without bypass, MISO/IRQ in the
+  pad view) were resolved into SEMANTICS. Q6 exposed BUGS 15: the RTL
+  aliased pin writes 26-31 onto uo[2..7]; reserved in the spec, fixed in the
+  pin unit, and the random lockstep test now draws pin indices from 0-31.
+- End of session: everything green on `bash scripts/check_all.sh` (33
+  Python tests, 11 cocotb tests, lint, Icarus, three formal groups). Commits
+  this session: 37f9213 (environment), a9dd6e3 (rename), da573d9
+  (SEMANTICS), f713984 (D-018/D-019, BUGS 12-14), f03f726 (model re-derived,
+  BUGS 15), plus this docs commit. Nothing pushed. Next session: design
+  capture-and-replay (docs/HANDOFF.md task 1).

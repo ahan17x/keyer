@@ -31,13 +31,13 @@ no interrupts, so timing can be read off the program listing.
 | HDL | Verilog-2005 | Template requires a Verilog top; keeps the GitHub flow unmodified. Hardcaml port is an optional later bonus. |
 | Clock | Design for 60 MHz (16.7 ns), run at 50 MHz by default | 60 MHz divides USB low-speed (40 cycles/bit) and 10BASE-T (3 cycles/half-bit) evenly. Template default is 50 MHz; raise once timing closes. |
 | Core | 16-bit datapath, 16-bit instructions, 8 registers per thread | Bytes are the common case; 16 bits holds timers, CRC-16 and counters. |
-| Threads | 2 hardware threads, barrel-interleaved (T0 on even cycles, T1 on odd) | Each thread gets a hazard-free, zero-branch-penalty machine at 1 instruction per 2 cycles. Full duplex becomes trivial. Area cost is one extra register file and PC. |
+| Threads | 2 hardware threads, barrel-interleaved (T0 on even cycles, T1 on odd); thread count is an RTL parameter (D-019) | Each thread gets a hazard-free, zero-branch-penalty machine at 1 instruction per 2 cycles. Full duplex becomes trivial. Area cost is one extra register file and PC. |
 | Program memory | 256 x 16 SRAM macro `RM_IHPSG13_1P_256x16` (28,100 um^2, under 1 tile) | Flip-flops for the same memory would be ~275,000 um^2, over a third of the chip. Simulation uses a flop model with the same interface. FPGA uses block RAM. |
 | Host interface | SPI slave (mode 0) on ui[0..2] + uo[0], IRQ line on uo[1] | 5 pins. Leaves 19 pins for protocols. Easy to drive from the demo board's RP2350. Host SCK up to clk/8. |
 | Pin model | 24-pin flat space: 0-7 uio (bidir, per-pin push-pull or open-drain mode), 8-15 ui (inputs), 16-23 uo (outputs) | Open-drain mode makes I2C/1-wire safe by construction: in OD mode the pad can never be driven high. That becomes a formal property. |
-| Timing primitives | Per-thread 16-bit timer with sticky tick + WAITT; WAIT on pin level/edge; DELAY | Bit edges land on timer ticks, not on instruction counts, so loops can vary in length without drift. |
+| Timing primitives | Per-thread NOW/DEADLINE tick timer (D-018): SETT, SETD, WAITD; WAIT on pin level/edge with timeout forms; DELAY | Bit edges land on timer ticks, not on instruction counts; a late loop catches up without losing ticks; every blocking instruction can give up at the deadline, so a stuck bus cannot hang a thread. |
 | Data path to host | Per-thread 8-bit FIFOs each way (depth 16) with blocking PUSH/POP | Firmware stays simple: `pop r0` waits for the host. |
-| Verification | Python ISS is the golden model; cocotb runs the same program on RTL and compares retired instructions and pin traces; SymbiYosys formal on the FIFO, timer, pin unit and host interface; constrained-random programs | This is what the brief says it judges. |
+| Verification | `docs/SEMANTICS.md` is the contract; the Python model and the RTL are written from it independently (D-012); cocotb runs the model in lockstep with the RTL every cycle from reset; SymbiYosys formal on the FIFO, pin unit and core timer/control; protocol models; constrained-random programs | This is what the brief says it judges. |
 
 All inputs are double-synchronised (2 cycles of latency), since protocol signals
 are asynchronous to the core clock.
