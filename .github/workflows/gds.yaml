@@ -1,8 +1,21 @@
 name: gds
 
+# Trigger block only (DECISIONS D-022); the jobs below are the Tiny Tapeout
+# template's and are not edited. A hardening run takes hours: run it only
+# when the hardware changes, and let a newer push on the same branch cancel
+# the run it supersedes.
 on:
   push:
+    paths:
+      - 'src/**'
+      - 'info.yaml'
+      - 'macro/**'
+      - '.github/workflows/gds.yaml'
   workflow_dispatch:
+
+concurrency:
+  group: gds-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   gds:

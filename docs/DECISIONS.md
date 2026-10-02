@@ -165,3 +165,15 @@ The core passes lockstep, formal and protocol tests; the timer change (D-018)
 and the differentiator (D-020) are additive. Rejected: a redesign from a
 blank page on the same test infrastructure (weeks of schedule for an
 unproven gain, three and a half months before the deadline).
+
+## D-022 2026-10-02 Ahan: the gds workflow hardens only on hardware changes, and a newer push cancels the run it supersedes
+
+The trigger block of `.github/workflows/gds.yaml` (never its jobs, which
+stay as the Tiny Tapeout template wrote them) gets a `paths` filter
+(`src/**`, `info.yaml`, `macro/**`, the workflow file itself) plus
+`workflow_dispatch`, and a top-level concurrency group per branch with
+`cancel-in-progress`. Why: a hardening run takes hours of shared CI; docs and
+tool commits must not start one, and two pushes in quick succession should
+not harden both. Manual runs on a chosen commit use the dispatch. Rejected:
+the template trigger (every push hardens); a second workflow file (the
+template's jobs would still run on every push).
