@@ -7,12 +7,23 @@ FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
 PROJECT_SOURCES = keyer_fifo.v keyer_imem.v keyer_pins.v keyer_core.v keyer_host.v keyer_capture.v tt_um_ahan17x_keyer.v
+# The vendored simulation model of the SRAM program memory (D-025), needed for
+# both the RTL and the gate-level case: keyer_imem instantiates the macro by
+# default and the gate-level netlist does too. The behavioural core comes
+# first because the wrapper instantiates it; -DFUNCTIONAL selects that path.
+# The port-only blackbox src/RM_IHPSG13_1P_256x16_c2_bm_bist.v is NOT compiled
+# here: it would redefine the module.
+MACRO_DIR     = $(PWD)/../macro/RM_IHPSG13_1P_256x16_c2_bm_bist
+MACRO_MODELS  = $(MACRO_DIR)/RM_IHPSG13_1P_core_behavioral_bm_bist.v
+MACRO_MODELS += $(MACRO_DIR)/RM_IHPSG13_1P_256x16_c2_bm_bist.v
 
 ifneq ($(GATES),yes)
 
 # RTL simulation:
 SIM_BUILD				= sim_build/rtl
+COMPILE_ARGS    += -DFUNCTIONAL
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
+VERILOG_SOURCES += $(MACRO_MODELS)
 
 else
 
@@ -23,6 +34,8 @@ COMPILE_ARGS    += -DFUNCTIONAL
 COMPILE_ARGS    += -DSIM
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_io/verilog/sg13cmos5l_io.v
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/verilog/sg13cmos5l_stdcell.v
+VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/verilog/sg13cmos5l_udp.v
+VERILOG_SOURCES += $(MACRO_MODELS)
 
 # this gets copied in by the GDS action workflow
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v

@@ -153,16 +153,18 @@ async def test_imem_write_read(dut):
         rb = await spi.read(R_IMEM_DATA, 2 * len(words))
         got = [rb[2 * i] | (rb[2 * i + 1] << 8) for i in range(len(words))]
         assert got == words, (half, ["%04X" % w for w in got])
-        # the memory itself
-        for i, w in enumerate(words):
-            assert int(dut.user_project.u_imem.mem[0x20 + i].value) == w
+        # the memory itself (behavioural array only; the SRAM model keeps its own)
+        if hasattr(dut.user_project.u_imem, "mem"):
+            for i, w in enumerate(words):
+                assert int(dut.user_project.u_imem.mem[0x20 + i].value) == w
     # a full 256-word image in one transaction, read back in one transaction
     # (BUGS 14: the byte counter must not stop the low/high alternation)
     spi = SpiMaster(dut, pads, half=4)
     words = [random.randrange(0x10000) for _ in range(256)]
     await spi.load_program(words, base=0)
-    for a in (0x7E, 0x7F, 0x80, 0xFF):
-        assert int(dut.user_project.u_imem.mem[a].value) == words[a], ("word", a)
+    if hasattr(dut.user_project.u_imem, "mem"):
+        for a in (0x7E, 0x7F, 0x80, 0xFF):
+            assert int(dut.user_project.u_imem.mem[a].value) == words[a], ("word", a)
     await spi.write(R_IMEM_ADDR, [0, 0])
     rb = await spi.read(R_IMEM_DATA, 512)
     got = [rb[2 * i] | (rb[2 * i + 1] << 8) for i in range(256)]

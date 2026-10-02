@@ -1,11 +1,14 @@
 /*
  * Keyer: 256 x 16 program memory with a one-cycle synchronous read.
  *
- * Default: behavioural array (simulation, FPGA block RAM, and the fallback
- * for the ASIC flow if the macro cannot be placed).
- * With `KEYER_IMEM_SRAM defined: wraps the IHP RM_IHPSG13_1P_256x16_c2_bm_bist
- * macro (the CMOS5L SRAM library is the SG13G2 one). The macro's read data is
+ * Default: wraps the IHP RM_IHPSG13_1P_256x16_c2_bm_bist SRAM macro (the
+ * CMOS5L SRAM library is the SG13G2 one). The macro's read data is
  * registered inside the macro, so timing matches the behavioural model.
+ * The port-only blackbox src/RM_IHPSG13_1P_256x16_c2_bm_bist.v provides the
+ * module declaration for synthesis and lint; simulation compiles the vendored
+ * model from macro/RM_IHPSG13_1P_256x16_c2_bm_bist/ instead (DECISIONS D-025).
+ * With `KEYER_IMEM_FLOPS defined: behavioural flop array, the fallback used
+ * by the FPGA build and the area comparison.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
@@ -17,7 +20,7 @@ module keyer_imem (
     input  wire [15:0] wdata,
     output wire [15:0] rdata
 );
-`ifdef KEYER_IMEM_SRAM
+`ifndef KEYER_IMEM_FLOPS
     RM_IHPSG13_1P_256x16_c2_bm_bist u_sram (
         .A_CLK      (clk),
         .A_MEN      (1'b1),

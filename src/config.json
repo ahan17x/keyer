@@ -31,6 +31,56 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
+  "//": "================= SRAM macro integration (DECISIONS D-025, branch sram-macro) =================",
+  "//": "Recipe adapted, with attribution, from thomasgilbert481/tt_um_loom (Apache-2.0): see",
+  "//": "macro/RM_IHPSG13_1P_256x16_c2_bm_bist/README.md and the header of src/pdn_cfg.tcl.",
+  "//": "MACROS: the LibreLane way of bringing in a hard macro. The instance key is the FLATTENED",
+  "//": "path: tt_um_ahan17x_keyer -> u_imem (keyer_imem) -> u_sram. Orientation FS (mirrored about X)",
+  "//": "puts the macro's 108 Metal2 signal pins (LEF y 0..0.26) on its top edge, facing the rows",
+  "//": "above; location [12, 40] is the lower-left corner in die coordinates (6x4 block: DIEAREA",
+  "//": "1289.28 x 710.64, core x 2.88..1286.40, y 3.78..706.86). x = 12 aligns the macro's Metal4",
+  "//": "power columns with the stripe grid below (x = 12 + 67.44 k would too). The lib keys name",
+  "//": "the process corner because the cmos5l STA corners are all nom_*.",
+  "MACROS": {
+    "RM_IHPSG13_1P_256x16_c2_bm_bist": {
+      "instances": {
+        "u_imem.u_sram": {
+          "location": [12, 40],
+          "orientation": "FS"
+        }
+      },
+      "gds": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.gds"],
+      "lef": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.lef"],
+      "lib": {
+        "*_typ_*": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist_typ_1p20V_25C.lib"],
+        "*_fast_*": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist_fast_1p32V_m55C.lib"],
+        "*_slow_*": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist_slow_1p08V_125C.lib"]
+      },
+      "nl": ["dir::./RM_IHPSG13_1P_256x16_c2_bm_bist.v"],
+      "spice": ["dir::../macro/RM_IHPSG13_1P_256x16_c2_bm_bist/RM_IHPSG13_1P_256x16_c2_bm_bist.cdl"]
+    }
+  },
+  "//": "PDN_MACRO_CONNECTIONS: both macro supplies (VDD! periphery, VDDARRAY! bit cells) to VPWR, VSS! to VGND.",
+  "PDN_MACRO_CONNECTIONS": [
+    "u_imem.u_sram VPWR VGND VDD! VSS!",
+    "u_imem.u_sram VPWR VGND VDDARRAY! VSS!"
+  ],
+  "//": "PDN_CFG: LibreLane's default PDN script with the macro grid replaced (full-height Metal4 stripes",
+  "//": "through the macro's same-net power columns, verified at run time). See src/pdn_cfg.tcl.",
+  "PDN_CFG": "dir::pdn_cfg.tcl",
+  "//": "Magic reads the full macro GDS (cmos5l streams out with klayout; harmless, as the reference needs).",
+  "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
+  "//": "Magic's cmos5l tech lacks the SRAM DRC exceptions the KLayout sign-off deck applies; every Magic",
+  "//": "DRC error of the sibling's run was inside the macro, and Magic DRC is not part of the cmos5l precheck.",
+  "ERROR_ON_MAGIC_DRC": false,
+  "//": "One checked case: the POWER stripes cross the Metal4 OBS at the macro's VDD!/VDDARRAY! split and",
+  "//": "Magic, extracting the macro from its LEF, reports them as illegal overlaps. The GDS has no Metal4",
+  "//": "there; LVS and the precheck's KLayout DRC check the real metal.",
+  "ERROR_ON_ILLEGAL_OVERLAPS": false,
+  "//": "Blackbox the macro during SPICE extraction for LVS: the IHP macros are not LVS clean.",
+  "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_.*"],
+  "//": "======================= end SRAM macro integration =======================",
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
@@ -58,8 +108,13 @@
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
-  "FP_PDN_VPITCH": 50.0,
+  "//": "PDN geometry (D-025): VPITCH, VSPACING and VOFFSET differ from the template only so that the",
+  "//": "Metal4 stripes sit inside the macro's Metal4 power columns; VWIDTH stays 2.1 (the precheck's",
+  "//": "minimum power-port width). Derivation in src/pdn_cfg.tcl.",
+  "FP_PDN_VPITCH": 67.44,
   "FP_PDN_VWIDTH": 2.1,
+  "FP_PDN_VSPACING": 3.52,
+  "FP_PDN_VOFFSET": 26.36,
 
   "//": "Clock",
   "RUN_CTS": 1,
