@@ -15,11 +15,12 @@ reprogrammable after fabrication.
   cost nothing extra, and there are no stalls, caches or interrupts, so
   timing can be read off the listing. Full-duplex protocols are two
   straight-line programs.
-- 16-bit datapath, eight registers per thread, 79 instructions. Pin
+- 16-bit datapath, eight registers per thread, 85 instructions. Pin
   instructions read, write and wait on any of the 24 pins (level or edge).
-- Per-thread 16-bit timer with a sticky tick: `WAITT` lands bit edges on the
-  tick grid regardless of how many instructions the loop has, so a UART loop
-  does not drift.
+- Per-thread deadline timer: `WAITD` lands bit edges on the tick grid
+  regardless of how many instructions the loop has, a late loop catches up
+  without losing ticks, and every blocking instruction has a timeout form
+  that gives up at the deadline, so a stuck bus cannot hang a thread.
 - Bidirectional pins have a per-pin open-drain mode in which the pad can never
   be driven high, which makes I2C and similar buses safe by construction.
 - Program memory is a 256 x 16 SRAM macro. Each thread has an inbox and an
@@ -28,7 +29,8 @@ reprogrammable after fabrication.
   program load, thread control, FIFOs, pin modes and pin readback, plus an
   IRQ output.
 
-The ISA, timing rules and register map are in `docs/isa.md`. The design was
+The ISA and register map are in `docs/isa.md`, the cycle-exact rules in
+`docs/SEMANTICS.md`. The design was
 verified by running a cycle-exact Python model of the ISA in lockstep with the
 RTL (every cycle, from reset, with all host traffic mirrored), against
 independent UART, SPI and I2C protocol models and constrained-random programs.

@@ -5,7 +5,7 @@ what exists, what is decided, what is open, what to do next.
 
 ## What exists (all tests green)
 
-- `docs/isa.md`: ISA v0.1 (79 instructions), pin space, timer, FIFOs, host
+- `docs/isa.md`: ISA v0.2 (85 instructions), pin space, timer, FIFOs, host
   register map. Not yet a cycle-exact contract; see task 2.
 - `tools/keyer_isa.py` (encoding table, generates `src/keyer_isa.vh`),
   `tools/keyerasm.py` (assembler), `tools/keyersim.py` (cycle-exact golden

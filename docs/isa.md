@@ -1,9 +1,10 @@
-# Keyer ISA, version 0.1 (draft, not yet frozen)
+# Keyer ISA, version 0.2 (draft, not yet frozen)
 
 Keyer is a two-thread, 16-bit, pin-oriented processor. This document is the
-contract between the assembler, the instruction-set simulator (ISS) and the
-RTL. The encoding table in `tools/keyer_isa.py` is the single source of truth
-for opcodes; `src/keyer_isa.vh` is generated from it.
+programmer's reference. The cycle-exact contract between the instruction-set
+simulator (ISS) and the RTL is `docs/SEMANTICS.md`, which wins where the two
+disagree. The encoding table in `tools/keyer_isa.py` is the single source of
+truth for opcodes; `src/keyer_isa.vh` is generated from it.
 
 ## 1. Machine model
 
@@ -11,12 +12,14 @@ for opcodes; `src/keyer_isa.vh` is generated from it.
   core clock cycles, T1 on odd. Each thread therefore runs one instruction per
   two core clocks. One such opportunity is called a **slot**.
 - Every instruction completes in exactly one slot, except the **blocking**
-  instructions (`WT0 WT1 WTR WTF WAITT POP PUSH DELAY`), which hold the thread
-  at the same PC, re-evaluating every slot, until their condition is met.
+  instructions (`WT0 WT1 WTR WTF POP PUSH`, their timeout forms, `WAITD` and
+  `DELAY`), which hold the thread at the same PC, re-evaluating every slot,
+  until their condition is met.
   There are no stalls, caches or interrupts. Taken branches cost nothing extra.
 - Per thread: eight 16-bit registers `r0`-`r7`, program counter `PC`, link
-  register `LR`, flags `Z` and `C`, a 16-bit timer, an **inbox** FIFO (host to
-  thread, 8-bit) and an **outbox** FIFO (thread to host, 8-bit).
+  register `LR`, flags `Z` and `C`, a tick timer with `NOW` and `DEADLINE`
+  registers, an **inbox** FIFO (host to thread, 8-bit) and an **outbox** FIFO
+  (thread to host, 8-bit).
 - Shared: 256 x 16-bit program memory (`IMEM`), the 24-pin space, a 16-bit
   free-running cycle counter `CYC`, and the per-pin mode (push-pull or
   open-drain) for the bidirectional pins.
@@ -50,16 +53,27 @@ two cycles is observed by exactly one slot of each thread.
 
 ### Timer (one per thread)
 
-Registers `period` (16-bit), `count` (16-bit), `tick` (1-bit, sticky).
-Every core cycle, if `period != 0`: if `count == 0` then `tick <= 1` and
-`count <= period - 1`, else `count <= count - 1`. If `period == 0` the timer
-is disabled and `tick` is never set.
+Registers `period`, `prescale`, `NOW` and `DEADLINE`, all 16-bit. Every
+`period` core cycles the timer **ticks**: `NOW` increments by one. `period = 0`
+disables the timer (`NOW` is frozen).
 
-`SETT rs` at core cycle t sets `period = rs`, `count = rs - 1`, `tick = 0`.
-Ticks then occur at the ends of cycles t + rs, t + 2 rs, ... `WAITT` completes
-on the first slot at which `tick` is 1, and clears it. Because `tick` is
-sticky, a loop that is late for one tick catches up on the next `WAITT`
-without shifting the phase of later ticks.
+- `SETT rs` restarts the timer: `period = rs`, `NOW = DEADLINE = 0`; the first
+  tick is `rs` cycles after the instruction, then every `rs` cycles.
+- `SETD k` sets `DEADLINE = NOW + k` (k = 0..255 ticks from now).
+- `WAITD k` blocks until `NOW` has reached `DEADLINE + k`, then advances
+  `DEADLINE` by k. One `WAITD 1` per bit puts every bit edge on the tick grid
+  no matter how many instructions the loop has. A loop that falls behind
+  completes its `WAITD` immediately and `DEADLINE` still advances, so later
+  deadlines keep their phase and no tick is lost; `WAITD k` waits k periods
+  in one instruction.
+- "Deadline reached" means `NOW - DEADLINE`, as a signed 16-bit value, is
+  zero or positive. `RDT rd` reads that difference, `BDR` branches on it and
+  status bit 4 reports it. Every blocking instruction has a **timeout form**
+  (`WT0T WT1T WTRT WTFT POPT PUSHT`) that also completes when the deadline is
+  reached and reports `C = 0` on success, `C = 1` on timeout; the usual
+  pattern is `SETD k`, the timed wait, then `BCS handler`.
+
+Exact cycle rules and a worked example: `docs/SEMANTICS.md` section 6.
 
 ### FIFOs
 
@@ -75,7 +89,7 @@ non-blocking forms and report success in `C`.
 | 1 | inbox full |
 | 2 | outbox empty |
 | 3 | outbox full |
-| 4 | timer tick pending |
+| 4 | deadline reached |
 | 5 | other thread running |
 | 6 | this thread's id (0 or 1) |
 | 15:7 | 0 |
@@ -94,7 +108,7 @@ All instructions are 16 bits. `[15:12]` is the major opcode. Field letters:
 `d` = destination register, `s` = source register, `i` = immediate, `o` =
 signed branch offset (relative to the address of the next instruction),
 `p` = pin index (0-23), `a` = absolute address, `f` = sub-opcode, `c` =
-condition, `l` = level, `x` = must be 0.
+condition, `l` = level, `t` = timeout bit, `x` = must be 0.
 
 The register field is always at `[11:9]` (a second register, when present, at
 `[8:6]`), so the decoder extracts register indices from one place.
@@ -113,9 +127,9 @@ The register field is always at `[11:9]` (a second register, when present, at
 | 9 Bcc | `1001 ccc x oooooooo` | if cond: PC = PC + 1 + sext(o) |
 | A BPIN | `1010 l ppppp oooooo` | if level[p] == l: PC = PC + 1 + sext(o) |
 | B JMP/CALL | `1011 c aaaaaaaaaaa` | c=0: PC = a. c=1: LR = PC + 1; PC = a |
-| C PIN | `1100 ffff xxx ppppp` | pin op on p |
+| C PIN | `1100 ffff t xx ppppp` | pin op on p; t = timeout form of a wait |
 | D PINR | `1101 rrr fff x ppppp` | pin op with register |
-| E XFER | `1110 rrr ffff xxxxx` | register <-> unit |
+| E XFER | `1110 rrr ffff t xxxx` | register <-> unit; t = timeout form of PUSH/POP |
 | F MISC | `1111 ffff iiiiiiii` | control |
 
 ## 4. Instruction list
@@ -183,7 +197,7 @@ The assembler accepts `LDW rd, imm16` and expands it to `LDI` + `LDIH`.
 | `BCC off` / `BHS` | C = 0 |
 | `BFE off` | inbox empty |
 | `BFNE off` | inbox not empty |
-| `BTP off` | timer tick pending |
+| `BDR off` | deadline reached (`NOW - DEADLINE >= 0`, signed) |
 | `BP0 p, off` | level[p] = 0 (offset range -32..+31) |
 | `BP1 p, off` | level[p] = 1 (offset range -32..+31) |
 | `JMP addr` | PC = addr |
@@ -209,6 +223,7 @@ level.
 | 7 | `WT1 p` | block until level[p] = 1 | blocking |
 | 8 | `WTR p` | block until a rising edge at p is observed | blocking |
 | 9 | `WTF p` | block until a falling edge at p is observed | blocking |
+| 6-9, t=1 | `WT0T WT1T WTRT WTFT p` | as above, or until the deadline is reached; C = 0 if the pin condition held, C = 1 on timeout | blocking |
 | 10 | `WRC p` | pinwrite(p, C) | 1 |
 | 11 | `RDC p` | C = level[p] | 1 |
 | 12 | `TSTP p` | Z = (level[p] == 0) | 1 |
@@ -226,10 +241,12 @@ level.
 |---|---|---|---|---|
 | 0 | `PUSH rs` | outbox <- rs[7:0] | - | blocking (outbox full) |
 | 1 | `POP rd` | rd = zext(inbox byte) | - | blocking (inbox empty) |
+| 0, t=1 | `PUSHT rs` | push, or give up when the deadline is reached; C = 0 pushed, C = 1 timeout | C | blocking |
+| 1, t=1 | `POPT rd` | pop, or give up when the deadline is reached; C = 0 popped, C = 1 timeout (rd unchanged) | C | blocking |
 | 2 | `RDS rd` | rd = status word | - | 1 |
 | 3 | `RDCYC rd` | rd = CYC | - | 1 |
-| 4 | `SETT rs` | timer period = rs (0 disables); restart | - | 1 |
-| 5 | `RDT rd` | rd = timer count | - | 1 |
+| 4 | `SETT rs` | timer period = rs (0 disables); restart, NOW = DEADLINE = 0 | - | 1 |
+| 5 | `RDT rd` | rd = NOW - DEADLINE (signed; >= 0 means reached) | - | 1 |
 | 6 | `PUSHNB rs` | if outbox not full: push, C = 1; else C = 0 | C | 1 |
 | 7 | `POPNB rd` | if inbox not empty: rd = byte, C = 1; else C = 0, rd unchanged | C | 1 |
 | 8 | `OUTB rs` | pinwrite(i, rs[i]) for i in 0..7 (all uio pins at once) | - | 1 |
@@ -246,32 +263,41 @@ level.
 | 0 | `NOP` | nothing | 1 |
 | 1 | `HALT` | thread stops; `halted` status set; host may restart | 1 |
 | 2 | `RET` | PC = LR | 1 |
-| 3 | `WAITT` | block until timer tick pending, then clear it | blocking |
+| 3 | `WAITD k` | block until NOW has reached DEADLINE + k, then DEADLINE += k (k = 0..255) | blocking |
 | 4 | `DELAY n` | occupy 1 + n slots (n = 0..255) | 1 + n |
 | 5 | `SETC` | C = 1 | 1 |
 | 6 | `CLC` | C = 0 | 1 |
 | 7 | `START` | start the other thread at its current PC | 1 |
 | 8 | `STOP` | stop the other thread | 1 |
-| 9 | `CLRT` | clear this thread's timer tick | 1 |
+| 9 | `SETD k` | DEADLINE = NOW + k (k = 0..255) | 1 |
 
 ## 5. Timing recipes
 
 UART transmit at B baud with core clock F: `period = F / B` (for 115200 at
-60 MHz, 521; error 0.03%). Per bit: `WRC tx` then `WAITT`. The bit edge lands
-on the timer tick regardless of how many instructions prepared the next bit.
+60 MHz, 521; error 0.03%). `SETT` once per byte, then per bit: `WRC tx` then
+`WAITD 1`. The bit edge lands on the timer tick regardless of how many
+instructions prepared the next bit.
 
-UART receive: `WTF rx` (start bit), `SETT` with 1.5 bit periods, `WAITT`, then
-`SETT` with 1 period and sample 8 times with `RDC rx` + `RCR r0` + `WAITT`.
+UART receive: `WTF rx` (start bit), `SETT` with 1.5 bit periods, `WAITD 1`,
+then `SETT` with 1 period and sample 8 times with `RDC rx` + `RCR r0` +
+`WAITD 1`.
+
+Timeout: `SETT` a coarse period (say 60000 cycles), `SETD 25`, then `WT1T scl`
+and `BCS handler`: gives up after 25 ticks (25 ms at 60 MHz) if the slave never
+releases the clock. `fw/i2c_master.s` does this around every clock-stretch
+wait.
 
 Fastest software bit rate per thread is one bit every two slots (`WRC` +
-`WAITT`), i.e. F / 4 = 15 Mbit/s at 60 MHz, with the edge timing set by the
+`WAITD 1`), i.e. F / 4 = 15 Mbit/s at 60 MHz, with the edge timing set by the
 timer rather than the loop.
 
 ## 6. Host interface
 
 SPI slave, mode 0 (CPOL = 0, CPHA = 0), MSB first, CS_n framed. Pins:
 `ui[0]` = SCK, `ui[1]` = MOSI, `ui[2]` = CS_n, `uo[0]` = MISO, `uo[1]` = IRQ.
-SCK must be at most core clock / 8.
+SCK must be at most core clock / 8 (each half period at least 4 cycles);
+CS_n high for at least 4 cycles between transactions. Exact timing of when a
+write takes effect: `docs/SEMANTICS.md` section 10.
 
 A transaction is a command byte followed by data bytes until CS_n rises.
 Command: bit 7 = 1 for write, 0 for read; bits 6:0 = register. Multi-byte
@@ -282,9 +308,9 @@ during the byte following the command.
 |---|---|---|---|
 | 0x00 | CTRL | bit0 RUN0, bit1 RUN1, bit2 RST0, bit3 RST1 (RSTn clears thread n's timer, flags, LR and FIFOs; PC unchanged) | RUN bits |
 | 0x01 | STAT | - | bit0 RUN0, bit1 RUN1, bit2 HALTED0, bit3 HALTED1, bit4 BLOCKED0, bit5 BLOCKED1 |
-| 0x02 | PC0 | 2 bytes; accepted only while T0 stopped | 2 bytes |
+| 0x02 | PC0 | 2 bytes (low byte used); accepted only while T0 stopped | 2 bytes: PC, 0 |
 | 0x03 | PC1 | same for T1 | |
-| 0x04 | IMEM_ADDR | 2 bytes | 2 bytes |
+| 0x04 | IMEM_ADDR | 2 bytes (low byte used) | 2 bytes: address, 0 |
 | 0x05 | IMEM_DATA | stream of 16-bit words, address auto-increments; accepted only while both threads are stopped | stream, same rule |
 | 0x06 | INBOX0 | stream of bytes into T0's inbox | - |
 | 0x07 | OUTBOX0 | - | stream of bytes from T0's outbox (one pop per byte clocked out) |
