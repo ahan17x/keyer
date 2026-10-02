@@ -19,3 +19,5 @@ formal/*.out
 test/make.log
 .DS_Store
 formal/fifo/
+formal/capture/
+formal/capture_*/

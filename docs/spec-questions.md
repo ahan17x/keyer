@@ -175,3 +175,224 @@ Firmware cannot see the difference, because `level` reads 0 on pins 16 and
 9. Resolved as chosen: `pad()` bits 16 and 17 are 0 in the pin unit's view;
    SEMANTICS 5.1.
 
+
+## 2026-10-02 (golden model, SEMANTICS v0.3 section 14: capture and replay)
+
+### Q10. The fetch for cycle 0 and threads started before the first `step()`
+
+Section 2.1 says the fetch is invalid in cycle 0, and v0.3 drops the
+sentence that let the model equate "executes" with "running". In silicon no
+thread runs during cycle 0 (`running` resets to 0), so the rule cannot be
+observed there. In the model, however, a thread started by `host_run()`
+before the first `step()` is running during cycle 0. The ISS tests rely on
+it executing at cycle 0: `test_slot_interleave_and_instruction_cost`
+expects retirements at 0, 2, 4, 6, and the timer, DELAY, synchroniser and
+`test_replay_timing_and_done` tests depend on the same offset.
+
+**Chosen in `tools/keyersim.py`:** host calls made before the first step
+land at the end of a cycle -1 whose fetch is valid, so such a thread
+executes at cycle 0. The lockstep harness starts threads over SPI long
+after cycle 0, so it cannot see the difference. Proposed wording for 2.1:
+"... and it is invalid in cycle 0 (no thread runs in cycle 0 after
+`rst_n`; the model treats host calls made before its first step as
+landing at the end of a cycle -1 with a valid fetch)."
+
+### Q11. Does the head applied in cycle c count as "held" for the fetch in c? (blocks one test)
+
+Section 14.6 fetches in a free cycle c if "fewer than two entries are held
+or in flight". Under the observe-then-commit convention that is
+`pf_count(c) + inflight(c) < 2`, and an entry applied in c is still held
+during c. Consequence: even with every cycle free, the replay cannot apply
+entries on three consecutive cycles. Two 1-cycle steps in a row (targets 1
+and 1 after a longer gap) therefore underrun. `test_replay_timing_and_done`
+(entries with deltas 0, 3, 1, 0, 7, all cycles free) expects gaps
+3, 1, 1, 7. Under this reading it underruns. START lands at the end of
+cycle 8. Entry 1 is applied at 14 with two entries held, so the fetch of
+entry 3 waits until 15. Entry 2 is applied at 15, entry 3 is due at 16 but
+held only from the end of 16, and the underrun comes at 17 (`rep_k = 3`).
+Capture, by contrast, sustains one entry per cycle when every cycle is free,
+so under this reading a recording of edges one cycle apart cannot be
+replayed.
+
+**Chosen in `tools/keyersim.py`:** the literal reading, `pf_count(c) +
+inflight(c) < 2`. It is the simplest hardware: registered counts only, and
+no path from the 12-bit `rep_dt == target` comparator into the memory
+enable. The alternative is "fewer than two entries will be held or in
+flight after this cycle's apply": `pf_count(c) - apply(c) + inflight(c) <
+2`. It sustains one entry per cycle when every cycle is free, and with it
+all 34 tests in `tools/test_iss.py` pass (checked on a scratch copy). In
+the model it is a one-token change in `Machine._cr_cycle` (`pf_seen` becomes
+`pf_seen - int(applied)`). The choice belongs in 14.6 either way, because
+the RTL must make the same one.
+
+### Q12. Capture queue full during c while an entry leaves it in c
+
+Section 14.4: a produced entry "enters a two-entry queue unless the queue
+holds two entries". It does not say whether a write of the oldest entry in
+the same (free) cycle makes room.
+
+**Chosen in `tools/keyersim.py`:** no. The queue occupancy during c decides,
+as for the FIFOs in section 8, so the entry is lost and `cap_ovf` is set
+even though one entry leaves at the end of c. This is the simplest hardware
+(registered full flag). Proposed wording: "unless the queue holds two
+entries during c (an entry written in c does not make room)".
+
+### Q13. The prefetch word in flight when the replay starts, stops or ends
+
+Section 14.6 says a fetched word is held from the end of the cycle after
+the fetch. Section 14.5 says START empties the prefetch buffer and STOP only
+clears `rep_active` and sets `rep_done`. Neither says what happens to a word
+in flight. `pf_count` is compared in lockstep, so both sides must agree.
+
+**Chosen in `tools/keyersim.py`:** START also drops a word in flight,
+including one fetched in the START cycle itself by a replay that was still
+active. Otherwise the restarted replay would hold a stale entry from the old
+`rep_f`. STOP, underrun and the last apply do not drop it: the word still
+lands at the end of the next cycle, so `pf_count` can rise by one after the
+replay stopped. Its value no longer matters then, and the next START
+clears it. In hardware this is the START clear having priority over the
+in-flight valid bit and the buffer, with no other clear. Proposed wording
+for 14.5: "START ... the prefetch buffer is emptied, including a word in
+flight. STOP and the end of a replay do not affect a word in flight."
+
+### Q14. `od_mask` seen by a replay apply in the cycle the core changes the mode
+
+Section 14.7 applies the replay's `pinwrite` "after the core's pin command
+of the same cycle". If that command is `OD p` or `PP p` on a replayed pin,
+the replay's `pinwrite` could use `od_mask` during c or the value the core
+just wrote.
+
+**Chosen in `tools/keyersim.py`:** sequential composition. The replay sees
+the core's new `od_mask`, `uio_out` and `uio_oe`, just as PINMODE sees the
+primed values in 5.3, so `uio_out & od_mask == 0` still holds after the
+cycle. Proposed wording: "applied after the core's pin command of the same
+cycle (using the drive state and `od_mask` that command produced)".
+
+### Q15. ARM with `cap_len = 0` and START with `n_rep = 0`: the other fields
+
+Section 14.4 says ARM with `cap_len = 0` is "done at once", and 14.5 says
+START with `n_rep = 0` "sets `rep_done` and leaves `rep_active` at 0". It is
+not stated whether the rest of the ARM/START resets still apply, or in which
+cycle "done" becomes visible.
+
+**Chosen in `tools/keyersim.py`:** the action does everything it normally
+does, except that `cap_armed <= (cap_len != 0)` and `rep_active <= (n_rep
+!= 0)`, `rep_done <= (n_rep == 0)`. The general `cap_done` rule then gives
+`cap_done = 1` from the cycle after the ARM cycle (disarmed, queue empty,
+`cap_was_armed = 1`), and `rep_n` latches 0. In hardware the only change is
+one gate on each active bit.
+
+### Resolutions 2026-10-02, third batch (coordinating session)
+
+10. Model convention accepted: a host call before the first `step()` lands at
+    the end of a cycle -1 with a valid fetch, so the Python tests may start a
+    thread at cycle 0; in silicon nothing executes in cycle 0 (2.1).
+11. Resolved the other way: an entry applied in cycle c does not count
+    towards the prefetch limit in c, so a fully free port replays entries
+    one cycle apart (SEMANTICS 14.6).
+12. Resolved symmetrically: an entry written to memory in cycle c frees its
+    queue slot in c (SEMANTICS 14.4).
+13. Resolved: the prefetch holds nothing while `rep_active` is 0; a word in
+    flight at STOP or underrun is discarded on arrival; START empties it
+    (SEMANTICS 14.6).
+14. Resolved as chosen: a replay apply sees the `od_mask` the core's
+    same-cycle OD/PP produced (it is applied after the core's command, 14.7).
+15. Resolved as chosen: ARM with `cap_len = 0` and START with `n_rep = 0`
+    perform all their other resets.
+
+
+## 2026-10-02 (RTL, SEMANTICS v0.3 section 14: `src/keyer_capture.v`)
+
+### Q16. `rep_dt` saturating at 4095 hides a late entry whose delta is 4095
+
+Section 14.7 saturates `rep_dt` at 4095 and underruns only when
+`rep_dt(c) > target`. With `target = 4095` that comparison is never true, so
+an idle entry (delta 4095) that arrives late is applied as if on time. It
+happens whenever the port is not free for more than 4095 cycles in the
+middle of a replay (both threads running, or the host draining). Scratch
+testbench: entries {0, 1}, {4095, 2}; thread 0 issues `CAPC` START, then
+`START`s thread 1, and both run for about 5,000 cycles. Entry 0 is applied
+at cycle 1452 and entry 1 at cycle 6597, 5,145 cycles later, with
+`rep_under = 0`. With delta 100 instead, the same run underruns as it
+should. This breaks the guarantee at the end of 14.7 ("entry k is applied
+exactly `max(delta_k, 1)` cycles after entry k - 1 when no underrun
+occurs"). Formal property C3 in `formal/capture_props.sv` is therefore
+proved only for `delta < 4095`.
+
+**Implemented in the RTL:** the literal rule (saturate at 4095, no extra
+underrun), because the spec wins and the harness compares `rep_dt`.
+**Proposed fix, cheapest first:** (a) no new state: also underrun when
+`rep_k >= 1`, `rep_dt(c) = 4095` and no head is present (no entry can be on
+time any more). This adds one AND term and sets the underrun earlier than
+the current rule in starved replays. (b) One extra flop: `rep_dt` is 13
+bits and saturates at 4096, so `rep_dt > target` catches it. Either makes
+C3 hold for every delta.
+
+**Update 2026-10-02:** resolved as (a) (SEMANTICS 14.7, fourth bullet). The
+RTL now underruns when `rep_k >= 1`, no head is present and `rep_dt = 4095`,
+and C3 is proved for every delta. In the scenario above, the late entry
+now underruns in cycle 5547, entry 0 + 4095.
+
+### Q17. Two-byte configuration registers written with fewer or more than two bytes
+
+Section 10.3 lists CAP_CFG, CAP_BUF and REP_BUF as "bytes 0, 1" and the
+model API takes them as 16-bit words. It does not say what a transaction
+that ends after byte 0 does, or what bytes 2 and up do.
+
+**Chosen in the RTL:** the register is written once, at the end of byte 1,
+with `{byte 1, byte 0}` (one `*_we` pulse, landing like RUN). A transaction
+that ends after byte 0 changes nothing. Bytes 2 and up are ignored, as for
+CTRL. This is the cheapest version: byte 0 is held in the IMEM_DATA low-byte
+register the host already has, and one write enable per register.
+Proposed wording for 10.3: "bytes 0, 1 (written together when byte 1
+completes; a shorter transaction has no effect, further bytes are
+ignored)".
+
+### Q18. Bit 3 of CAP_CFG byte 0 and of REP_CFG
+
+Section 14 stores `group[2:0]` and `mask[3:0]` from bits 2:0 and 7:4, and
+says the registers "read back as written" (10.4: "the bytes last
+written"). Bit 3 has no field.
+
+**Chosen in the RTL:** bit 3 is not stored and reads 0. For example, CAP_CFG
+written FF A5 reads F7 A5, and REP_CFG written 3C reads 34. Storing it
+would cost two flops for no function. Proposed wording for 10.4: "the
+fields last written (bit 3 of CAP_CFG byte 0 and of REP_CFG reads 0)".
+
+### Q19. What `pf_count` counts, and ARM in a cycle in which the capture records
+
+`pf_count` is compared in lockstep. **Chosen in the RTL:** it counts entries
+held in the prefetch (0..2) and does not count the word in flight. The
+in-flight word is a separate one-bit register `pf_fly`, which the harness
+does not probe. It is 0 whenever `rep_active` is 0, after resolution 13.
+
+ARM landing in a cycle in which the armed engine triggers or records:
+section 14.2 lists the registers that ARM resets. **Chosen in the RTL:**
+only those. `cap_last` and `cap_dt` still take that cycle's trigger or
+recording update (`cap_last <= s(c)`, `cap_dt <= 1` or `d + 1`), and a
+queued entry still goes to memory if the cycle is free (the write happens,
+then `cap_w` and the queue are reset). Gating these with ARM would cost
+logic for no visible benefit. Proposed wording for 14.2: "ARM resets
+exactly the registers listed; the cycle's other capture effects
+(`cap_last`, `cap_dt`, a memory write) still happen."
+
+### Q20. Replay group 4 and pins 16, 17
+
+A replay on group 4 names pins 16-19. **Chosen in the RTL:** pins 16 and 17
+(MISO, IRQ) are not written (5.3: "no effect"); 18 and 19 drive `uo[2]`,
+`uo[3]`. This is the existing `pinwrite` table, stated here for
+completeness; no change proposed.
+
+### Resolutions 2026-10-02, fourth batch (coordinating session)
+
+16. Resolved with the no-new-state fix: when `rep_k >= 1`, no head is present
+    and `rep_dt = 4095`, the replay underruns (SEMANTICS 14.7, fourth
+    bullet). Both model and RTL implement it; C3 then covers every delta.
+17. Resolved as chosen: a two-byte register is written once, when its byte 1
+    completes; a transaction ending after byte 0 changes nothing (this is
+    how the model's single `host_*` call per register already behaves).
+18. Resolved as chosen: unused bit 3 of CAP_CFG byte 0 and of REP_CFG reads 0.
+19. Resolved as chosen: ARM resets only the registers 14.2 lists; the
+    cycle's `cap_last`/`cap_dt` update and a free-cycle write still happen.
+20. Noted: a replay on group 4 cannot touch pins 16 and 17 (5.3).
+

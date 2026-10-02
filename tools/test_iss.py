@@ -507,3 +507,261 @@ def test_status_word():
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ---- capture and replay (docs/SEMANTICS.md section 14) ---------------------
+
+def _cap_setup(m, group=0, mask=0xF, tpat=0, tmask=0, base=0x80, length=16):
+    m.host_cap_cfg((group & 7) | ((mask & 0xF) << 4) | (((tpat & 0xF) | ((tmask & 0xF) << 4)) << 8))
+    m.host_cap_buf((base & 0xFF) | ((length & 0xFF) << 8))
+
+
+def _entries(m, base, n):
+    return [(m.imem[(base + i) & 0xFF] >> 4, m.imem[(base + i) & 0xFF] & 0xF) for i in range(n)]
+
+
+def test_capture_immediate_trigger_and_deltas():
+    # T0 toggles uio0 at known slots; T1 stopped, so every even cycle (whose
+    # fetch would serve T1) is a free port cycle. Trigger mask 0: triggers
+    # the cycle after ARM.
+    # ARM lands at the end of cycle 1 (host call after step 1) -> trigger at
+    # cycle 2, entry 0 = {0, s(2)}. SET uio0 at slot 2 -> pad from 3 -> level
+    # from 5 -> entry {3, 1} (5 - 2). CLR at slot 8 -> level 11 -> entry {6, 0}.
+    m, _ = boot("""
+        oen uio0
+        set uio0
+        nop
+        nop
+        clr uio0
+        halt
+    """)
+    m.ext_uio = 0
+    m.step(); m.step()                       # cycles 0, 1 (OEN at 0)
+    _cap_setup(m, mask=0x1, length=8)
+    m.host_cr_ctrl(1)                        # ARM at the end of cycle 1
+    m.run(60)
+    cr = m.cr
+    assert cr.cap_trig and not cr.cap_ovf and cr.cap_armed
+    assert cr.cap_w == 3 and cr.cap_n == 3
+    assert _entries(m, 0x80, 3) == [(0, 0), (3, 1), (6, 0)]
+    m.host_cr_ctrl(2)                        # DISARM: completes
+    m.run(4)
+    assert cr.cap_done and not cr.cap_armed and cr.cap_w == 3
+
+
+def test_capture_transition_trigger_and_done():
+    # Trigger on uio1 going high (pattern 0b10 under mask 0b10) while uio1 is
+    # already high at arm time: no trigger until it falls and rises again.
+    m, _ = boot("""
+        oen uio1
+        set uio1
+        delay 10
+        clr uio1
+        delay 10
+        set uio1
+        delay 10
+        clr uio1
+        delay 10
+        set uio1
+        halt
+    """)
+    m.ext_uio = 0
+    m.run(10)                                # SET at slot 2, pad high from 3
+    _cap_setup(m, mask=0x2, tpat=0x2, tmask=0x2, length=3)
+    m.host_cr_ctrl(1)
+    m.run(200)
+    cr = m.cr
+    assert cr.cap_trig and cr.cap_done and not cr.cap_armed and cr.cap_w == 3
+    e = _entries(m, 0x80, 3)
+    assert e[0] == (0, 2) and e[1][1] == 0 and e[2][1] == 2        # rise, fall, rise
+    assert e[1][0] == 24 and e[2][0] == 24                         # DELAY 10 + CLR/SET = 12 slots
+
+
+def test_capture_idle_entry_and_length_zero():
+    m, _ = boot("""
+        oen uio0
+    loop: bra loop
+    """)
+    m.ext_uio = 0
+    m.step(); m.step()
+    _cap_setup(m, mask=0x1, length=4)
+    m.host_cr_ctrl(1)
+    m.run(4095 * 2 + 20)
+    assert _entries(m, 0x80, 3)[:3] == [(0, 0), (4095, 0), (4095, 0)]
+    # length 0: done at once, nothing written
+    m2, _ = boot("nop\nhalt")
+    m2.step(); m2.step()
+    _cap_setup(m2, length=0)
+    m2.host_cr_ctrl(1)
+    m2.run(6)
+    assert m2.cr.cap_done and not m2.cr.cap_armed and m2.cr.cap_w == 0
+
+
+def test_capture_overflow_when_both_threads_run():
+    # Both threads running: no free port cycle. The trigger entry and one
+    # change fill the two-entry queue; the next change is lost and flagged.
+    m, syms = boot("""
+        oen uio0
+        oen uio1
+        set uio0
+        set uio1
+        clr uio0
+        clr uio1
+    spin: bra spin
+    t1: bra t1
+    """, t1=True)
+    m.ext_uio = 0
+    m.run(4)
+    _cap_setup(m, mask=0x3, length=16)
+    m.host_cr_ctrl(1)
+    m.run(40)
+    cr = m.cr
+    assert cr.cap_ovf and not cr.cap_armed and cr.cap_w == 0 and cr.q_count == 2
+    m.host_run(1, False)                     # free the port: the queue drains
+    m.run(10)
+    assert cr.cap_w == 2 and cr.q_count == 0 and cr.cap_done
+
+
+def test_capture_uses_only_free_slots_and_never_disturbs_the_thread():
+    # The same program with and without a capture retires at the same cycles.
+    src = """
+        oen uio0
+    loop: set uio0
+        clr uio0
+        djnz r1, loop
+        halt
+    """
+    m0, _ = boot("ldi r1, 20\n" + src, trace=True)
+    m0.ext_uio = 0
+    m0.run(300)
+    m1, _ = boot("ldi r1, 20\n" + src, trace=True)
+    m1.ext_uio = 0
+    m1.step(); m1.step()
+    _cap_setup(m1, mask=0x1, length=64)
+    m1.host_cr_ctrl(1)
+    m1.run(298)
+    assert [(r.cycle, r.pc) for r in m0.trace] == [(r.cycle, r.pc) for r in m1.trace]
+    assert m1.cr.cap_w == 41 and not m1.cr.cap_ovf
+
+
+def test_replay_timing_and_done():
+    # Host-written entries on group 0, drive mask uio0|uio1 (push-pull, OEN
+    # by the host-written firmware first). Entry k applies max(delta,1)
+    # cycles after entry k-1; the pad shows it one cycle later.
+    m, _ = boot("""
+        oen uio0
+        oen uio1
+        halt
+    """)
+    m.ext_uio = 0
+    run_until_halt(m)
+    m.run(4)
+    entries = [(0, 0b01), (3, 0b10), (1, 0b11), (0, 0b00), (7, 0b01)]
+    for i, (d, p) in enumerate(entries):
+        m.imem[0xA0 + i] = (d << 4) | p
+    m.host_rep_cfg(0 | (0x3 << 4))
+    m.host_rep_buf(0xA0 | (len(entries) << 8))
+    m.host_cr_ctrl(4)                        # START at the end of this cycle
+    m.run(60)
+    cr = m.cr
+    assert cr.rep_done and not cr.rep_active and not cr.rep_under and cr.rep_k == 5
+    ev = [e for e in m.pin_events if e[0] > 4]
+    vals = [e[1] & 0x3 for e in ev]
+    assert vals == [0b01, 0b10, 0b11, 0b00, 0b01], ev
+    gaps = [b[0] - a[0] for a, b in zip(ev, ev[1:])]
+    assert gaps == [3, 1, 1, 7], gaps
+
+
+def test_replay_length_zero_uses_last_capture_and_open_drain():
+    # Capture a waveform on uio2 (OD, driven by the host's external level),
+    # then replay it with rep_len = 0 on the same pin, open-drain: the drive
+    # is uio_oe toggling with uio_out = 0.
+    m, _ = boot("""
+    loop: bra loop
+    """)
+    m.host_pinmode(0x04)                     # uio2 open-drain
+    m.ext_uio = 0xFF
+    m.step(); m.step()
+    _cap_setup(m, mask=0x4, length=8)
+    m.host_cr_ctrl(1)
+    m.run(5)
+    m.ext_uio = 0xFB                         # uio2 low from cycle 7
+    m.run(20)
+    m.ext_uio = 0xFF                         # high from cycle 27
+    m.run(20)
+    m.host_cr_ctrl(2)                        # DISARM
+    m.run(6)
+    assert m.cr.cap_done and m.cr.cap_w == 3
+    e = _entries(m, 0x80, 3)
+    assert [p for _, p in e] == [0x4, 0x0, 0x4] and e[1][0] == 7 and e[2][0] == 20
+    m.host_run(0, False)
+    m.run(2)
+    m.host_rep_cfg(0 | (0x4 << 4))
+    m.host_rep_buf(0x80 | (0 << 8))          # length 0: the capture's 3 entries
+    m.host_cr_ctrl(4)
+    m.run(80)
+    assert m.cr.rep_done and m.cr.rep_k == 3 and m.cr.rep_n == 3 and not m.cr.rep_under
+    ev = [e for e in m.pin_events if e[0] > 57]
+    # entry 0 (released) changes nothing; entry 1 drives low, entry 2 releases
+    assert [(e[2] & 0x4, e[1] & 0x4) for e in ev] == [(4, 0), (0, 0)], ev
+    assert ev[1][0] - ev[0][0] == 20
+
+
+def test_replay_waits_for_a_free_port_then_keeps_time():
+    m, syms = boot("""
+    loop: bra loop
+    t1: bra t1
+    """, t1=True)
+    m.run(4)
+    for i, (d, p) in enumerate([(0, 1), (2, 0), (2, 1)]):
+        m.imem[0xA0 + i] = (d << 4) | p
+    m.host_rep_cfg(0 | (0x1 << 4))
+    m.host_rep_buf(0xA0 | (3 << 8))
+    m.host_cr_ctrl(4)
+    m.run(40)
+    assert m.cr.rep_active and m.cr.rep_k == 0 and m.cr.rep_f == 0      # nothing fetched: no free cycle
+    m.host_run(1, False)
+    m.run(40)
+    # the port frees, entry 0 applies, entries 1 and 2 follow 2 cycles apart
+    assert m.cr.rep_done and not m.cr.rep_under and m.cr.rep_k == 3
+
+
+def test_replay_underrun_with_back_to_back_entries():
+    # Entries one cycle apart need one fetch per cycle; with one thread
+    # stopped the port is free every other cycle, so the third entry is late:
+    # underrun, replay stops, the late entry is not applied.
+    m, _ = boot("""
+    loop: bra loop
+    """)
+    m.run(4)
+    for i, (d, p) in enumerate([(0, 1), (1, 0), (1, 1), (1, 0)]):
+        m.imem[0xA0 + i] = (d << 4) | p
+    m.host_rep_cfg(0 | (0x1 << 4))
+    m.host_rep_buf(0xA0 | (4 << 8))
+    m.host_cr_ctrl(4)
+    m.run(30)
+    assert m.cr.rep_under and m.cr.rep_done and not m.cr.rep_active and m.cr.rep_k < 4
+
+
+def test_capc_instruction_and_status_bits():
+    m, syms = boot("""
+        ldi r0, 4
+        capc r0             ; start a replay of the (empty) last capture: done at once
+        rds r3
+        ldi r0, 1
+        capc r0             ; arm
+        rds r1
+        ldi r0, 2
+        capc r0             ; disarm; the one queued entry drains at a free slot
+        nop
+        rds r2
+        halt
+    """)
+    m.step(); m.step()
+    _cap_setup(m, length=4)
+    m.host_rep_buf(0x80 | (0 << 8))
+    run_until_halt(m)
+    t = m.threads[0]
+    assert not (t.regs[3] & 0x100) and m.cr.rep_done and m.cr.rep_n == 0   # length 0: done at once
+    assert t.regs[1] & 0x80 and not (t.regs[2] & 0x80)      # active after ARM, not after DISARM
+    assert m.cr.cap_w == 1 and m.cr.cap_done

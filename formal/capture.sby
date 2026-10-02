@@ -1,0 +1,31 @@
+# keyer_capture (SEMANTICS 14): C1 overflow is never silent; C2 capture
+# writes stay inside [cap_base, cap_base + cap_len); C3 replay entry k >= 1
+# is applied exactly max(delta, 1) cycles after entry k - 1 (every delta);
+# C4 nothing is applied after an underrun until START, and rep_under rises
+# exactly under the 14.7 conditions; C5 entry deltas and
+# pins; C6 data integrity through the queue and the prefetch; C7 port
+# discipline; C8 status; C9 no underrun while the port is free every cycle;
+# C10 control actions and rep_n. Properties: capture_props.sv, included into
+# keyer_capture.v under `ifdef FORMAL. Task prove: k-induction; task cover:
+# non-vacuity traces (a write of entry 2, an overflow, entry 2 applied, an
+# underrun, a three-entry capture done, entries one cycle apart).
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+prove: depth 4
+cover: mode cover
+cover: depth 24
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal -DFORMAL keyer_capture.v
+prep -top keyer_capture
+
+[files]
+../src/keyer_capture.v
+capture_props.sv

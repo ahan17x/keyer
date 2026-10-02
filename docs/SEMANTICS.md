@@ -1,6 +1,6 @@
 # Keyer semantics: the cycle-exact contract
 
-Version 0.2, 2026-10-02. This document is the reference for the golden model
+Version 0.3, 2026-10-02 (section 14 added: capture and replay). This document is the reference for the golden model
 (`tools/keyersim.py`) and the RTL (`src/`). Where it disagrees with
 `docs/isa.md`, this document wins; `docs/isa.md` is the programmer's
 reference and is kept consistent with it. The encodings are in
@@ -39,10 +39,14 @@ and therefore observable from cycle c + 1 on".
   t = c mod 2, fetched in cycle c - 1 (the memory has a one-cycle synchronous
   read). Thread t **executes** at slot c if and only if `running[t](c)` is 1
   and the fetch was valid.
-- The fetch is valid unless the host used the memory port in cycle c - 1, and
-  it is invalid in cycle 0. The host may use the port only while both threads
-  are stopped (section 10.4), so a running thread's fetch is always valid;
-  the model may therefore equate "executes" with "running".
+- The fetch is valid unless the memory port was used in cycle c - 1 by the
+  host (section 10.5) or by the capture or replay engine (section 14.1),
+  and it is invalid in cycle 0. The host uses the port only while both
+  threads are stopped and the engines only in a cycle whose fetch serves a
+  thread that is not running, so the only way a running thread loses a
+  slot is to be started (host RUN or `START`) at the end of a cycle in which
+  an engine used its fetch: it then first executes two cycles later. The
+  model implements this rule exactly.
 - Exactly one instruction is evaluated per cycle, for the thread that owns the
   slot. There is no pipeline hazard: a thread's next slot is two cycles after
   its last, and every effect of a slot is registered at its end.
@@ -384,8 +388,13 @@ the next byte is sampled after that pop.
 | IMEM_DATA | pairs (lo, hi) | after each pair, if both threads were stopped when the pair completed: `IMEM[address] <= {hi, lo}` then `address <= address + 1`. A pair completed while a thread runs is dropped. |
 | INBOX0 / INBOX1 | each byte | pushed into the inbox of thread 0 / 1 (dropped if full). |
 | PINMODE | byte 0 | `od_mask <= byte`, and pins named in it are released (section 5.3). |
-| IRQEN | byte 0 | IRQ enable mask (section 11). |
+| IRQEN | byte 0 | IRQ enable mask, 8 bits (section 11). |
 | FIFOCLR | byte 0 | bit 0 inbox 0, bit 1 outbox 0, bit 2 inbox 1, bit 3 outbox 1: emptied. |
+| CR_CTRL | byte 0 | capture/replay actions (section 14.2, 14.5). |
+| CAP_CFG | bytes 0, 1 | capture group, watch mask, trigger pattern, trigger mask (section 14). |
+| CAP_BUF | bytes 0, 1 | capture base word, length. |
+| REP_CFG | byte 0 | replay group, drive mask. |
+| REP_BUF | bytes 0, 1 | replay base word, length. |
 | others | | ignored |
 
 ### 10.4 Reads
@@ -404,6 +413,9 @@ the next byte is sampled after that pop.
 | PINS | `level[7:0]` (uio), `level[15:8]` (ui), firmware `uo_out` (bits 1:0 read 0) |
 | ID | 0x4B ('K'), then the ISA version |
 | PINOUT | `uio_out`, then `uio_oe` |
+| CR_CTRL | capture/replay status byte (section 14.8) |
+| CAP_CFG, CAP_BUF, REP_CFG, REP_BUF | the bytes last written |
+| CR_COUNT | entries recorded, then entries applied (section 14.8) |
 | others | 0 |
 
 Reading past the listed bytes returns the pattern given by the byte index
@@ -416,7 +428,9 @@ The host owns the program memory port in any cycle in which it asserts a
 write or a read request (IMEM_DATA traffic); such requests are generated only
 while both threads are stopped. The fetch for the following cycle is invalid
 (section 2.1). A write visible to a thread started by a later CTRL write is
-always complete, because a CTRL write is a separate transaction.
+always complete, because a CTRL write is a separate transaction. In a cycle
+the host does not use, the capture engine, then the replay engine, may use
+the port under the rule of section 14.1; the host always has priority.
 
 ## 11. Status word and IRQ
 
@@ -431,11 +445,14 @@ always complete, because a CTRL write is a separate transaction.
 | 4 | `reached(NOW, DEADLINE)` |
 | 5 | other thread running |
 | 6 | this thread's id |
-| 15:7 | 0 |
+| 7 | capture active (section 14.8) |
+| 8 | replay active (section 14.8) |
+| 15:9 | 0 |
 
 `IRQ` (`uo[1]`) is the OR, over the bits set in IRQEN, of: bit 0 outbox 0
 non-empty, bit 1 outbox 1 non-empty, bit 2 `halted[0]`, bit 3 `halted[1]`,
-bit 4 inbox 0 empty, bit 5 inbox 1 empty. It is combinational from registered
+bit 4 inbox 0 empty, bit 5 inbox 1 empty, bit 6 capture done, bit 7 replay
+done (section 14.8). It is combinational from registered
 state and follows a change by one cycle.
 
 ## 12. Per-instruction summary
@@ -472,6 +489,7 @@ are registered at the end of the slot in which the instruction completes.
 | | `OUTB rs` / `OUTOE rs` | section 5.3 | none |
 | | `INB rd` / `INW rd` | `rd <= level[7:0]` / `level[15:0]` | Z |
 | | `RDLR rd` / `JMPR rs` | `rd <= LR` / `PC <= rs[7:0]` | none |
+| | `CAPC rs` | applies `rs[3:0]` as the CR_CTRL control byte (14.2, 14.5) | none |
 | Misc | `NOP` | nothing | none |
 | | `HALT` | section 9 | none |
 | | `RET` | `PC <= LR` | none |
@@ -494,7 +512,10 @@ exposes the matching attributes.
 | `running` | `threads[t].running` | section 2.3 |
 | `u_pins.uio_out .uio_oe .uo_out .od_mask` | `uio_out uio_oe uo_out od_mask` | drive state (5.3) |
 | `u_imem.mem[a]` | `imem[a]` | program memory |
-| `u_host.imem_we .imem_addr .imem_wdata .run_we .run_val .rst_pulse .pc_we .pc_val .inbox_push .inbox_wdata .outbox_pop .pinmode_we .pinmode_val .fifo_clr` | mirrored by the harness through `host_*` calls and `soft_reset()` | host effects asserted during c, landing at its end |
+| `u_host.imem_we .imem_re .imem_addr .imem_wdata .run_we .run_val .rst_pulse .pc_we .pc_val .inbox_push .inbox_wdata .outbox_pop .pinmode_we .pinmode_val .fifo_clr .cr_ctrl_we .cr_ctrl_val .cap_cfg_we .cap_cfg_val .cap_buf_we .cap_buf_val .rep_cfg_we .rep_cfg_val .rep_buf_we .rep_buf_val` | mirrored by the harness through `host_*` calls and `soft_reset()`; `imem_we`/`imem_re` also set `host_port_busy` for the cycle | host effects asserted during c, landing at its end |
+| `u_cr.cap_armed .cap_trig .cap_done .cap_ovf .cap_last .cap_prev .cap_dt .cap_n .cap_w .q_count` | `cr.cap_armed` and so on, same names | capture engine state (14) |
+| `u_cr.rep_active .rep_done .rep_under .rep_k .rep_f .rep_dt .pf_count` | `cr.rep_active` and so on | replay engine state (14) |
+| `u_cr.cap_group .cap_mask .cap_tpat .cap_tmask .cap_base .cap_len .rep_group .rep_mask .rep_base .rep_len` | `cr.cap_group` and so on | configuration (14) |
 
 Golden model API (`tools/keyersim.py`), used by `tools/test_*.py` and
 `test/`: `Machine(trace=False)` with attributes `imem` (256 ints),
@@ -505,10 +526,150 @@ tracing), `pin_events` (list of `(cycle, uio_out, uio_oe, uo_out)`, cycle =
 the first cycle the new drive state is on the pads); methods `load(words,
 base=0)`, `host_run(tid, run)`, `host_set_pc(tid, pc)`,
 `host_inbox_push(tid, byte) -> bool`, `host_outbox_pop(tid) -> int | None`,
-`host_pinmode(mask)`, `host_fifo_clear(mask)`, `status()`, `irq()`, `pad()`,
-`step() -> done`, `run(cycles, on_cycle=None)`. `Thread`: `tid`, `regs`,
+`host_pinmode(mask)`, `host_fifo_clear(mask)`, `host_cr_ctrl(byte)`,
+`host_cap_cfg(word)`, `host_cap_buf(word)`, `host_rep_cfg(byte)`,
+`host_rep_buf(word)` (the two-byte registers as little-endian 16-bit words),
+`status()`, `irq()`, `pad()`, `step() -> done`, `run(cycles, on_cycle=None)`;
+attribute `host_port_busy` (set by the harness before a `step()` in whose
+cycle the host uses the memory port, cleared by `step()`), attribute
+`executed` (set by `step()`: whether the slot's thread executed in that
+cycle, section 2.1), and `cr`, the capture/replay engine object with the
+attributes named above. `Thread`: `tid`, `regs`,
 `pc`, `lr`, `z`, `c`, `period`, `prescale`, `now`, `deadline`, `inbox`,
 `outbox` (deques, head first), `running`, `halted`, `blocked`, `delay_left`,
 `soft_reset()`. Host effects passed through these calls between two `step()`
 calls take effect before the next cycle, matching section 10.2 when the
 harness calls them in the cycle the RTL asserts the pulse.
+
+## 14. Capture and replay (DECISIONS D-020, D-024; programmer's view in `docs/CAPTURE.md`)
+
+One engine pair, shared by the host and both threads. All state below is
+registered and reset to 0 by `rst_n`; a host soft reset of a thread does not
+touch it.
+
+**Configuration** (host registers, section 10.3; read back as written):
+`cap_group[2:0]`, `cap_mask[3:0]`, `cap_tpat[3:0]`, `cap_tmask[3:0]`
+(CAP_CFG byte 0 bits 2:0 and 7:4, byte 1 bits 3:0 and 7:4); `cap_base[7:0]`,
+`cap_len[7:0]` (CAP_BUF bytes 0, 1); `rep_group[2:0]`, `rep_mask[3:0]`
+(REP_CFG bits 2:0 and 7:4); `rep_base[7:0]`, `rep_len[7:0]` (REP_BUF). A
+group value of 6 or 7 selects pins 24-31: `nib` reads 0 and replay writes
+are ignored (section 5.1). Changing a configuration register while its engine is
+active gives undefined results.
+
+**Group nibble.** `nib(c) = level(c)[4g+3 : 4g]` for the engine's group g,
+and `s(c) = nib(c) & mask` (watch mask for capture). An **entry** is a 16-bit
+word `{delta[11:0], pins[3:0]}`.
+
+### 14.1 Memory port
+
+The port is **free** in cycle c when the host does not use it in c (section
+10.5) and the thread that would execute in cycle c + 1, thread (c + 1) mod 2,
+is not running during cycle c. In a free cycle the capture engine writes its
+oldest queued entry if it has one; otherwise the replay engine issues a fetch
+if it needs one (14.6). An engine never uses a cycle that is not free. A
+cycle used by an engine invalidates the fetch for cycle c + 1 (section 2.1).
+
+### 14.2 Capture control
+
+Actions come from a host CR_CTRL write (bit 0 ARM, bit 1 DISARM) or from a
+thread committing `CAPC rs` (`rs[0]` ARM, `rs[1]` DISARM); actions from both
+sources in one cycle are all applied, ARM taking precedence over DISARM.
+At the end of the cycle in which ARM lands: `cap_armed <= 1`, `cap_trig <= 0`,
+`cap_done <= 0`, `cap_ovf <= 0`, `cap_n <= 0`, `cap_w <= 0`, the queue is
+emptied, and `cap_was_armed <= 1`. DISARM: `cap_armed <= 0`. `cap_prev` holds
+the group nibble of the previous cycle at all times (`cap_prev(c + 1) =
+nib(c)`), independent of arming.
+
+### 14.3 Trigger
+
+`match(c) = (nib(c) & cap_tmask) == (cap_tpat & cap_tmask)`. While
+`cap_armed` and not `cap_trig`, the engine **triggers** at the first cycle c
+after the arm cycle at which `cap_tmask = 0`, or `match(c)` holds and
+`(cap_prev(c) & cap_tmask) != (cap_tpat & cap_tmask)` (the nibble did not
+match in cycle c - 1). At the end of the trigger cycle: `cap_trig <= 1`, the
+entry `{0, s(c)}` is produced, `cap_last <= s(c)`, `cap_dt <= 1`.
+
+### 14.4 Recording
+
+At every cycle c with `cap_armed` and `cap_trig` set during c (so from the
+cycle after the trigger on), with `d = cap_dt(c)`, the number of cycles since
+the cycle of the last entry:
+
+- if `s(c) != cap_last`: the entry `{d, s(c)}` is produced, `cap_last <= s(c)`,
+  `cap_dt <= 1`;
+- else if `d = 4095`: the idle entry `{4095, cap_last}` is produced,
+  `cap_dt <= 1`;
+- else `cap_dt <= d + 1`.
+
+Producing an entry: `cap_n <= cap_n + 1`, and the entry enters a two-entry
+**queue** unless the queue is full, in which case the entry is lost and
+`cap_ovf <= 1` (the overflow is never silent). The queue is full when it
+holds two entries, not counting an entry that is written to memory in the
+same cycle (14.1): a departing entry frees its slot at once. When the entry
+produced is the `cap_len`-th (`cap_n + 1 = cap_len`), or on overflow,
+`cap_armed <= 0` in the same cycle. If `cap_len = 0`, ARM produces no entries:
+the engine is done at once. A free cycle (14.1) with a non-empty queue writes
+the oldest entry: `IMEM[(cap_base + cap_w) mod 256] <= entry`, `cap_w <=
+cap_w + 1`, and the entry leaves the queue. `cap_done <= 1` at the end of any
+cycle after which `cap_armed = 0`, the queue is empty and `cap_was_armed = 1`;
+ARM clears it. **Capture active** (status, `RDS` bit 7) is
+`cap_armed | (queue non-empty)`.
+
+### 14.5 Replay control
+
+Actions: host CR_CTRL bit 2 START, bit 3 STOP, or `CAPC rs` with `rs[2]`,
+`rs[3]`; START takes precedence over STOP. At the end of the START cycle:
+`rep_active <= 1`, `rep_done <= 0`, `rep_under <= 0`, `rep_k <= 0`,
+`rep_f <= 0`, `rep_dt <= 0`, the prefetch buffer is emptied. STOP:
+`rep_active <= 0`, `rep_done <= 1`. The replay **length** `n_rep` is
+`rep_len` if `rep_len != 0`, else `cap_w` sampled at the START cycle (the
+number of entries the last capture recorded), so firmware can replay a
+capture whose length it does not know. If `n_rep = 0`, START sets
+`rep_done <= 1` and leaves `rep_active` at 0. Sections 14.6 and 14.7 use
+`n_rep` where they say `rep_len`.
+
+### 14.6 Fetching entries
+
+The replay engine keeps a two-entry **prefetch** buffer in order. In a free
+cycle c not taken by the capture engine, if `rep_active`, `rep_f < n_rep`
+and fewer than two entries are held or in flight, not counting an entry
+applied in cycle c (14.7), it reads `IMEM[(rep_base + rep_f) mod 256]` and
+`rep_f <= rep_f + 1`; the word is available during cycle c + 1 and is held in
+the prefetch from the end of c + 1 on (it counts as "in flight" during
+c + 1). With the port free every cycle, entries one cycle apart can be
+replayed indefinitely. A word in flight when the replay becomes inactive
+(STOP, underrun) is discarded on arrival: the prefetch holds nothing while
+`rep_active` is 0, and START empties it.
+
+### 14.7 Applying entries
+
+`rep_dt(c)` is the number of cycles since the cycle in which the last entry
+was applied (`rep_dt <= 1` at the end of an apply cycle, otherwise
+`rep_dt <= rep_dt + 1` while active, saturating at 4095). At every cycle c
+with `rep_active`, let the head be the oldest prefetched entry, if any, with
+`target = max(delta, 1)`:
+
+- `rep_k = 0` and the head is present: apply it (its delta is ignored);
+- `rep_k >= 1`, the head is present and `rep_dt(c) = target`: apply it;
+- `rep_k >= 1`, the head is present and `rep_dt(c) > target`: **underrun**:
+  `rep_under <= 1`, `rep_active <= 0`, `rep_done <= 1`, nothing is applied;
+- `rep_k >= 1`, no head is present and `rep_dt(c) = 4095`: **underrun** as
+  above (the counter saturates at 4095, so an entry that is not present by
+  then can no longer be applied on time, whatever its delta);
+- otherwise nothing happens this cycle.
+
+Applying the head at cycle c: for each i in 0..3 with `rep_mask[i]` set,
+`pinwrite(4 rep_group + i, pins[i])` with the rules of section 5.3, applied
+after the core's pin command of the same cycle and before a host PINMODE
+write; the pads show the result during c + 1. Then `rep_k <= rep_k + 1`,
+`rep_dt <= 1`, the head leaves the prefetch, and if `rep_k + 1 = n_rep`:
+`rep_active <= 0`, `rep_done <= 1`. Consequently, when no underrun occurs,
+entry k is applied exactly `max(delta_k, 1)` cycles after entry k - 1 for
+every k >= 1, which is the timing a capture recorded (14.4).
+
+### 14.8 Status, counts, interrupts
+
+CR_CTRL read: bit 0 capture active, bit 1 `cap_trig`, bit 2 `cap_done`,
+bit 3 `cap_ovf`, bit 4 `rep_active`, bit 5 `rep_done`, bit 6 `rep_under`,
+bit 7 0. CR_COUNT read: `cap_w`, then `rep_k`. `RDS`: bit 7 capture active,
+bit 8 `rep_active`. IRQ conditions: bit 6 `cap_done`, bit 7 `rep_done`.

@@ -156,6 +156,7 @@ for f, (n, op, fl, blk, d) in enumerate([
     ("JMPR", "rs", "", False, "PC = rs"),
 ]):
     _add(n, 0xE, f, ((op, "r"),), fl, blk, d, fixed={"t": 0} if blk else None)
+_add("CAPC", 0xE, 14, (("rs", "r"),), desc="capture/replay control: rs[0] arm, rs[1] disarm, rs[2] start replay, rs[3] stop replay")
 _add("PUSHT", 0xE, 0, (("rs", "r"),), "C", True, "outbox <- rs[7:0], or deadline (C = 1 on timeout)", fixed={"t": 1})
 _add("POPT", 0xE, 1, (("rd", "r"),), "C", True, "rd = inbox byte, or deadline (C = 1 on timeout)", fixed={"t": 1})
 

@@ -7,6 +7,7 @@
 ;   0x03 n b0..bn-1 WRITE n bytes; pushes one status byte: 0 = all ACKed,
 ;                   k = byte k (1-based) was NACKed (remaining bytes are drained)
 ;   0x04 n          READ n bytes (ACK all but the last); pushes the n bytes
+;   0x05            START the other thread (used by fw/capture_demo.s)
 ; Any other byte is ignored.
 ;
 ; Clock-stretch timeout: if a slave holds SCL low for longer than
@@ -46,6 +47,9 @@ i2c_cmd:
         beq   i2c_write
         cmpi  r0, 4
         beq   i2c_read
+        cmpi  r0, 5
+        bne   i2c_cmd
+        start                   ; 0x05: wake the other thread (capture demo)
         bra   i2c_cmd
 
 i2c_start:                      ; valid from idle and as a repeated START

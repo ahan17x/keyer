@@ -82,6 +82,7 @@
 `define KEYER_OUTOE   4'd11  // major E: PP pins: uio_oe = rs[7:0]
 `define KEYER_RDLR    4'd12  // major E: rd = LR
 `define KEYER_JMPR    4'd13  // major E: PC = rs
+`define KEYER_CAPC    4'd14  // major E: capture/replay control: rs[0] arm, rs[1] disarm, rs[2] start replay, rs[3] stop replay
 `define KEYER_NOP     4'd0  // major F: nothing
 `define KEYER_HALT    4'd1  // major F: stop this thread
 `define KEYER_RET     4'd2  // major F: PC = LR

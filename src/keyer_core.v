@@ -17,7 +17,8 @@
  * cycles with cyc mod NTHREADS = t (the slot counter is the low bits of
  * cyc). "The other thread" of START, STOP and RDS bit 5 is thread
  * (tid + 1) mod NTHREADS, which for two threads is the other one. RDS
- * returns the thread id in bits 6 and up (bit 6 only for two threads).
+ * returns the thread id in bit 6 (its upper bits, for more than two threads,
+ * from bit 9 up, above the capture and replay bits 7 and 8).
  * pc0_out and pc1_out export threads 0 and 1, the PCs the host can read.
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -60,6 +61,11 @@ module keyer_core #(
     output reg  [NTHREADS-1:0]   blocked,
     output wire [7:0]  pc0_out,          // PC[0], PC[1] for the host read-back (10.4)
     output wire [7:0]  pc1_out,
+    // capture and replay (SEMANTICS 14): CAPC rs, RDS bits 7 and 8
+    output reg                   cr_ctrl_we,
+    output wire [3:0]            cr_ctrl_val,
+    input  wire                  cap_active,
+    input  wire                  rep_active,
     // debug / trace (unused in silicon)
     output wire        dbg_retire,
     output wire [$clog2(NTHREADS)-1:0] dbg_tid,
@@ -146,6 +152,13 @@ module keyer_core #(
     wire [15:0] tm_diff    = tm_now - tm_sum;
     wire        tm_reached = ~tm_diff[15];
 
+    // ---- RDS status word (section 11) --------------------------------------
+    wire [15:0] tid16 = {{(16-TW){1'b0}}, tid};
+    wire [15:0] rds_word = {7'd0, rep_active, cap_active, tid16[0], running[otid], tm_reached,
+                            out_full, out_empty, in_full, in_empty}
+                         | ((tid16 >> 1) << 9);
+    assign cr_ctrl_val = A[3:0];                             // CAPC rs: rs[3:0]
+
     // ---- execute (combinational) -------------------------------------------
     reg        done;
     reg        wr_en;
@@ -169,6 +182,7 @@ module keyer_core #(
         is_wait = 1'b0; wait_base = 1'b0; wait_tmo = 1'b0;
         pin_valid = 1'b0; pin_op = 3'd0; pin_pin = pin; pin_data = 8'd0;
         inbox_pop = {NT{1'b0}}; outbox_push = {NT{1'b0}}; outbox_wdata = A[7:0];
+        cr_ctrl_we = 1'b0;
         sum = 17'd0;
 
         case (maj)
@@ -273,7 +287,7 @@ module keyer_core #(
                 // PUSH/POP: the base effect happens only when the base condition holds
                 `KEYER_PUSH: begin is_wait = 1'b1; wait_base = ~out_full; outbox_push[tid] = ~out_full; end
                 `KEYER_POP:  begin is_wait = 1'b1; wait_base = ~in_empty; inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, in_head}; end
-                `KEYER_RDS:  begin wr_en = 1'b1; wr_val = {{(10-TW){1'b0}}, tid, running[otid], tm_reached, out_full, out_empty, in_full, in_empty}; end
+                `KEYER_RDS:  begin wr_en = 1'b1; wr_val = rds_word; end
                 `KEYER_RDCYC: begin wr_en = 1'b1; wr_val = cyc; end
                 `KEYER_SETT: do_sett = 1'b1;
                 `KEYER_RDT:  begin wr_en = 1'b1; wr_val = tm_diff; end
@@ -285,6 +299,7 @@ module keyer_core #(
                 `KEYER_OUTOE: begin pin_valid = 1'b1; pin_op = 3'd6; pin_data = A[7:0]; end
                 `KEYER_RDLR:  begin wr_en = 1'b1; wr_val = {8'd0, lr[tid]}; end
                 `KEYER_JMPR:  pc_next = A[7:0];
+                `KEYER_CAPC:  cr_ctrl_we = 1'b1;
                 default: ;
             endcase
         end
@@ -326,6 +341,7 @@ module keyer_core #(
         // nothing leaves the core unless the thread really executes this cycle
         if (!exec) begin
             pin_valid = 1'b0; inbox_pop = {NT{1'b0}}; outbox_push = {NT{1'b0}};
+            cr_ctrl_we = 1'b0;
         end
     end
 

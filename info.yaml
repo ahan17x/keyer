@@ -20,6 +20,7 @@ project:
     - "keyer_pins.v"
     - "keyer_core.v"
     - "keyer_host.v"
+    - "keyer_capture.v"
     - "tt_um_ahan17x_keyer.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.

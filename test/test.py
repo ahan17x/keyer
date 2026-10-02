@@ -18,7 +18,8 @@ import keyerasm
 import protomodels as pm
 from keyer_tb import (Lockstep, Pads, SpiMaster, reset, R_CTRL, R_ID, R_IMEM_ADDR,
                      R_IMEM_DATA, R_INBOX0, R_LEVELS, R_OUTBOX0, R_PINMODE, R_PINS,
-                     R_STAT, R_PINOUT, R_PC0, R_PC1)
+                     R_STAT, R_PINOUT, R_PC0, R_PC1, R_IRQEN, R_CR_CTRL, R_CAP_CFG,
+                     R_CAP_BUF, R_REP_CFG, R_REP_BUF, R_CR_COUNT)
 
 FW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fw")
 
@@ -32,6 +33,37 @@ def fw(name, symbols=None):
 def asm(src, symbols=None):
     words, syms, _ = keyerasm.assemble(src, symbols=symbols)
     return keyerasm.to_list(words), syms
+
+
+def fw_merge(*parts):
+    """Assemble several firmware files into one 256-word image: parts are
+    (name, symbols); each file places itself with .org."""
+    image, allsyms = {}, {}
+    for name, symbols in parts:
+        with open(os.path.join(FW, name)) as f:
+            words, syms, _ = keyerasm.assemble(f.read(), symbols=symbols)
+        assert not (set(words) & set(image)), "firmware images overlap"
+        image.update(words)
+        allsyms.update(syms)
+    return keyerasm.to_list(image), allsyms
+
+
+class EdgeLog:
+    """Records (cycle, value) whenever the masked pad bits change (a model
+    for the lockstep harness; it drives nothing)."""
+
+    def __init__(self, mask):
+        self.mask, self.log, self._prev = mask, [], None
+
+    def on_cycle(self, m):
+        v = m.pad() & self.mask
+        if v != self._prev:
+            self.log.append((m.cycle, v))
+            self._prev = v
+
+    def deltas(self, start, end):
+        pts = [c for c, _ in self.log if start <= c < end]
+        return [b - a for a, b in zip(pts, pts[1:])]
 
 
 async def start(dut, period_ns=20):
@@ -88,6 +120,29 @@ async def test_pc_readback_and_soft_reset(dut):
 
 
 @cocotb.test()
+async def test_capture_registers(dut):
+    """Capture/replay registers read back; status and counts are 0 after
+    reset; IRQEN carries 8 bits (docs/CAPTURE.md section 2)."""
+    pads = await start(dut)
+    spi = SpiMaster(dut, pads, half=4)
+    assert await spi.cr_status() == 0
+    assert await spi.cr_count() == [0, 0]
+    await spi.cap_config(group=5, mask=0xA, tpat=0x3, tmask=0x7, base=0xC0, length=40)
+    assert await spi.read(R_CAP_CFG, 2) == [0xA5, 0x73]
+    assert await spi.read(R_CAP_BUF, 2) == [0xC0, 40]
+    await spi.rep_config(group=1, mask=0xF, base=0x80, length=0)
+    assert await spi.read(R_REP_CFG, 1) == [0xF1]
+    assert await spi.read(R_REP_BUF, 2) == [0x80, 0]
+    await spi.write(R_IRQEN, [0xC0])
+    assert await spi.read(R_IRQEN, 1) == [0xC0]
+    await spi.cr_ctrl(0b0100)                       # START a replay of length 0: done at once
+    await ClockCycles(dut.clk, 4)
+    assert await spi.cr_status() == 0b0010_0000     # replay done, nothing active
+    assert int(dut.uo_out.value) & 2                # IRQ: replay done enabled
+    await spi.write(R_IRQEN, [0])
+
+
+@cocotb.test()
 async def test_imem_write_read(dut):
     pads = await start(dut)
     for half in (4, 16):
@@ -141,7 +196,7 @@ async def test_fifo_roundtrip_and_status(dut):
 # ---------------------------------------------------------------- lockstep
 
 async def lockstep_firmware(dut, words, cycles, models=(), run_mask=0b01, pc1=0,
-                            inbox0=(), inbox1=(), half=4, after_load=None):
+                            inbox0=(), inbox1=(), half=4, after_load=None, run_after=False):
     """Load firmware over SPI with the ISS mirroring every host action, then
     run both machines in lockstep for `cycles` cycles."""
     pads = await start(dut)
@@ -156,8 +211,10 @@ async def lockstep_firmware(dut, words, cycles, models=(), run_mask=0b01, pc1=0,
             await spi.write(R_INBOX0, [b])
         for b in inbox1:
             await spi.write(R_INBOX0 + 2, [b])
+        if after_load and run_after:
+            await after_load(spi)
         await spi.run(run_mask)
-        if after_load:
+        if after_load and not run_after:
             await after_load(spi)
 
     task = cocotb.start_soon(host())
@@ -358,6 +415,106 @@ async def test_lockstep_i2c_timeout(dut):
 
 
 @cocotb.test()
+async def test_lockstep_capture_replay_demo(dut):
+    """fw/capture_demo.s on thread 1 captures thread 0's I2C transaction
+    (trigger: START condition), then replays it on the same pins. The slave
+    must see the same transaction twice with identical edge timing, the
+    buffer drained over SPI must hold the recorded deltas, and both threads
+    end halted or stopped (docs/CAPTURE.md section 4)."""
+    Q = 30
+    words, syms = fw_merge(("i2c_master.s", {"I2C_Q": Q}), ("capture_demo.s", None))
+    base, length = 0xA4, 92
+    cmds = [0x01, 0x03, 2, 0xA0, 0x10, 0x02, 0x05]      # START, write address + pointer, STOP, wake T1
+    slave = pm.I2cSlaveModel(scl=2, sda=3, address=0x50, stretch=0, min_high=Q, min_low=Q)
+    edges = EdgeLog(0x0C)
+
+    async def setup(spi):
+        await spi.write(R_PINMODE, [0x0C])                        # SCL, SDA open-drain
+        await spi.cap_config(group=0, mask=0xC, tpat=0x4, tmask=0xC, base=base, length=length)
+        await spi.rep_config(group=0, mask=0xC, base=base, length=0)
+        await spi.set_pc(1, syms["cap_demo"])
+        for b in cmds:
+            await spi.write(R_INBOX0, [b])
+
+    ls, spi = await lockstep_firmware(dut, words, 16000, models=[slave, edges], run_mask=0b10,
+                                      after_load=setup, run_after=True)
+    m = ls.m
+    assert m.threads[1].halted and not m.threads[0].running, (m.threads[0].pc, m.threads[1].pc)
+    assert slave.errors == [], slave.errors[:3]
+    kinds = [e[0] for e in slave.events]
+    assert kinds == ["start", "stop", "start", "stop"], kinds
+    assert slave.ptr == 0x10 and len(slave.transfers) == 2
+    starts = [c for k, c in slave.events if k == "start"]
+    stops = [c for k, c in slave.events if k == "stop"]
+    first = edges.deltas(starts[0] - 1, stops[0] + 5)
+    second = edges.deltas(starts[1] - 1, stops[1] + 5)
+    assert first == second, (first[:10], second[:10])
+    # the recorded entries: count and deltas match the first transaction
+    st = await spi.cr_status()
+    assert st & 0b0100 and st & 0b10_0000 and not (st & 0b1000) and not (st & 0b100_0000), bin(st)
+    n, k = await spi.cr_count()
+    assert n == k and n >= 10, (n, k)
+    entries = await spi.read_entries(base, n)
+    deltas = [e >> 4 for e in entries]
+    assert deltas[0] == 0 and deltas[1:] == first[:n - 1], (deltas[:12], first[:12])
+    assert all(((e & 0xF) & ~0xC) == 0 for e in entries)
+
+
+@cocotb.test()
+async def test_lockstep_replay_host_waveform_and_loopback_capture(dut):
+    """Both threads stopped: the host writes a waveform and replays it on
+    uo2/uo3 (group 4); uo2 is wired to ui3 externally and a capture on group 2
+    records it. Replay edges land exactly delta cycles apart; the capture
+    reproduces the deltas."""
+    pads = await start(dut)
+    spi = SpiMaster(dut, pads, half=4)
+
+    class Wire:                           # uo2 (pin 18) feeds ui3 (pin 11)
+        def on_cycle(self, m):
+            v = (m.pad() >> 18) & 1
+            m.ext_ui = (m.ext_ui & ~0x08) | (v << 3)
+
+    edges = EdgeLog(0x0C0000)
+    ls = Lockstep(dut, pads, models=[Wire(), edges])
+    wave = [(0, 0x4), (5, 0xC), (3, 0x8), (1, 0x0), (0, 0x4), (40, 0xC), (2, 0x0)]
+    entries = [(d << 4) | p for d, p in wave]
+
+    async def host():
+        await spi.write_entries(0x40, entries)
+        await spi.rep_config(group=4, mask=0xC, base=0x40, length=len(entries))
+        await spi.cap_config(group=2, mask=0x8, tpat=0, tmask=0, base=0x80, length=16)
+        await spi.cr_ctrl(0b0001)                                 # ARM capture (triggers at once)
+        await spi.cr_ctrl(0b0100)                                 # START replay
+
+    task = cocotb.start_soon(host())
+    while not task.done():
+        await ls.run(200)
+    await ls.run(400)
+    m = ls.m
+    assert m.cr.rep_done and not m.cr.rep_under and m.cr.rep_k == len(wave)
+    gaps = edges.deltas(0, 10 ** 9)
+    exp = [max(d, 1) for d, _ in wave[1:]]
+    # entry 3 -> 4 changes nothing on uo3? it does (0x0 -> 0x4): every entry changes the pads
+    assert gaps[-len(exp):] == exp, (gaps, exp)
+    task = cocotb.start_soon(spi.cr_ctrl(0b0010))                 # DISARM, mirrored by the lockstep
+    while not task.done():
+        await ls.run(50)
+    await ls.run(20)
+    assert m.cr.cap_done and not m.cr.cap_ovf
+    n, _ = await spi.cr_count()
+    rec = await spi.read_entries(0x80, n)
+    # ui3 follows uo2 (bit 2 of each entry): its edges are the entries whose bit 2 changed
+    uo2 = [(p >> 2) & 1 for _, p in wave]
+    exp_rec, prev = [], 0                     # uo2 is 0 before the replay starts
+    for v in uo2:
+        if v != prev:
+            exp_rec.append(v)
+            prev = v
+    got = [(e & 0x8) >> 3 for e in rec[1:]]
+    assert got == exp_rec, (got, exp_rec)
+
+
+@cocotb.test()
 async def test_lockstep_random_programs(dut):
     """Constrained-random instruction streams, both threads, random pin wiggling."""
     import keyer_isa as I
@@ -372,7 +529,7 @@ async def test_lockstep_random_programs(dut):
                           if i.name not in ("HALT", "STOP", "JMP", "JMPR", "CALL", "RET",
                                             "WT0", "WT1", "WTR", "WTF", "WAITD", "POP",
                                             "PUSH", "DELAY", "WT0T", "WT1T", "WTRT", "WTFT",
-                                            "POPT", "PUSHT")])
+                                            "POPT", "PUSHT", "CAPC")])
         ops = {}
         for opname, fname in ins.operands:
             if fname in ("rd", "rs", "r"):

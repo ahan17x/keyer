@@ -1,21 +1,34 @@
 #!/usr/bin/env python3
 """Keyer golden model: a cycle-exact behavioural model of the Keyer core.
 
-Written from docs/SEMANTICS.md (the contract) and tools/keyer_isa.py (the
-encoding table) alone, independently of the RTL in src/ (DECISIONS D-012).
-Section numbers in the comments refer to SEMANTICS.md.
+Written from docs/SEMANTICS.md (the contract, version 0.3) and
+tools/keyer_isa.py (the encoding table) alone, independently of the RTL in
+src/ (DECISIONS D-012). Section numbers in the comments refer to
+SEMANTICS.md.
 
 One call to Machine.step() is one core clock cycle c (= Machine.cycle):
 
   1. Observe. Everything the cycle depends on is read as it is during
      cycle c: the drive registers and the external levels (pad(c)), the
      synchronised levels level(c) = pad(c - 2) and level2(c) = level(c - 2),
-     FIFO occupancies, NOW and DEADLINE, the running flags.
-  2. Execute. Thread c mod 2, if it is running, evaluates IMEM[PC]. The
-     instruction either completes (its PC, register, flag, pin, FIFO and
+     FIFO occupancies, NOW and DEADLINE, the running flags, the state of the
+     capture and replay engines, and whether the memory port was used in
+     cycle c - 1 (by the host, which the caller flags by setting
+     host_port_busy before the step, or by an engine).
+  2. Execute (2.1). Thread c mod 2 executes if it is running and its fetch is
+     valid, i.e. the port was not used in cycle c - 1. It evaluates IMEM[PC];
+     the instruction either completes (its PC, register, flag, pin, FIFO and
      timer effects are applied) or blocks (no architectural effect; only the
-     private DELAY count advances).
-  3. Commit. The timers of both threads tick (6.1), the synchroniser history
+     private DELAY count advances). Machine.executed records whether it
+     executed.
+  3. Engines (14). The port is free in c if the host does not use it and
+     thread (c + 1) mod 2 is not running during c (14.1). The capture engine
+     triggers or records on the group nibble of level(c) and, in a free
+     cycle, writes its oldest queued entry to IMEM; otherwise the replay
+     engine may fetch. The replay engine applies its head entry with
+     pinwrite after the core's pin command (14.7). The CR_CTRL actions of the
+     cycle (CAPC) are applied last.
+  4. Commit. The timers of both threads tick (6.1), the synchroniser history
      shifts and the cycle counter advances to c + 1.
 
 Host effects (the host_* methods and Thread.soft_reset()) called between
@@ -24,9 +37,23 @@ during cycle c. They land at the end of c, after the core's commit of that
 cycle, so where both write the same state the host wins (2.3, 3.2, 5.3, 8).
 Where SEMANTICS has a host effect depend on state during c (a PC write only
 if the thread was not running, a push on a full FIFO or a pop on an empty
-FIFO ignored), it observes the state as it was during the cycle just
-stepped, not the core's commit of that cycle. Before the first step that is
-the reset state.
+FIFO ignored, the capture count sampled by a replay START), it observes the
+state as it was during the cycle just stepped, not the core's commit of
+that cycle. Before the first step that is the reset state. host_cr_ctrl()
+is merged with a CAPC committed in the same cycle (ARM over DISARM, START
+over STOP). The configuration writes (host_cap_cfg, host_cap_buf,
+host_rep_cfg, host_rep_buf) take effect at once, so a test may write the
+configuration and the control byte between the same two steps (in silicon
+they are separate SPI transactions). The one visible consequence: cap_prev
+during the first armed cycle is then still the nibble of the previous
+group, so with a non-zero trigger mask a group change should be written at
+least one step before ARM.
+
+Cycle 0. SEMANTICS 2.1 makes the fetch for cycle 0 invalid. In silicon no
+thread runs during cycle 0, so that rule cannot be observed. The model
+treats host calls made before the first step as landing at the end of a
+cycle -1 with a valid fetch, so a thread started that way executes at
+cycle 0 (docs/spec-questions.md Q10).
 """
 
 import argparse
@@ -43,6 +70,12 @@ IMEM_WORDS = 256
 FIFO_DEPTH = 16
 NREGS = 8
 NPINS = 24
+
+# Capture and replay (14)
+ENTRY_DT_MAX = 0xFFF         # the 12-bit delta field of an entry {delta[11:0], pins[3:0]}
+QUEUE_DEPTH = 2              # capture write queue (14.4)
+PREFETCH_DEPTH = 2           # replay prefetch buffer (14.6)
+CR_ARM, CR_DISARM, CR_START, CR_STOP = 1, 2, 4, 8     # CR_CTRL / CAPC action bits (14.2, 14.5)
 
 
 def reached(a, b):
@@ -156,6 +189,87 @@ class Thread:
             len(self.inbox), len(self.outbox))
 
 
+class CaptureReplay:
+    """The capture and replay engine pair (SEMANTICS 14). Attribute names
+    match the RTL's u_cr signals (13); every value is an int. All of it is
+    reset by rst_n (Machine.reset()) and untouched by a thread's soft reset.
+    The engine's behaviour per cycle is in Machine._cr_cycle() and
+    Machine._cr_control(), because it uses the pins and the program memory."""
+
+    CONFIG = ("cap_group", "cap_mask", "cap_tpat", "cap_tmask", "cap_base", "cap_len",
+              "rep_group", "rep_mask", "rep_base", "rep_len")
+
+    def __init__(self):
+        self.queue = collections.deque()      # capture entries not yet written, oldest first (14.4)
+        self.pf = collections.deque()         # replay prefetch, the head (oldest) first (14.6)
+        self.reset()
+
+    def reset(self):
+        """rst_n (14): everything to 0."""
+        for name in self.CONFIG:
+            setattr(self, name, 0)
+        # capture (14.2-14.4)
+        self.cap_armed = 0
+        self.cap_trig = 0
+        self.cap_done = 0
+        self.cap_ovf = 0
+        self.cap_was_armed = 0
+        self.cap_last = 0            # s() of the last entry produced
+        self.cap_prev = 0            # nib() of the previous cycle, at all times
+        self.cap_dt = 0              # cycles since the cycle of the last entry
+        self.cap_n = 0               # entries produced since ARM (lost ones included)
+        self.cap_w = 0               # entries written to IMEM since ARM
+        self.queue.clear()
+        # replay (14.5-14.7)
+        self.rep_active = 0
+        self.rep_done = 0
+        self.rep_under = 0
+        self.rep_k = 0               # entries applied since START
+        self.rep_f = 0               # entries fetched since START
+        self.rep_dt = 0              # cycles since the cycle of the last apply
+        self.rep_n = 0               # n_rep, latched at START (14.5)
+        self.pf.clear()
+        self.pf_inflight = 0         # 1 during the cycle after a fetch (14.6)
+        self.pf_word = 0             # the word fetched, valid while pf_inflight
+
+    @property
+    def q_count(self):
+        """Entries in the capture queue (0..2)."""
+        return len(self.queue)
+
+    @property
+    def pf_count(self):
+        """Entries held in the replay prefetch (0..2); a word in flight is not counted."""
+        return len(self.pf)
+
+    def cap_active(self):
+        """Capture active (14.4): armed, or entries still queued."""
+        return 1 if (self.cap_armed or self.queue) else 0
+
+    def status(self):
+        """The CR_CTRL read byte (14.8)."""
+        return (self.cap_active()
+                | self.cap_trig << 1
+                | self.cap_done << 2
+                | self.cap_ovf << 3
+                | self.rep_active << 4
+                | self.rep_done << 5
+                | self.rep_under << 6)
+
+    def counts(self):
+        """The CR_COUNT read bytes (14.8): entries recorded, entries applied."""
+        return self.cap_w, self.rep_k
+
+    def __repr__(self):
+        return ("CR cap(armed=%d trig=%d done=%d ovf=%d last=%X prev=%X dt=%d n=%d w=%d q=%s) "
+                "rep(active=%d done=%d under=%d k=%d f=%d dt=%d n=%d pf=%s inflight=%d)") % (
+            self.cap_armed, self.cap_trig, self.cap_done, self.cap_ovf, self.cap_last,
+            self.cap_prev, self.cap_dt, self.cap_n, self.cap_w,
+            [("%04X" % e) for e in self.queue], self.rep_active, self.rep_done,
+            self.rep_under, self.rep_k, self.rep_f, self.rep_dt, self.rep_n,
+            [("%04X" % e) for e in self.pf], self.pf_inflight)
+
+
 class Machine:
     """The whole chip as seen by firmware and by the host interface."""
 
@@ -167,6 +281,7 @@ class Machine:
         self.pin_events = []
         self.ext_uio = 0xFF          # external level on released uio pins (pull-ups)
         self.ext_ui = 0              # external level on the ui pins
+        self.cr = CaptureReplay()    # capture and replay engines (14)
         self.reset()
 
     def reset(self):
@@ -179,6 +294,12 @@ class Machine:
         self.irq_en = 0
         for t in self.threads:
             t.reset()
+        self.cr.reset()
+        self.host_port_busy = False  # set by the caller before a step in whose cycle the host uses the port
+        self.executed = False        # whether the slot's thread executed in the last step (2.1)
+        self._port_used_prev = False # port used in the previous cycle: the fetch for this one is invalid
+        self._cr_ctl = 0             # CR_CTRL action bits of the cycle just stepped (CAPC and host)
+        self._cap_w_seen = 0         # cap_w during the cycle just stepped (sampled by START, 14.5)
         self._pad1 = 0               # pad(c - 1), pins 0-15
         self._pad2 = 0               # pad(c - 2)
         self._lvl1 = 0               # level(c - 1), all 24 pins
@@ -311,6 +432,39 @@ class Machine:
                 t.outbox.clear()
                 t._out_cleared = True
 
+    def host_cr_ctrl(self, byte):
+        """CR_CTRL write (10.3, 14.2, 14.5): bit 0 ARM, bit 1 DISARM, bit 2
+        START, bit 3 STOP. Lands at the end of the cycle just stepped,
+        together with a CAPC committed in it (ARM over DISARM, START over
+        STOP); START samples cap_w as it was during that cycle."""
+        self._cr_ctl |= byte & 0xF
+        self._cr_control()
+
+    def host_cap_cfg(self, word):
+        """CAP_CFG write (14): byte 0 = bits 7:0 (group 2:0, watch mask 7:4),
+        byte 1 = bits 15:8 (trigger pattern 11:8, trigger mask 15:12)."""
+        cr = self.cr
+        cr.cap_group = word & 0x7
+        cr.cap_mask = (word >> 4) & 0xF
+        cr.cap_tpat = (word >> 8) & 0xF
+        cr.cap_tmask = (word >> 12) & 0xF
+
+    def host_cap_buf(self, word):
+        """CAP_BUF write (14): byte 0 base word, byte 1 length."""
+        self.cr.cap_base = word & M8
+        self.cr.cap_len = (word >> 8) & M8
+
+    def host_rep_cfg(self, byte):
+        """REP_CFG write (14): bits 2:0 group, bits 7:4 drive mask."""
+        self.cr.rep_group = byte & 0x7
+        self.cr.rep_mask = (byte >> 4) & 0xF
+
+    def host_rep_buf(self, word):
+        """REP_BUF write (14): byte 0 base word, byte 1 length (0: the last
+        capture's cap_w, sampled at START)."""
+        self.cr.rep_base = word & M8
+        self.cr.rep_len = (word >> 8) & M8
+
     def status(self):
         """Host STAT register (10.4)."""
         s = 0
@@ -327,7 +481,9 @@ class Machine:
                 | int(bool(t0.halted)) << 2
                 | int(bool(t1.halted)) << 3
                 | (0 if t0.inbox else 1) << 4
-                | (0 if t1.inbox else 1) << 5)
+                | (0 if t1.inbox else 1) << 5
+                | self.cr.cap_done << 6
+                | self.cr.rep_done << 7)
         return 1 if cond & self.irq_en else 0
 
     # ------------------------------------------------------------ the clock
@@ -335,7 +491,7 @@ class Machine:
     def step(self):
         """Advance one core clock cycle. Returns True if the slot owner's
         instruction completed, False if it blocked, True if no thread
-        executes in this cycle."""
+        executes in this cycle (see Machine.executed)."""
         c = self.cycle
         th = self.threads
         t = th[c & 1]
@@ -343,15 +499,21 @@ class Machine:
         # 1. observe
         th[0]._open_window()
         th[1]._open_window()
-        self._run_seen = (bool(th[0].running), bool(th[1].running))
+        run_seen = (bool(th[0].running), bool(th[1].running))
+        self._run_seen = run_seen
         pad = self.pad()
         level = (self._pad2 & 0xFFFF) | ((self.uo_out & 0xFC) << 16)     # 5.2
         drive = (self.uio_out, self.uio_oe, self.uo_out)
+        host_busy = bool(self.host_port_busy)
+        fetch_valid = not self._port_used_prev                          # 2.1
+        self._cr_ctl = 0
+        self._cap_w_seen = self.cr.cap_w
 
-        # 2. execute (2.1: the model equates "executes" with "running")
+        # 2. execute (2.1: running and the fetch was valid)
         done = True
         sett_thread = None
-        if t.running:
+        executed = bool(t.running) and fetch_valid
+        if executed:
             pc = t.pc & M8
             word = self.imem[pc] & M16
             ins, ops = decode(word)
@@ -373,8 +535,16 @@ class Machine:
                 self.trace.append(Retire(c, t.tid, pc, word, done))
         else:
             t.blocked = False
+        self.executed = executed
 
-        # 3. commit: timer tick for both threads, running or not (6.1)
+        # 3. capture and replay engines (14), after the core's pin command
+        free = not host_busy and not run_seen[(c + 1) & 1]              # 14.1
+        engine_used = self._cr_cycle(level, free)
+        self._cr_control()                                             # CAPC actions of this cycle
+        self._port_used_prev = host_busy or engine_used                # 2.1, for cycle c + 1
+        self.host_port_busy = False
+
+        # 4. commit: timer tick for both threads, running or not (6.1)
         for x in th:
             if x is sett_thread:
                 continue
@@ -391,6 +561,157 @@ class Machine:
         if (self.uio_out, self.uio_oe, self.uo_out) != drive:
             self._note_pins()
         return done
+
+    # ------------------------------------------------------------ capture and replay (14)
+
+    def _cr_cycle(self, level, free):
+        """One cycle of the capture and replay engines on the state during
+        this cycle (14.1, 14.3, 14.4, 14.6, 14.7). Called after the core's
+        instruction, so a replay apply lands after the core's pin command.
+        Returns whether an engine used the memory port."""
+        cr = self.cr
+        used = False
+
+        # ---- capture: trigger (14.3) and recording (14.4)
+        g = cr.cap_group
+        nib = ((level >> (4 * g)) & 0xF) if g < 6 else 0         # groups 6, 7: pins 24-31 read 0
+        s = nib & cr.cap_mask
+        q_seen = len(cr.queue)
+        entry = None
+        if cr.cap_armed:
+            if not cr.cap_trig:
+                tm = cr.cap_tmask
+                want = cr.cap_tpat & tm
+                if tm == 0 or ((nib & tm) == want and (cr.cap_prev & tm) != want):
+                    cr.cap_trig = 1
+                    entry = s                                    # {0, s(c)}
+                    cr.cap_last = s
+                    cr.cap_dt = 1
+            else:
+                d = cr.cap_dt
+                if s != cr.cap_last:
+                    entry = (d << 4) | s
+                    cr.cap_last = s
+                    cr.cap_dt = 1
+                elif d == ENTRY_DT_MAX:
+                    entry = (ENTRY_DT_MAX << 4) | cr.cap_last    # idle entry
+                    cr.cap_dt = 1
+                else:
+                    cr.cap_dt = d + 1
+        cr.cap_prev = nib                                        # cap_prev(c + 1) = nib(c)
+        # a free cycle with a non-empty queue writes the oldest entry (14.1, 14.4)
+        written = 0
+        if free and q_seen:
+            self.imem[(cr.cap_base + cr.cap_w) & M8] = cr.queue.popleft()
+            cr.cap_w = (cr.cap_w + 1) & M8
+            used = True
+            written = 1
+        if entry is not None:
+            n = (cr.cap_n + 1) & M8
+            cr.cap_n = n
+            if q_seen - written >= QUEUE_DEPTH:  # lost only if two entries stay held (a write in c frees a slot)
+                cr.cap_ovf = 1
+                cr.cap_armed = 0
+            else:
+                cr.queue.append(entry)
+            if n == cr.cap_len:                  # the cap_len-th entry
+                cr.cap_armed = 0
+
+        # ---- replay: apply (14.7) and fetch (14.6)
+        arriving = cr.pf_inflight                # word fetched in c - 1, held from the end of c
+        fetched = None
+        if cr.rep_active:
+            pf_seen = len(cr.pf)
+            k = cr.rep_k
+            dt = cr.rep_dt
+            applied = 0
+            if cr.pf:
+                head = cr.pf[0]
+                target = max(head >> 4, 1)
+                if k == 0 or dt == target:
+                    cr.pf.popleft()
+                    self._rep_apply(head & 0xF)
+                    applied = 1
+                    cr.rep_k = (k + 1) & M8
+                    if ((k + 1) & M8) == cr.rep_n:
+                        cr.rep_active = 0
+                        cr.rep_done = 1
+                elif dt > target:                # underrun: nothing applied
+                    cr.rep_under = 1
+                    cr.rep_active = 0
+                    cr.rep_done = 1
+            elif k >= 1 and dt == ENTRY_DT_MAX:
+                # no head and rep_dt saturated: no entry can be applied on time
+                # any more, whatever its delta, so this is an underrun too (14.7)
+                cr.rep_under = 1
+                cr.rep_active = 0
+                cr.rep_done = 1
+            cr.rep_dt = 1 if applied else min(dt + 1, ENTRY_DT_MAX)
+            # an entry applied in c no longer counts towards the limit in c (14.6)
+            if free and not used and cr.rep_f < cr.rep_n and pf_seen - applied + arriving < PREFETCH_DEPTH:
+                fetched = self.imem[(cr.rep_base + cr.rep_f) & M8] & M16
+                cr.rep_f = (cr.rep_f + 1) & M8
+                used = True
+        if arriving:
+            cr.pf.append(cr.pf_word)
+        if fetched is None:
+            cr.pf_inflight = 0
+        else:
+            cr.pf_inflight = 1
+            cr.pf_word = fetched
+        return used
+
+    def _rep_apply(self, pins):
+        """Apply a replay entry's pins: pinwrite(4 rep_group + i, pins[i]) for
+        every i in the drive mask (14.7, 5.3). Groups 6 and 7 are pins
+        24-31: ignored."""
+        cr = self.cr
+        g = cr.rep_group
+        if g >= 6:
+            return
+        for i in range(4):                       # pinwrite does not change od_mask: order is irrelevant
+            if (cr.rep_mask >> i) & 1:
+                self._pinwrite(4 * g + i, (pins >> i) & 1)
+
+    def _cr_control(self):
+        """Apply the CR_CTRL actions of the cycle just stepped (CAPC and host
+        combined, 14.2, 14.5) on top of the engines' own updates, then settle
+        cap_done (14.4). Every action sets fixed values, so calling this again
+        after a later host_cr_ctrl() in the same window is safe."""
+        cr = self.cr
+        bits = self._cr_ctl
+        if bits & CR_ARM:
+            cr.cap_armed = 1 if cr.cap_len else 0    # cap_len = 0: no entries, done at once
+            cr.cap_trig = 0
+            cr.cap_ovf = 0
+            cr.cap_n = 0
+            cr.cap_w = 0
+            cr.queue.clear()
+            cr.cap_was_armed = 1
+        elif bits & CR_DISARM:
+            cr.cap_armed = 0
+        if bits & CR_START:
+            n = cr.rep_len if cr.rep_len else self._cap_w_seen
+            cr.rep_n = n
+            cr.rep_active = 1 if n else 0
+            cr.rep_done = 0 if n else 1
+            cr.rep_under = 0
+            cr.rep_k = 0
+            cr.rep_f = 0
+            cr.rep_dt = 0
+            cr.pf.clear()
+            cr.pf_inflight = 0                       # a word in flight is dropped too
+        elif bits & CR_STOP:
+            cr.rep_active = 0
+            cr.rep_done = 1
+        if not cr.rep_active:
+            # the prefetch holds nothing while the replay is inactive: entries
+            # held and a word in flight at STOP, underrun or the last apply
+            # are discarded (14.5, 14.6)
+            cr.pf.clear()
+            cr.pf_inflight = 0
+        # done after any cycle that leaves the engine disarmed, drained and once armed; ARM clears it
+        cr.cap_done = 1 if (not cr.cap_armed and not cr.queue and cr.cap_was_armed) else 0
 
     def run(self, cycles, on_cycle=None):
         """Run `cycles` cycles; on_cycle(machine) is called before each step."""
@@ -786,7 +1107,9 @@ class Machine:
                            | int(no == FIFO_DEPTH) << 3
                            | int(reached(t.now, t.deadline)) << 4
                            | int(bool(self._other(t).running)) << 5
-                           | t.tid << 6)
+                           | t.tid << 6
+                           | self.cr.cap_active() << 7
+                           | self.cr.rep_active << 8)
         return True
 
     def _x_RDCYC(self, t, o):
@@ -836,6 +1159,12 @@ class Machine:
 
     def _x_JMPR(self, t, o):
         self._jump = t.regs[o["rs"]] & M8
+        return True
+
+    def _x_CAPC(self, t, o):
+        # rs[3:0] as the CR_CTRL control byte, applied at the end of the slot
+        # together with any host CR_CTRL write of the same cycle (14.2, 14.5)
+        self._cr_ctl |= t.regs[o["rs"]] & 0xF
         return True
 
     # ---- misc (6.2, 7.5, 7.6, 9, 12) --------------------------------------

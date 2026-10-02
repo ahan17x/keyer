@@ -57,13 +57,34 @@ module keyer_host (
     input  wire [15:0] level,           // {ui, uio} synchronised
     input  wire [7:0]  uo_out,
     input  wire [7:0]  uio_out,
-    input  wire [7:0]  uio_oe
+    input  wire [7:0]  uio_oe,
+    // capture and replay (SEMANTICS 10.3, 10.4, 14): one-cycle write pulses
+    // landing at the end of the cycle, like RUN; two-byte registers pulse
+    // once, after byte 1, with {byte 1, byte 0}
+    output reg         cr_ctrl_we,
+    output wire [7:0]  cr_ctrl_val,
+    output reg         cap_cfg_we,
+    output wire [15:0] cap_cfg_val,
+    output reg         cap_buf_we,
+    output wire [15:0] cap_buf_val,
+    output reg         rep_cfg_we,
+    output wire [7:0]  rep_cfg_val,
+    output reg         rep_buf_we,
+    output wire [15:0] rep_buf_val,
+    input  wire [7:0]  cr_status,       // CR_CTRL read (14.8)
+    input  wire [15:0] cr_count,        // CR_COUNT read {byte 1, byte 0}
+    input  wire [15:0] cap_cfg_rd,
+    input  wire [15:0] cap_buf_rd,
+    input  wire [7:0]  rep_cfg_rd,
+    input  wire [15:0] rep_buf_rd
 );
     localparam R_CTRL = 7'h00, R_STAT = 7'h01, R_PC0 = 7'h02, R_PC1 = 7'h03,
                R_IMEM_ADDR = 7'h04, R_IMEM_DATA = 7'h05, R_INBOX0 = 7'h06,
                R_OUTBOX0 = 7'h07, R_INBOX1 = 7'h08, R_OUTBOX1 = 7'h09,
                R_LEVELS = 7'h0A, R_PINMODE = 7'h0B, R_IRQEN = 7'h0C,
-               R_PINS = 7'h0D, R_FIFOCLR = 7'h0E, R_ID = 7'h0F, R_PINOUT = 7'h10;
+               R_PINS = 7'h0D, R_FIFOCLR = 7'h0E, R_ID = 7'h0F, R_PINOUT = 7'h10,
+               R_CR_CTRL = 7'h11, R_CAP_CFG = 7'h12, R_CAP_BUF = 7'h13,
+               R_REP_CFG = 7'h14, R_REP_BUF = 7'h15, R_CR_COUNT = 7'h16;
 
     // ---- synchronisers and edge detection ---------------------------------
     reg [2:0] sck_s, mosi_s, csn_s;
@@ -92,10 +113,10 @@ module keyer_host (
     reg       load_pending;         // present the next read byte on the next falling edge
     reg [7:0] tx_shift;
     reg [7:0] imem_addr_q;
-    reg [7:0] imem_lo;
+    reg [7:0] imem_lo;              // IMEM_DATA low byte; byte 0 of a two-byte write
     reg [15:0] imem_rd_q;
     reg       imem_re_d;
-    reg [5:0] irq_en;
+    reg [7:0] irq_en;
     reg [7:0] wdata_q;
 
     wire       cmd_phase = (byte_idx == 8'd0);
@@ -157,7 +178,7 @@ module keyer_host (
                 default: rd_byte = {3'd0, outbox1_count};
             endcase
             R_PINMODE: rd_byte = od_mask;
-            R_IRQEN:   rd_byte = {2'd0, irq_en};
+            R_IRQEN:   rd_byte = irq_en;
             R_PINS: case (byte_idx[1:0])
                 2'd1: rd_byte = level[7:0];
                 2'd2: rd_byte = level[15:8];
@@ -166,6 +187,12 @@ module keyer_host (
             endcase
             R_ID:     rd_byte = byte_idx[0] ? 8'h4B : `KEYER_ISA_VERSION;
             R_PINOUT: rd_byte = byte_idx[0] ? uio_out : uio_oe;
+            R_CR_CTRL:  rd_byte = cr_status;
+            R_CAP_CFG:  rd_byte = byte_idx[0] ? cap_cfg_rd[7:0] : cap_cfg_rd[15:8];
+            R_CAP_BUF:  rd_byte = byte_idx[0] ? cap_buf_rd[7:0] : cap_buf_rd[15:8];
+            R_REP_CFG:  rd_byte = rep_cfg_rd;
+            R_REP_BUF:  rd_byte = byte_idx[0] ? rep_buf_rd[7:0] : rep_buf_rd[15:8];
+            R_CR_COUNT: rd_byte = byte_idx[0] ? cr_count[7:0] : cr_count[15:8];
             default:  rd_byte = 8'd0;
         endcase
     end
@@ -189,6 +216,11 @@ module keyer_host (
     assign pinmode_val = wdata_q;
     assign imem_addr   = imem_addr_q;
     assign imem_wdata  = {rx_byte, imem_lo};
+    assign cr_ctrl_val = wdata_q;
+    assign rep_cfg_val = wdata_q;
+    assign cap_cfg_val = {wdata_q, imem_lo};
+    assign cap_buf_val = {wdata_q, imem_lo};
+    assign rep_buf_val = {wdata_q, imem_lo};
 
     wire data_done = byte_done && !cmd_phase;
     wire cmd_done  = byte_done && cmd_phase;
@@ -198,17 +230,24 @@ module keyer_host (
             run_we <= 1'b0; run_val <= 2'b00; rst_pulse <= 2'b00; pc_we <= 2'b00;
             inbox_push <= 2'b00; outbox_pop <= 2'b00; fifo_clr <= 4'd0; pinmode_we <= 1'b0;
             imem_we <= 1'b0; imem_re <= 1'b0; imem_addr_q <= 8'd0; imem_lo <= 8'd0;
-            imem_rd_q <= 16'd0; imem_re_d <= 1'b0; irq_en <= 6'd0; wdata_q <= 8'd0;
+            imem_rd_q <= 16'd0; imem_re_d <= 1'b0; irq_en <= 8'd0; wdata_q <= 8'd0;
+            cr_ctrl_we <= 1'b0; cap_cfg_we <= 1'b0; cap_buf_we <= 1'b0;
+            rep_cfg_we <= 1'b0; rep_buf_we <= 1'b0;
         end else begin
             run_we <= 1'b0; rst_pulse <= 2'b00; pc_we <= 2'b00; inbox_push <= 2'b00;
             outbox_pop <= 2'b00; fifo_clr <= 4'd0; pinmode_we <= 1'b0;
             imem_we <= 1'b0; imem_re <= 1'b0;
+            cr_ctrl_we <= 1'b0; cap_cfg_we <= 1'b0; cap_buf_we <= 1'b0;
+            rep_cfg_we <= 1'b0; rep_buf_we <= 1'b0;
             imem_re_d <= imem_re;
             if (imem_re_d) imem_rd_q <= imem_rdata;
             if (imem_we) imem_addr_q <= imem_addr_q + 8'd1;
             wdata_q <= rx_byte;
 
             if (data_done && is_write) begin
+                // low byte of a pair: every even IMEM_DATA byte (imem_hi has
+                // its own phase because byte_idx saturates), byte 0 otherwise
+                if (!imem_hi && !data_idx[0]) imem_lo <= rx_byte;
                 case (reg_sel)
                     R_CTRL: if (data_idx == 8'd0) begin
                         run_we <= 1'b1; run_val <= rx_byte[1:0]; rst_pulse <= rx_byte[3:2];
@@ -216,15 +255,17 @@ module keyer_host (
                     R_PC0: if (data_idx == 8'd0) pc_we[0] <= 1'b1;
                     R_PC1: if (data_idx == 8'd0) pc_we[1] <= 1'b1;
                     R_IMEM_ADDR: if (data_idx == 8'd0) imem_addr_q <= rx_byte;
-                    R_IMEM_DATA: begin
-                        if (!imem_hi) imem_lo <= rx_byte;
-                        else if (imem_allowed) imem_we <= 1'b1;   // address increments after the write cycle
-                    end
+                    R_IMEM_DATA: if (imem_hi && imem_allowed) imem_we <= 1'b1;   // address increments after the write cycle
                     R_INBOX0: inbox_push[0] <= 1'b1;
                     R_INBOX1: inbox_push[1] <= 1'b1;
                     R_PINMODE: if (data_idx == 8'd0) pinmode_we <= 1'b1;
-                    R_IRQEN:   if (data_idx == 8'd0) irq_en <= rx_byte[5:0];
+                    R_IRQEN:   if (data_idx == 8'd0) irq_en <= rx_byte;
                     R_FIFOCLR: if (data_idx == 8'd0) fifo_clr <= rx_byte[3:0];
+                    R_CR_CTRL: if (data_idx == 8'd0) cr_ctrl_we <= 1'b1;
+                    R_CAP_CFG: if (data_idx == 8'd1) cap_cfg_we <= 1'b1;
+                    R_CAP_BUF: if (data_idx == 8'd1) cap_buf_we <= 1'b1;
+                    R_REP_CFG: if (data_idx == 8'd0) rep_cfg_we <= 1'b1;
+                    R_REP_BUF: if (data_idx == 8'd1) rep_buf_we <= 1'b1;
                     default: ;
                 endcase
             end
@@ -242,8 +283,9 @@ module keyer_host (
         end
     end
 
-    // IRQ
-    wire [5:0] irq_cond = {inbox1_count == 5'd0, inbox0_count == 5'd0, halted,
+    // IRQ (section 11): bit 6 capture done, bit 7 replay done (14.8)
+    wire [7:0] irq_cond = {cr_status[5], cr_status[2],
+                           inbox1_count == 5'd0, inbox0_count == 5'd0, halted,
                            outbox1_count != 5'd0, outbox0_count != 5'd0};
     assign irq = |(irq_cond & irq_en);
 endmodule

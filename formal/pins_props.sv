@@ -1,10 +1,13 @@
 // Formal properties for keyer_pins: open-drain safety, reserved outputs,
-// synchroniser latency and edge-history correctness.
+// synchroniser latency and edge-history correctness. The replay command port
+// (SEMANTICS 14.7) is a free input like the core's, so property 1 also covers
+// replay writes to open-drain pins and property 2 replay writes to group 4.
 `default_nettype none
 module pins_props (
     input wire clk, input wire rst_n,
     input wire [7:0] ui_in, input wire [7:0] uio_in,
     input wire cmd_valid, input wire [2:0] cmd_op, input wire [4:0] cmd_pin, input wire [7:0] cmd_data,
+    input wire rep_valid, input wire [2:0] rep_group, input wire [3:0] rep_mask, input wire [3:0] rep_data,
     input wire host_mode_we, input wire [7:0] host_mode_val
 );
     wire [7:0] uio_out, uio_oe, uo_out, od_mask;
@@ -13,6 +16,7 @@ module pins_props (
         .clk(clk), .rst_n(rst_n), .ui_in(ui_in), .uio_in(uio_in),
         .uio_out(uio_out), .uio_oe(uio_oe), .uo_out(uo_out),
         .cmd_valid(cmd_valid), .cmd_op(cmd_op), .cmd_pin(cmd_pin), .cmd_data(cmd_data),
+        .rep_valid(rep_valid), .rep_group(rep_group), .rep_mask(rep_mask), .rep_data(rep_data),
         .host_mode_we(host_mode_we), .host_mode_val(host_mode_val), .od_mask(od_mask),
         .level(level), .level2(level2));
 

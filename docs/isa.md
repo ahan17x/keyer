@@ -92,7 +92,9 @@ non-blocking forms and report success in `C`.
 | 4 | deadline reached |
 | 5 | other thread running |
 | 6 | this thread's id (0 or 1) |
-| 15:7 | 0 |
+| 7 | capture active |
+| 8 | replay active |
+| 15:9 | 0 |
 
 ## 2. Flags
 
@@ -255,6 +257,7 @@ level.
 | 11 | `OUTOE rs` | PP-mode pins: uio_oe[i] = rs[i] | - | 1 |
 | 12 | `RDLR rd` | rd = LR (save the return address before a nested CALL) | - | 1 |
 | 13 | `JMPR rs` | PC = rs (return through a saved LR, or a jump table) | - | 1 |
+| 14 | `CAPC rs` | capture/replay control: rs[0] arm capture, rs[1] disarm, rs[2] start replay, rs[3] stop replay (docs/CAPTURE.md) | - | 1 |
 
 ### Misc (major F)
 
@@ -318,13 +321,23 @@ during the byte following the command.
 | 0x09 | OUTBOX1 | - | stream from T1's outbox |
 | 0x0A | LEVELS | - | 4 bytes: inbox0, outbox0, inbox1, outbox1 counts |
 | 0x0B | PINMODE | OD mask for uio[7:0] | current mask |
-| 0x0C | IRQEN | bit0 outbox0 non-empty, bit1 outbox1 non-empty, bit2 HALTED0, bit3 HALTED1, bit4 inbox0 empty, bit5 inbox1 empty | mask |
+| 0x0C | IRQEN | bit0 outbox0 non-empty, bit1 outbox1 non-empty, bit2 HALTED0, bit3 HALTED1, bit4 inbox0 empty, bit5 inbox1 empty, bit6 capture done, bit7 replay done | mask |
 | 0x0D | PINS | - | 3 bytes: uio pad levels, ui levels, uo driven values |
 | 0x0E | FIFOCLR | bit0 inbox0, bit1 outbox0, bit2 inbox1, bit3 outbox1 | - |
 | 0x0F | ID | - | 2 bytes: 0x4B ('K'), ISA version |
 | 0x10 | PINOUT | - | 2 bytes: uio_out, uio_oe |
+| 0x11 | CR_CTRL | bit0 ARM capture, bit1 DISARM, bit2 START replay, bit3 STOP replay (actions) | status: bit0 capture active, bit1 triggered, bit2 capture done, bit3 overflow, bit4 replay active, bit5 replay done, bit6 underrun |
+| 0x12 | CAP_CFG | byte 0: bits 2:0 pin group (4g..4g+3), bits 7:4 watch mask; byte 1: bits 3:0 trigger pattern, bits 7:4 trigger mask (0 = trigger at once) | same |
+| 0x13 | CAP_BUF | base word, length in entries (0 = none) | same |
+| 0x14 | REP_CFG | bits 2:0 pin group, bits 7:4 drive mask | same |
+| 0x15 | REP_BUF | base word, length in entries | same |
+| 0x16 | CR_COUNT | - | 2 bytes: entries recorded, entries applied |
 
 IRQ (`uo[1]`) is the OR of the enabled conditions.
+
+Capture and replay (entries `{delta[11:0], pins[3:0]}` in program memory,
+trigger, overflow and underrun rules): `docs/CAPTURE.md` and
+`docs/SEMANTICS.md` section 14.
 
 ## 7. Open questions before freezing v1.0
 

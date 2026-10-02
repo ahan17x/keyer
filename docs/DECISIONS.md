@@ -191,3 +191,21 @@ rejected: pin cocotb 1.x (the harness uses the cocotb 2 API). Meanwhile the
 project's own `check` workflow (renamed from `lint`, now the full
 `scripts/check_all.sh` including cocotb and formal) is the CI signal to
 trust, and the `test` badge stays red until this is decided.
+
+## D-024 2026-10-02 Claude (within the mandate of D-020 and the 25% area rule): capture entries live in the program memory; engines use only a stopped thread's fetch slots
+
+Capture and replay (docs/CAPTURE.md) store 16-bit entries
+`{delta[11:0], pins[3:0]}` in the program memory at a host-assigned base and
+length, and use the memory's single port only in a cycle whose fetch would
+serve a thread that is not running, with the host always first. Why: a
+dedicated flop buffer of 32 entries would already take 23% of the core and
+hold one I2C byte, 64 entries would exceed the 25% limit; the program
+memory holds 120 entries beside the I2C firmware and 255 alone, the engines
+cost about 185 flops, and a running thread's timing is never disturbed.
+Four-pin groups with a watch mask, a 12-bit delta with idle entries, a
+transition-into-match trigger, a two-entry write queue with a sticky
+overflow flag, a two-entry prefetch with a sticky underrun flag. Rejected:
+a 32- or 64-entry flop buffer (area, capacity); a second SRAM macro (fits,
+but doubles the macro-flow risk before the first macro is through; kept as
+a later option); stealing fetch slots from a blocked running thread (would
+make firmware timing depend on the capture).

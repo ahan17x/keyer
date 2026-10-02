@@ -10,6 +10,7 @@ import keyersim
 R_CTRL, R_STAT, R_PC0, R_PC1, R_IMEM_ADDR, R_IMEM_DATA = 0, 1, 2, 3, 4, 5
 R_INBOX0, R_OUTBOX0, R_INBOX1, R_OUTBOX1, R_LEVELS, R_PINMODE = 6, 7, 8, 9, 10, 11
 R_IRQEN, R_PINS, R_FIFOCLR, R_ID, R_PINOUT = 12, 13, 14, 15, 16
+R_CR_CTRL, R_CAP_CFG, R_CAP_BUF, R_REP_CFG, R_REP_BUF, R_CR_COUNT = 0x11, 0x12, 0x13, 0x14, 0x15, 0x16
 
 
 def ival(sig):
@@ -101,6 +102,33 @@ class SpiMaster:
         n = lv[1 + 2 * tid]
         return (await self.read(R_OUTBOX0 + 2 * tid, n)) if n else []
 
+    # ---- capture and replay (docs/CAPTURE.md) ----
+    async def cap_config(self, group, mask, tpat, tmask, base, length):
+        await self.write(R_CAP_CFG, [(group & 7) | ((mask & 0xF) << 4), (tpat & 0xF) | ((tmask & 0xF) << 4)])
+        await self.write(R_CAP_BUF, [base & 0xFF, length & 0xFF])
+
+    async def rep_config(self, group, mask, base, length):
+        await self.write(R_REP_CFG, [(group & 7) | ((mask & 0xF) << 4)])
+        await self.write(R_REP_BUF, [base & 0xFF, length & 0xFF])
+
+    async def cr_ctrl(self, byte):
+        await self.write(R_CR_CTRL, [byte & 0xFF])
+
+    async def cr_status(self):
+        return (await self.read(R_CR_CTRL, 1))[0]
+
+    async def cr_count(self):
+        return await self.read(R_CR_COUNT, 2)
+
+    async def read_entries(self, base, n):
+        """Read n capture entries (16-bit words) from program memory."""
+        await self.write(R_IMEM_ADDR, [base & 0xFF, 0])
+        rb = await self.read(R_IMEM_DATA, 2 * n)
+        return [rb[2 * i] | (rb[2 * i + 1] << 8) for i in range(n)]
+
+    async def write_entries(self, base, entries):
+        await self.load_program(entries, base=base)
+
 
 async def reset(dut, pads, cycles=5):
     dut.ena.value = 1
@@ -109,6 +137,12 @@ async def reset(dut, pads, cycles=5):
     await ClockCycles(dut.clk, cycles)
     await RisingEdge(dut.clk)
     dut.rst_n.value = 1          # cycle 0 begins now (cyc == 0, rst_n == 1)
+
+
+CR_STATE = ("cap_armed", "cap_trig", "cap_done", "cap_ovf", "cap_last", "cap_prev", "cap_dt",
+            "cap_n", "cap_w", "q_count", "rep_active", "rep_done", "rep_under", "rep_k", "rep_f",
+            "rep_dt", "pf_count", "rep_n", "cap_group", "cap_mask", "cap_tpat", "cap_tmask",
+            "cap_base", "cap_len", "rep_group", "rep_mask", "rep_base", "rep_len")
 
 
 class Lockstep:
@@ -130,7 +164,7 @@ class Lockstep:
         self.retired = 0
         self.mismatches = []
         u = dut.user_project
-        self.core, self.host, self.pins = u.u_core, u.u_host, u.u_pins
+        self.core, self.host, self.pins, self.cr = u.u_core, u.u_host, u.u_pins, u.u_cr
         self.regs_ok = True
         try:
             _ = self.core.regs[0].value
@@ -157,6 +191,10 @@ class Lockstep:
         exp_run = (m.threads[0].running | (m.threads[1].running << 1))
         if run != exp_run:
             self._fail("running", exp_run, run)
+        cr, r = m.cr, self.cr
+        for name in CR_STATE:
+            if ival(getattr(r, name)) != getattr(cr, name):
+                self._fail("cr.%s" % name, getattr(cr, name), ival(getattr(r, name)))
         for t in (0, 1):
             th = m.threads[t]
             if ival(c.pc[t]) != th.pc:
@@ -209,9 +247,10 @@ class Lockstep:
             host_snapshot = self._snapshot_host()
             # 4. step the ISS for this cycle and compare the execution record
             t = m.threads[tid]
-            exp_exec = 1 if t.running else 0
             exp_pc = t.pc
+            m.host_port_busy = bool(host_snapshot["imem_we"] or host_snapshot["imem_re"])
             done = m.step()
+            exp_exec = 1 if m.executed else 0
             if exec_ != exp_exec:
                 self._fail("exec T%d pc=%02X" % (tid, exp_pc), exp_exec, exec_)
             if exec_:
@@ -233,8 +272,13 @@ class Lockstep:
 
     def _snapshot_host(self):
         h = self.host
-        return dict(imem_we=ival(h.imem_we), imem_addr=ival(h.imem_addr),
+        return dict(imem_we=ival(h.imem_we), imem_re=ival(h.imem_re), imem_addr=ival(h.imem_addr),
                     imem_wdata=ival(h.imem_wdata), run_we=ival(h.run_we),
+                    cr_ctrl_we=ival(h.cr_ctrl_we), cr_ctrl_val=ival(h.cr_ctrl_val),
+                    cap_cfg_we=ival(h.cap_cfg_we), cap_cfg_val=ival(h.cap_cfg_val),
+                    cap_buf_we=ival(h.cap_buf_we), cap_buf_val=ival(h.cap_buf_val),
+                    rep_cfg_we=ival(h.rep_cfg_we), rep_cfg_val=ival(h.rep_cfg_val),
+                    rep_buf_we=ival(h.rep_buf_we), rep_buf_val=ival(h.rep_buf_val),
                     run_val=ival(h.run_val), rst_pulse=ival(h.rst_pulse),
                     pc_we=ival(h.pc_we), pc_val=ival(h.pc_val),
                     inbox_push=ival(h.inbox_push), inbox_wdata=ival(h.inbox_wdata),
@@ -261,4 +305,14 @@ class Lockstep:
             m.host_pinmode(s["pinmode_val"])
         if s["fifo_clr"]:
             m.host_fifo_clear(s["fifo_clr"])
+        if s["cap_cfg_we"]:
+            m.host_cap_cfg(s["cap_cfg_val"])
+        if s["cap_buf_we"]:
+            m.host_cap_buf(s["cap_buf_val"])
+        if s["rep_cfg_we"]:
+            m.host_rep_cfg(s["rep_cfg_val"])
+        if s["rep_buf_we"]:
+            m.host_rep_buf(s["rep_buf_val"])
+        if s["cr_ctrl_we"]:
+            m.host_cr_ctrl(s["cr_ctrl_val"])
 

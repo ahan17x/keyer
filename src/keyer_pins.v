@@ -11,6 +11,11 @@
  *
  * In open-drain mode uio_out is forced to 0 so the pad is never driven high:
  * writing 0 drives low (oe=1), writing 1 releases (oe=0).
+ *
+ * A second command port carries the replay engine's apply (SEMANTICS 14.7):
+ * pinwrite(4 * rep_group + i, rep_data[i]) for every i with rep_mask[i]
+ * set, applied after the core's command of the same cycle (so it sees the
+ * pin modes that command leaves) and before the host PINMODE write.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
@@ -29,6 +34,11 @@ module keyer_pins (
     input  wire [2:0]  cmd_op,          // see localparams
     input  wire [4:0]  cmd_pin,
     input  wire [7:0]  cmd_data,        // bit 0 for single-pin ops, a byte for OUTB/OUTOE
+    // replay engine: pinwrite of the masked pins of a 4-pin group
+    input  wire        rep_valid,
+    input  wire [2:0]  rep_group,       // pins 4g..4g+3; 2, 3 (ui) and 6, 7 (24-31) do nothing
+    input  wire [3:0]  rep_mask,
+    input  wire [3:0]  rep_data,
     // host
     input  wire        host_mode_we,
     input  wire [7:0]  host_mode_val,
@@ -70,6 +80,15 @@ module keyer_pins (
     wire       pin_is_uo = (cmd_pin >= 5'd16) && (cmd_pin < 5'd24);   // 24-31 reserved: no effect
     wire [7:0] uo_bit   = 8'd1 << cmd_pin[2:0];
     wire [7:0] uo_allowed = 8'hFC;                      // 16, 17 reserved
+
+    // replay: the pins it writes, as uio and uo bit masks (uo[1:0] reserved)
+    wire [7:0] rep_d8   = {rep_data, rep_data};
+    wire [7:0] rep_uio  = !rep_valid ? 8'd0 :
+                          (rep_group == 3'd0) ? {4'd0, rep_mask} :
+                          (rep_group == 3'd1) ? {rep_mask, 4'd0} : 8'd0;
+    wire [7:0] rep_uo   = !rep_valid ? 8'd0 :
+                          (rep_group == 3'd4) ? {4'd0, rep_mask & 4'b1100} :
+                          (rep_group == 3'd5) ? {rep_mask, 4'd0} : 8'd0;
 
     // next-state computed in a procedural block to keep OD rules in one place
     reg [7:0] n_uio_out, n_uio_oe, n_od, n_uo;
@@ -115,6 +134,11 @@ module keyer_pins (
                 default: ;
             endcase
         end
+        // replay pinwrite, on the state the core's command left (5.3 rules):
+        // push-pull uio_out <= v; open-drain uio_out <= 0, uio_oe <= ~v; uo <= v
+        n_uio_oe  = (n_uio_oe & ~(rep_uio & n_od)) | (~rep_d8 & rep_uio & n_od);
+        n_uio_out = (n_uio_out & ~rep_uio) | (rep_d8 & rep_uio & ~n_od);
+        n_uo      = (n_uo & ~rep_uo) | (rep_d8 & rep_uo);
         if (host_mode_we) begin                      // host PINMODE: applied last
             n_od      = host_mode_val;
             n_uio_oe  = n_uio_oe & ~host_mode_val;

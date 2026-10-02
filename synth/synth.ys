@@ -1,5 +1,5 @@
 # Area estimate against the IHP CMOS5L standard-cell library (typ corner).
-read_verilog -I../src ../src/keyer_fifo.v ../src/keyer_imem.v ../src/keyer_pins.v ../src/keyer_core.v ../src/keyer_host.v ../src/tt_um_ahan17x_keyer.v
+read_verilog -I../src ../src/keyer_fifo.v ../src/keyer_imem.v ../src/keyer_pins.v ../src/keyer_core.v ../src/keyer_host.v ../src/keyer_capture.v ../src/tt_um_ahan17x_keyer.v
 hierarchy -check -top tt_um_ahan17x_keyer
 proc; flatten; opt -full; memory -nomap; opt; memory_map; opt -full
 techmap; opt -fast

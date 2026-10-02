@@ -28,6 +28,11 @@ reprogrammable after fabrication.
 - Host interface: SPI slave (mode 0, up to clk/8) with a register map for
   program load, thread control, FIFOs, pin modes and pin readback, plus an
   IRQ output.
+- Capture and replay: a logic-analyser-style recorder of timestamped edges
+  on four pins with a trigger condition, into the program memory, and a
+  replay engine that drives a recorded or host-written waveform with the
+  recorded timing, cycle for cycle. Both work while one thread runs the
+  firmware under test, without touching its timing (`docs/CAPTURE.md`).
 
 The ISA and register map are in `docs/isa.md`, the cycle-exact rules in
 `docs/SEMANTICS.md`. The design was
@@ -44,7 +49,8 @@ independent UART, SPI and I2C protocol models and constrained-random programs.
    (check LEVELS first).
 4. The firmware in `fw/uart.s` runs a full-duplex UART on `uo[2]` (TX) and
    `ui[3]` (RX); `fw/spi_master.s` and `fw/i2c_master.s` drive the pins named
-   at the top of each file.
+   at the top of each file. `fw/capture_demo.s` records an I2C transaction
+   of the master on thread 0 and replays it (setup in its header comment).
 
 A Python driver for the demo board is planned under `tools/`.
 
