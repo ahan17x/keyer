@@ -58,13 +58,7 @@ first session resolves these with Ahan before changing code.
 
 ## Kickoff prompt for the first Claude Code session
 
-Paste this as the first message:
-
-> Read CLAUDE.md and follow its read order. Then: (1) walk me through the
-> four open decisions in docs/DECISIONS.md (D-013 to D-016) one at a time
-> with your recommendation and the trade-off in three sentences each, and
-> wait for my answer on each before moving on; (2) write the outcomes as new
-> DECISIONS entries and apply the rename everywhere; (3) start task 2 in
-> docs/HANDOFF.md, the cycle-exact SEMANTICS.md, and stop for my review
-> after the timing and pin sections. Do not change any RTL or the simulator
-> this session. End with a WORKLOG.md entry and an updated HANDOFF.md.
+The full prompt is in `docs/KICKOFF_PROMPT.md`. Paste it as the first
+message of a `claude` session started in this directory. Before that, run
+`bash scripts/setup_mac.sh` once (tools) and `bash scripts/check_all.sh`
+(every test, about two minutes) to confirm the machine is set up.
