@@ -50,4 +50,9 @@ TOPLEVEL = tb
 COCOTB_TEST_MODULES = test
 
 # include cocotb's make rules to take care of the simulator setup
-include $(shell cocotb-config --makefiles)/Makefile.sim
+# cocotb-config is taken from the repo's virtualenv when it exists
+# (scripts/setup_mac.sh): $(shell ...) runs when make parses this file, before
+# the PATH export above can help, so a plain `make` would otherwise fail with
+# "cocotb-config: Command not found" (docs/SETUP.md).
+COCOTB_CONFIG := $(firstword $(wildcard $(PWD)/../.venv/bin/cocotb-config) cocotb-config)
+include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim
