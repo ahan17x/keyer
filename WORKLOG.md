@@ -50,3 +50,10 @@ Needs Ahan next:
 3. Sign-up form; teammates.
 
 Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`), the demo-board Python driver, timing report once the action runs, then stretch features (CRC engine, capture buffer, serializer, USB LS).
+
+## 2026-10-02
+
+- Reviewed Thomas Gilbert's `tt_um_loom` (friend's entry, same model lineage, started 2026-09-14, hardware declared complete). Key differences: 4 threads / 4-stage pipeline vs our 2 / 2-stage; deadline-register timing with fractional ticks and timeouts vs our sticky tick; per-thread bit engine (CRC, NRZI/Manchester, stuffing) built; 512x16 SRAM in the flow and precheck-clean; LD/ST into imem; debug port; 15 firmware programs incl. USB LS; mutation testing, thread-isolation miter, static deadline checker. 31k cells at 54.7% util, 4-5 h hardening runs; ours 6.4k cells.
+- Facts corrected from their research: 6x4 block = 1289.28 x 710.64 um = 916,214 um^2 (core 902,417), routing on Metal1-4 only; organisers confirmed (email, 2026-09-28) SRAM macros are allowed and a TT reference macro template is coming; 8x4 exists in the tools since 2026-09-21 but organisers say design to 6x4.
+- Open decisions for Ahan: rename (two "Loom" entries); wait timeouts; 2 vs 4 threads; deadline-style timer; capture/replay feature as our differentiator; whether to team up.
+- Process changes to adopt regardless: decision log, bug ledger, independent re-derivation of model or RTL from the spec, mutation testing.

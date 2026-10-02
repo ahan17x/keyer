@@ -1,0 +1,16 @@
+# Bug ledger
+
+Every bug found by a test, a proof or a review gets a row, including bugs in
+the model, the firmware and the tests themselves. Newest at the bottom.
+
+| # | Date | Where | Symptom | Root cause | Found by | Now covered by |
+|---|---|---|---|---|---|---|
+| 1 | 2026-10-01 | fw/uart.s | TX sent every data bit as 0 after the start bit | `DEC` writes C, clobbering the bit waiting in C for `WRC` | UART decoder model (tools/test_fw.py) | loop restructured to shift the bit into C right before `WRC`; `DJNZ` added (flags untouched); hazard documented in docs/isa.md |
+| 2 | 2026-10-01 | tools/protomodels.py (UART decoder) | first decoded byte wrong | decoder treated the line being low at reset as a start bit | test_uart_tx_bytes_and_bit_timing | decoder starts only on a real 1->0 transition |
+| 3 | 2026-10-01 | tools/protomodels.py (SPI slave model) | first frame recorded empty | model saw CS_n low at reset as a frame start; push-pull outputs are 0 after reset | test_spi_master_mode0 | model initial state fixed; datasheet note: active-low selects belong on uio pins with pull-ups |
+| 4 | 2026-10-01 | fw/spi_master.s | SCK period of 20 cycles after a byte boundary (nominal 30) | sticky tick preserves phase but not minimum width after a late low phase | SPI slave model gap check | `SETT` per byte; test asserts within-byte periods are exact and no period is short |
+| 5 | 2026-10-01 | fw/uart.s | start bit 2 cycles longer than data bits | first bit took a different path to `WRC` than the loop | bit-grid check in the UART test | loop restructured so every `WRC` is two slots after a tick |
+| 6 | 2026-10-01 | fw/i2c_master.s | status byte after a fully ACKed write was the byte count, not 0 | `i2c_wdone` pushed r4 without clearing it | I2C slave model (status mismatch) | `ldi r4, 0` before the push; test checks statuses |
+| 7 | 2026-10-01 | tools/test_fw.py (test) | later I2C commands vanished | test pushed 20 bytes into the 16-deep inbox at once; writes drop when full | I2C repeated-start test | `HostFeeder` model pushes as space frees; the demo-board driver must do the same |
+| 8 | 2026-10-01 | tools/loomsim.py (golden model) | RTL `WT1 SCL` not done when the model said done, during I2C clock stretching | model's synchroniser gave 1 cycle of input latency, not the 2 the spec and RTL have; UART/SPI tests were parity-insensitive and passed | ISS-vs-RTL lockstep (test_lockstep_i2c_master) | model fixed; test_sync_latency_is_exactly_two_cycles checks both thread parities; formal PIN property proves the RTL latency |
+| 9 | 2026-10-01 | src/loom_host.v | IMEM write address incremented in the same clock as the write pulse, so the write would land one word late | registered pulse and registered address updated on the same edge | review while writing the module | address increments the cycle after `imem_we`; test_imem_write_read reads back 12 random words at two SCK rates |
