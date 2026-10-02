@@ -4,7 +4,15 @@
 set -u
 cd "$(dirname "$0")/.."
 # the repo's virtualenv (scripts/setup_mac.sh) provides cocotb, pytest, yowasp-sby
-[ -d .venv ] && export PATH="$PWD/.venv/bin:$PATH"
+if [ -d .venv ]; then
+  export PATH="$PWD/.venv/bin:$PATH"
+  # A venv's launchers carry the absolute path they were created at; after a
+  # move of the repo they fail with "bad interpreter" (docs/SETUP.md).
+  if ! .venv/bin/cocotb-config --version >/dev/null 2>&1; then
+    echo ".venv is unusable (repo moved, or packages missing). Run: bash scripts/setup_mac.sh"
+    exit 1
+  fi
+fi
 status=0
 run() { echo; echo "== $1"; shift; "$@" || { echo "FAILED: $*"; status=1; }; }
 

@@ -15,3 +15,5 @@ formal/core*/
 formal/*.out
 .venv/
 test/make.log
+.DS_Store
+formal/fifo/
