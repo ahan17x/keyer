@@ -271,3 +271,42 @@ after a run that has no `<failure>` element. A failing test still writes
 `<failure>` and still fails both checks; `scripts/check_all.sh` looks for
 `<failure` and the test count and is unaffected. Rejected: pinning cocotb
 1.x (the harness uses the cocotb 2 API); leaving `test` and `gl_test` red.
+
+## D-028 2026-10-03 Ahan: D-026 resolved: harden `sram-macro` now; the slow-corner miss is tracked, not blocking
+
+Tiny Tapeout's cmos5l flow signs off timing at the typical corner only:
+`TIMING_VIOLATION_CORNERS` is `*typ*` and `IHPTech.tt_corner` is
+`nom_typ_1p20V_25C` on the `ihp-sg13cmos5l` branch of tt-support-tools; the
+slow and fast corners are reported but never fail the flow. Source: the
+parallel entry's `docs/tt_cmos5l_facts.md` (sections 1 and 12, read from the
+tool source), and it agrees with our own run 37073185698, whose `gds` job
+succeeded with -0.59 ns at the slow corner. So the slow corner is logged in
+docs/AREA.md for every run and tracked, but it does not block a merge.
+
+Acceptance for merging `sram-macro` into master: typical setup slack of at
+least +5 ns and every sign-off check passing (DRC, LVS, antenna, precheck,
+gl_test). If the slow corner still fails on the macro run, the
+`decode-onehot` branch (registered one-hot thread select replicated per
+consumer: register file, timers, PC/flags, pins; no change to the cycle
+contract) is hardened next and both runs are reported. `CLOCK_PERIOD` stays
+20 ns. Not taken: relaxing the clock; a pipeline register; flow keys beyond
+the two CLAUDE.md allows.
+
+## D-029 2026-10-04 Claude, applying Ahan's rule of D-028: `sram-macro` is merged into master; the SRAM macro is the program memory
+
+Run 37169889955 on `sram-macro` met the acceptance rule: typical setup slack
++6.40 ns (at least +5 ns required); hold clean at all corners; routing DRC,
+LVS and antenna 0; the precheck's nine checks pass, including the KLayout
+SG13CMOS5L sign-off DRC over the merged GDS with the macro; `gl_test` passes
+on the gate-level netlist with the vendored macro model. The two flow
+waivers were checked against the run: all 29,294 Magic DRC boxes lie inside
+the macro's bounding box, and the 10 illegal overlaps are the four POWER
+stripes over the macro's VDD!/VDDARRAY! split band. This supersedes the
+"not merged" of D-025: `src/config.json` on master now carries the MACROS,
+PDN and Magic keys, the macro is the default in `src/keyer_imem.v`, and the
+flop memory remains as the `KEYER_IMEM_FLOPS` fallback (FPGA, area
+comparison). The slow corner (-1.94 ns, 277 endpoints, from the macro's
+5.4 ns slow-corner access time) is tracked, not blocking (D-028). Because it
+still failed, `decode-onehot` was hardened as well (run 37176010222: typical
++7.41 ns, slow -0.13 ns on one endpoint); merging that branch is left to
+Ahan.

@@ -215,8 +215,15 @@ class PadView:
     def pad(self):
         return self._pad
 
+    @staticmethod
+    def _bits(sig):
+        # X/Z read as 0: MISO (uo[0]) is briefly unknown in simulation after a
+        # read that empties a FIFO whose memory was never written; the models
+        # never look at uo[1:0] anyway.
+        return int("".join(c if c in "01" else "0" for c in str(sig.value)), 2)
+
     def sample(self):
-        oe, out, uo = int(self.dut.uio_oe.value), int(self.dut.uio_out.value), int(self.dut.uo_out.value)
+        oe, out, uo = self._bits(self.dut.uio_oe), self._bits(self.dut.uio_out), self._bits(self.dut.uo_out)
         uio = (oe & out) | (~oe & self.ext_uio & 0xFF)
         self._pad = uio | ((self.ext_ui & 0xFF) << 8) | ((uo & 0xFC) << 16)
 

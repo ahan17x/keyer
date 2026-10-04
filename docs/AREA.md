@@ -21,9 +21,20 @@ Hardening results from the GitHub `gds` workflow are appended below.
 | 2026-10-02 | 6e02d4b | whole design with capture and replay, macro black-boxed (add 28,127 um^2 for the macro) | 8,336 | 1,463 | 142,277 |
 | 2026-10-02 | 6e02d4b | whole design with capture and replay, program memory as flops | 24,559 | 5,575 | 450,369 |
 | 2026-10-02 | 6e02d4b | keyer_capture alone (rtl subagent's run) | 1,152 | 203 | 18,548 |
+| 2026-10-03 | 399a889 (`decode-onehot`) | whole design, macro black-boxed, registered one-hot thread select replicated per consumer | 8,182 | 1,470 | 141,004 |
+| 2026-10-03 | 399a889 (`decode-onehot`) | keyer_core alone, NTHREADS = 2 (before: 3,866 cells, 459 flops, 55,735 um^2 on `sram-macro`) | 3,872 | 466 | 55,576 |
 
 Capture and replay (D-024) cost 210 flops and 20,481 um^2; with the macro the
 design is 170,404 um^2, 18.9% of the core (limit for the feature: 25%).
+`decode-onehot` (D-028; equivalence with the `sram-macro` core proven on all
+776 points): 154 fewer cells, 7 more flops, 1,273 um^2 less. The register
+file is reached in 26 logic levels instead of 28 and its path no longer
+starts at the thread decode (`cyc[0]`) but at the instruction word; the
+link register and timer period drop from 27 levels to 9 and 7. Rough delay
+estimates for the register-file path at the typical corner (no STA tool
+locally): 13.9 ns to 11.3 ns with area mapping, 8.8 ns to 7.8 ns with delay
+mapping. Not hardened yet.
+
 The D-018 timer and timeouts cost 63 flops and about 7,600 um^2 over the
 pre-D-018 core; the whole logic sits at 28% of the placeable area with the
 macro (121,796 + 28,127 = 149,923 um^2 of 430,000). NTHREADS = 4 adds 441
@@ -76,3 +87,93 @@ It is the single-cycle fetch-register to decode to execute to write-back
 path, slowed by weak drivers on high-fanout decode and write-enable nets at
 66.9% utilisation. `CLOCK_PERIOD` was not changed (Ahan's instruction);
 options are listed in docs/HANDOFF.md for his decision.
+
+### Run 37169889955, 2026-10-04, commit de17304 (`sram-macro`: program memory as the RM_IHPSG13_1P_256x16 macro, with capture and replay)
+
+Dispatched by hand (D-028). Jobs: `gds` success (1 h 33 min), `gl_test`
+**success**, `viewer` success, `precheck` success (34 min). Numbers from
+`scripts/gds_report.py 37169889955`.
+
+| Item | Value |
+|---|---|
+| Standard cells | 13,203 instances (1,463 flops, 2,876 timing-repair buffers) plus the macro; 72,012 with fill |
+| Cell area | 194,522 um^2 of standard cells + 28,127 um^2 macro, of the 902,417 um^2 core |
+| Utilisation | 24.7% (standard cells alone 22.2%); the flop-memory run was 66.9% |
+| Setup slack, 20 ns | fast **+11.20 ns**; typical **+6.40 ns** (the sign-off corner, D-028); slow **-1.94 ns, 277 violating endpoints** |
+| Hold slack | fast +0.092 ns, typical +0.270 ns, slow +0.593 ns; no violations |
+| Routing | detailed routing 48 min 49 s; 55 violations at iteration 0, 0 at the end; wire length 560,364 um (1,554,847 um with the flop memory) |
+| Other long steps | Magic DRC 34 min 31 s |
+| DRC | routing DRC 0. Magic DRC 29,294 boxes, **every one inside the macro's bounding box** (x 12..248.8, y 40..158.78; SRAM rules Magic's cmos5l tech does not know; waived by `ERROR_ON_MAGIC_DRC`, the sign-off DRC is the precheck's KLayout deck). 10 "illegal overlap between obsm4 and metal4" boxes, all on the four POWER stripes (x 28.19, 95.63, 163.07, 230.51) within the macro's VDD!/VDDARRAY! split band (y 113.575..119.695): the one case `ERROR_ON_ILLEGAL_OVERLAPS` waives |
+| PDN | the verifier in `src/pdn_cfg.tcl` passed: 4 VPWR stripes inside VDD!/VDDARRAY! columns, 4 VGND stripes inside VSS! columns, every macro supply carries 4 stripes, `check_power_grid` clean on both nets |
+| LVS | 0 errors |
+| Antenna | 0 violating nets, 0 violating pins |
+| Slew / cap / fanout | 14 max-slew, 1 max-cap, 127 max-fanout (reported, not fatal) |
+| IR drop / power | worst IR drop 0.2 mV; 5.5 mW total at the typical corner |
+| Precheck | all nine checks pass: KLayout SG13CMOS5L DRC (the sign-off DRC, over the merged GDS with the macro), pin label overlap, zero area, KLayout checks, pin check, boundary check, layer check, cell name check, analog pin check |
+| gl_test | success: the seven pads-only and host-interface tests pass on the gate-level netlist with the vendored macro model; the nine lockstep tests skip |
+
+Slow-corner critical path (`nom_slow_1p08V_125C`, data arrival 22.42 ns
+against 20.48 ns required): the macro's data output `u_imem.u_sram/A_DOUT[8]`
+(266 of the 277 endpoints; `A_DOUT[9]` for the other 11), whose clock-to-output
+is 5.38 ns at the slow corner against 0.59 ns for the flop it replaced, then
+four fanout buffers (2.2 ns), the opcode decode, the ALU (about 7 ns) and the
+register-file write-enable distribution (about 4.5 ns), ending in
+`u_core.regs[11][*]` (thread 1's r3). The macro removed two thirds of the
+cells and of the wire, which is worth about 3.4 ns on this path, but its own
+access time costs 4.8 ns more than a flop, so the slow corner is 1.35 ns worse
+than in the first run while the typical corner keeps +6.40 ns.
+
+**Accepted and merged into master** (D-028, D-029): typical setup slack
++6.40 ns (at least +5 ns required) and every sign-off check passes.
+
+### Run 37176010222, 2026-10-04, commit 23eb0dc (`decode-onehot`: the macro design with the registered one-hot thread select)
+
+Dispatched because the slow corner still failed on the macro run (D-028).
+Jobs: `gds` success (1 h 34 min), `gl_test` success, `viewer` success,
+`precheck` still running when this was written (HANDOFF task 1).
+
+| Item | Value |
+|---|---|
+| Standard cells | 13,317 instances (1,470 flops, 2,989 timing-repair buffers) plus the macro; 72,309 with fill |
+| Cell area / utilisation | 194,339 um^2 + 28,127 um^2 macro; 24.7% (standard cells 22.2%) |
+| Setup slack, 20 ns | fast **+11.85 ns**; typical **+7.41 ns**; slow **-0.13 ns, 1 violating endpoint** |
+| Hold slack | fast +0.123 ns, typical +0.317 ns, slow +0.657 ns; no violations |
+| Routing | detailed routing 48 min 55 s; DRC 0; wire length 547,268 um |
+| DRC / LVS / antenna | routing DRC 0; Magic DRC 29,294 and 10 illegal overlaps, the same macro-internal and stripe-over-OBS items as the `sram-macro` run; LVS 0; antenna 0 |
+| Slew / cap / fanout | 0 max-slew, 5 max-cap, 129 max-fanout |
+| gl_test | success |
+
+Against the `sram-macro` run the one-hot select gains 1.0 ns at the typical
+corner and 1.8 ns at the slow corner, and the slow-corner violations drop
+from 277 endpoints to one: `u_imem.u_sram/A_DOUT[8]` to
+`u_core.deadline[0][15]`, the `WAITD` deadline update (macro output 5.36 ns,
+then two chained 16-bit additions, the completion test and the write
+enable), 0.134 ns late. Not merged: Ahan decides (docs/HANDOFF.md).
+
+### Run 37169341232, 2026-10-04, commit 794dfac (master before the merge: capture and replay with the program memory as flops)
+
+Started by the push of master. Jobs: `gds` success (2 h 34 min), `gl_test`
+**success** (the first green gate-level run: the test-configuration fixes
+of b7cc046 work in CI), `viewer` success; `precheck` was still running when
+the merge of `sram-macro` superseded this run.
+
+| Item | Value |
+|---|---|
+| Standard cells | 41,436 instances (5,575 flops, 10,093 timing-repair buffers); 81,664 with fill |
+| Cell area / utilisation | 631,780 um^2; 70.0% |
+| Setup slack, 20 ns | fast +10.84 ns; typical +5.96 ns; slow -2.36 ns, 32 violating endpoints (`dbg_ir[11]` to `u_core.regs[6][*]`) |
+| Hold slack | fast +0.116 ns, typical +0.307 ns, slow +0.637 ns |
+| Routing | detailed routing 1 h 38 min 40 s; DRC 0; wire length 1,663,147 um |
+| DRC / LVS / antenna | Magic DRC 0, illegal overlaps 0, LVS 0, antenna 0 |
+
+Kept for the record: the flop-memory configuration is now the
+`KEYER_IMEM_FLOPS` fallback, not the tapeout configuration.
+
+### Summary of the four runs
+
+| Run | Design | Cells | Utilisation | Setup fast / typical / slow (ns) | Routing | Precheck | gl_test |
+|---|---|---|---|---|---|---|---|
+| 37073185698 | flops, no capture (d979e82) | 37,821 | 66.9% | +11.46 / +7.09 / -0.59 (12) | 2 h 00 | 9/9 | compile error (fixed) |
+| 37169341232 | flops + capture (794dfac) | 41,436 | 70.0% | +10.84 / +5.96 / -2.36 (32) | 1 h 39 | superseded | pass |
+| 37169889955 | macro + capture (de17304, `sram-macro`) | 13,203 + macro | 24.7% | +11.20 / +6.40 / -1.94 (277) | 49 min | 9/9 | pass |
+| 37176010222 | macro + capture + one-hot select (23eb0dc, `decode-onehot`) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 49 min | running | pass |

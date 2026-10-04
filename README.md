@@ -21,6 +21,7 @@ for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 | `tools/keyerasm.py` | Assembler. |
 | `tools/keyersim.py` | Cycle-exact instruction-set simulator (the golden model). |
 | `tools/protomodels.py` | UART / SPI / I2C protocol models used by the tests. |
+| `tools/keyerhost.py` | Host driver: library and command line, on the demo board (MicroPython) and on the simulation. |
 | `tools/test_*.py` | pytest suites for the assembler, ISS and firmware. |
 | `fw/` | Firmware: `uart.s`, `spi_master.s`, `i2c_master.s`. |
 | `test/` | cocotb tests, including the ISS-vs-RTL lockstep harness. |

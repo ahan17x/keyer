@@ -10,11 +10,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - run: sudo apt-get update && sudo apt-get install -y iverilog verilator yosys z3
+      # z3 comes from pip (z3-solver): Ubuntu 24.04's apt z3 is 4.8, on which the
+      # pin-unit induction proof ran for minutes and the job was killed, while a
+      # current z3 finishes it in a second (docs/SETUP.md).
+      - run: sudo apt-get update && sudo apt-get install -y iverilog verilator yosys
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install pytest cocotb yowasp-yosys
+      - run: pip install pytest cocotb yowasp-yosys z3-solver
       - run: bash scripts/check_all.sh
       - name: test results
         uses: test-summary/action@v2.4

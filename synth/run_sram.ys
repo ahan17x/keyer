@@ -1,8 +1,8 @@
 # Area estimate with the program memory as the RM_IHPSG13_1P_256x16 macro
 # (black-boxed), so the number is the standard-cell logic alone. Same flow as
 # synth.ys; see README.md for LIB.
-read_verilog -DKEYER_IMEM_SRAM sram_bb.v
-read_verilog -DKEYER_IMEM_SRAM -I../src ../src/keyer_fifo.v ../src/keyer_imem.v ../src/keyer_pins.v ../src/keyer_core.v ../src/keyer_host.v ../src/keyer_capture.v ../src/tt_um_ahan17x_keyer.v
+read_verilog -lib ../src/RM_IHPSG13_1P_256x16_c2_bm_bist.v
+read_verilog -I../src ../src/keyer_fifo.v ../src/keyer_imem.v ../src/keyer_pins.v ../src/keyer_core.v ../src/keyer_host.v ../src/keyer_capture.v ../src/tt_um_ahan17x_keyer.v
 hierarchy -check -top tt_um_ahan17x_keyer
 proc; flatten; opt -full; memory -nomap; opt; memory_map; opt -full
 techmap; opt -fast
