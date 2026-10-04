@@ -124,3 +124,79 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   (SEMANTICS), f713984 (D-018/D-019, BUGS 12-14), f03f726 (model re-derived,
   BUGS 15), plus this docs commit. Nothing pushed. Next session: design
   capture-and-replay (docs/HANDOFF.md task 1).
+
+## 2026-10-02, Claude Code session 2 (GitHub, area, capture and replay, macro branch)
+
+- GitHub: public repo `ahan17x/keyer` created and pushed; Actions on, Pages
+  set to the workflow build. The `gds` trigger block got a `paths` filter
+  (`src/**`, `info.yaml`, `macro/**`, the workflow file) plus
+  `workflow_dispatch` and a per-branch concurrency group (D-022); the first
+  hardening was dispatched by hand and superseded the push-triggered run,
+  as designed. The template's `test` workflow fails on every passing run
+  because its `! grep failure results.xml` matches cocotb 2's
+  `failures="0"` (D-023, OPEN for Ahan: one-token fix in a template job).
+  The project's own `check` workflow (renamed from `lint`) now runs the full
+  `scripts/check_all.sh`, formal included, and passes on GitHub.
+- Synthesis after D-018 (docs/AREA.md): 121,796 um^2 of logic with the macro
+  black-boxed (6,948 cells, 1,253 flops); core alone 55,691 um^2 at two
+  threads, 94,265 at four.
+- Capture and replay (D-020, D-024; docs/CAPTURE.md, SEMANTICS section 14).
+  Of three sizings only a 32-entry flop buffer (23.0% of the core) and the
+  in-memory option (18.8%) fit the 25% limit; the in-memory one holds 120
+  entries beside the I2C firmware and costs 203 flops. Entries are
+  `{delta[11:0], pins[3:0]}` on a 4-pin group; the engines use the memory
+  port only in a stopped thread's fetch slots, so the firmware under test
+  keeps its timing. Model and RTL were written in parallel by the two
+  restricted subagents from the spec; they raised twenty spec questions,
+  all resolved into SEMANTICS (the departing-entry rule for queue and
+  prefetch, the saturated-counter underrun the RTL side found by proof).
+  First lockstep run: 13 of 14, the one failure a test bug (a DISARM sent
+  over SPI outside the lockstep loop). Formal: ten properties by k-induction
+  plus six covers; 14 mutations all caught. The demo `fw/capture_demo.s`
+  records thread 0's I2C transaction and replays it on the same pins; the
+  slave model sees two identical transactions with identical edge timing,
+  in lockstep with the model. Whole design with the engines: 142,277 um^2,
+  18.9% of the core with the macro.
+- Branch `sram-macro` (D-025, committed locally, not merged): the 256 x 16
+  macro vendored from the PDK, blackbox stub, config.json MACROS/PDN/Magic
+  keys and the pdngen wrapper from the sibling entry with attribution; the
+  macro's power columns sit at the same x as the sibling's 512 x 16 so the
+  stripe grid carries over. The cocotb suite now runs against the vendored
+  macro model and passes 14 of 14; check_all green on the branch.
+- `test/Makefile` finds `cocotb-config` in the venv, so a plain
+  `cd test && make` works (the `$(shell ...)` ran before the PATH export).
+- First hardening run (37073185698, commit d979e82, flop memory, before
+  capture): `gds` 3 h 00 min, `precheck` all nine checks pass, routing DRC,
+  Magic DRC, LVS and antenna all 0, utilisation 66.9% (37,821 cells), hold
+  clean. **Setup fails at the slow corner: -0.59 ns** (typical +7.09, fast
+  +11.46); critical path instruction register -> opcode decode -> ALU ->
+  register-file write (`regs[15]`), details in docs/AREA.md. `CLOCK_PERIOD`
+  untouched; D-026 OPEN lists the options (recommended: harden the
+  `sram-macro` branch first). The branch is therefore prepared and
+  committed locally but not pushed or dispatched: step 5 was conditional on
+  step 4 passing.
+- `gl_test` failed in that run because the template's `test/Makefile` omits
+  `sg13cmos5l_udp.v` (the cell models instantiate `ihp_mux2` and other
+  primitives from it). Added, plus a gate-level mode for the suite: the
+  lockstep tests (which read RTL internals) skip under `GATES=yes`, the
+  host-interface tests run, and two new pads-only tests
+  (`test_pads_uart_loopback`, `test_pads_capture_replay_demo`) drive the
+  protocol models from the pads alone, in both RTL and gate-level runs.
+  RTL: 16 of 16. Gate level, locally against the hardened netlist with the
+  PDK cell models: see the next entry for the result.
+- Gate-level simulation run locally against the hardened netlist of the
+  first run (the unpowered `tt_submission` netlist, PDK cell models with
+  `sg13cmos5l_udp.v`, `GATES=yes`), 2 min 13 s: `test_id_and_registers`,
+  `test_pc_readback_and_soft_reset`, `test_imem_write_read` (256-word load),
+  `test_fifo_roundtrip_and_status` and `test_pads_uart_loopback` pass on
+  the netlist; the two capture tests fail there only because that netlist
+  predates the capture logic; nine lockstep tests skip. Two more fixes were
+  needed for the compile: `test/tb.v` connected `VPWR`/`VGND` under
+  `GL_TEST`, but the IHP submission netlist has no power ports (now under
+  `USE_POWER_PINS`); and the action's `! grep failure results.xml` matches
+  cocotb 2's `failures="0"`, so `test/Makefile` now drops that attribute on
+  a passing run (D-027, which also makes the template `test` workflow report
+  correctly and closes D-023 without editing a template job).
+- Session ends with D-026 OPEN (slow-corner setup, -0.59 ns): no clock or
+  RTL change made; master pushed (its push starts a hardening run of the
+  design with capture and replay); `sram-macro` kept local.

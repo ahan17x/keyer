@@ -12,7 +12,7 @@ import random
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge
+from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge
 
 import keyerasm
 import protomodels as pm
@@ -22,6 +22,12 @@ from keyer_tb import (Lockstep, Pads, SpiMaster, reset, R_CTRL, R_ID, R_IMEM_ADD
                      R_CAP_BUF, R_REP_CFG, R_REP_BUF, R_CR_COUNT)
 
 FW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "fw")
+
+# Gate-level run (GATES=yes make, the gl_test job): the netlist is flat, so
+# the lockstep tests, which compare RTL internals with the model every cycle,
+# are skipped; the host-interface tests and the pads-only firmware tests
+# below run in both modes.
+GL = os.environ.get("GATES") == "yes"
 
 
 def fw(name, symbols=None):
@@ -153,8 +159,8 @@ async def test_imem_write_read(dut):
         rb = await spi.read(R_IMEM_DATA, 2 * len(words))
         got = [rb[2 * i] | (rb[2 * i + 1] << 8) for i in range(len(words))]
         assert got == words, (half, ["%04X" % w for w in got])
-        # the memory itself (behavioural array only; the SRAM model keeps its own)
-        if hasattr(dut.user_project.u_imem, "mem"):
+        # the memory itself (RTL with the behavioural array only)
+        if not GL and hasattr(dut.user_project.u_imem, "mem"):
             for i, w in enumerate(words):
                 assert int(dut.user_project.u_imem.mem[0x20 + i].value) == w
     # a full 256-word image in one transaction, read back in one transaction
@@ -162,7 +168,7 @@ async def test_imem_write_read(dut):
     spi = SpiMaster(dut, pads, half=4)
     words = [random.randrange(0x10000) for _ in range(256)]
     await spi.load_program(words, base=0)
-    if hasattr(dut.user_project.u_imem, "mem"):
+    if not GL and hasattr(dut.user_project.u_imem, "mem"):
         for a in (0x7E, 0x7F, 0x80, 0xFF):
             assert int(dut.user_project.u_imem.mem[a].value) == words[a], ("word", a)
     await spi.write(R_IMEM_ADDR, [0, 0])
@@ -193,6 +199,118 @@ async def test_fifo_roundtrip_and_status(dut):
     assert await spi.read(R_LEVELS, 4) == [0, 0, 0, 0]
     await spi.run(0)
     assert await spi.read(R_STAT, 1) == [0]
+
+
+# ---------------------------------------------------------------- pads only
+
+class PadView:
+    """What the protocol models need from a machine, taken from the DUT's
+    pads alone (works on the gate-level netlist): pad(), cycle, ext_ui,
+    ext_uio. The models' outputs reach the pads one cycle after the levels
+    they react to (a registered wire), which the protocols do not notice."""
+
+    def __init__(self, dut):
+        self.dut, self.cycle, self.ext_ui, self.ext_uio, self._pad = dut, 0, 0, 0xFF, 0
+
+    def pad(self):
+        return self._pad
+
+    def sample(self):
+        oe, out, uo = int(self.dut.uio_oe.value), int(self.dut.uio_out.value), int(self.dut.uo_out.value)
+        uio = (oe & out) | (~oe & self.ext_uio & 0xFF)
+        self._pad = uio | ((self.ext_ui & 0xFF) << 8) | ((uo & 0xFC) << 16)
+
+
+async def run_pads(dut, pads, view, models, cycles=0, until=None):
+    n = 0
+    while (until is None and n < cycles) or (until is not None and not until()):
+        await ReadOnly()
+        view.sample()
+        for mod in models:
+            mod.on_cycle(view)
+        await RisingEdge(dut.clk)
+        pads.set_fw_inputs(view.ext_ui, view.ext_uio)
+        view.cycle += 1
+        n += 1
+        assert n < 400000, "pads run did not finish"
+
+
+@cocotb.test()
+async def test_pads_uart_loopback(dut):
+    """Full-duplex UART through the pads only: thread 0 transmits the inbox
+    on uo2, an external wire feeds ui3, thread 1 receives into its outbox.
+    Runs on RTL and on the gate-level netlist."""
+    P = 40
+    words, syms = fw("uart.s", {"BAUD_DIV": P})
+    data = [0x55, 0xA3, 0x00, 0xFF, 0x31]
+    pads = await start(dut)
+    spi = SpiMaster(dut, pads, half=4)
+    view = PadView(dut)
+
+    class Wire:
+        def on_cycle(self, m):
+            tx = (m.pad() >> 18) & 1
+            m.ext_ui = (m.ext_ui & ~0x08) | (tx << 3)
+
+    async def host():
+        await spi.load_program(words)
+        await spi.set_pc(1, syms["rx_init"])
+        await spi.write(R_INBOX0, data)
+        await spi.run(0b11)
+
+    task = cocotb.start_soon(host())
+    await run_pads(dut, pads, view, [Wire()], until=task.done)
+    await run_pads(dut, pads, view, [Wire()], cycles=P * 14 * len(data) + 1500)
+    got = await spi.drain_outbox(1)
+    assert got == data, got
+    assert (await spi.levels())[0] == 0
+
+
+@cocotb.test()
+async def test_pads_capture_replay_demo(dut):
+    """The capture-and-replay demo through the pads only (RTL and gate
+    level): fw/capture_demo.s records thread 0's I2C transaction and replays
+    it; the slave sees it twice with identical edge timing and the entries
+    drained over SPI carry the recorded deltas."""
+    Q = 30
+    words, syms = fw_merge(("i2c_master.s", {"I2C_Q": Q}), ("capture_demo.s", None))
+    base, length = 0xA4, 92
+    cmds = [0x01, 0x03, 2, 0xA0, 0x10, 0x02, 0x05]
+    slave = pm.I2cSlaveModel(scl=2, sda=3, address=0x50, stretch=0, min_high=Q, min_low=Q)
+    edges = EdgeLog(0x0C)
+    pads = await start(dut)
+    spi = SpiMaster(dut, pads, half=4)
+    view = PadView(dut)
+
+    async def host():
+        await spi.load_program(words)
+        await spi.write(R_PINMODE, [0x0C])
+        await spi.cap_config(group=0, mask=0xC, tpat=0x4, tmask=0xC, base=base, length=length)
+        await spi.rep_config(group=0, mask=0xC, base=base, length=0)
+        await spi.set_pc(1, syms["cap_demo"])
+        await spi.write(R_INBOX0, cmds)
+        await spi.run(0b10)
+
+    task = cocotb.start_soon(host())
+    await run_pads(dut, pads, view, [slave, edges], until=task.done)
+    await run_pads(dut, pads, view, [slave, edges], cycles=16000)
+    assert slave.errors == [], slave.errors[:3]
+    kinds = [e[0] for e in slave.events]
+    assert kinds == ["start", "stop", "start", "stop"], kinds
+    assert slave.ptr == 0x10 and len(slave.transfers) == 2
+    starts = [c for k, c in slave.events if k == "start"]
+    stops = [c for k, c in slave.events if k == "stop"]
+    first = edges.deltas(starts[0] - 1, stops[0] + 5)
+    second = edges.deltas(starts[1] - 1, stops[1] + 5)
+    assert first == second, (first[:10], second[:10])
+    st = await spi.cr_status()
+    assert st & 0b0100 and st & 0b10_0000 and not (st & 0b1000) and not (st & 0b100_0000), bin(st)
+    n, k = await spi.cr_count()
+    assert n == k and n >= 10, (n, k)
+    assert await spi.read(R_STAT, 1) == [0b001000]                # T1 halted, T0 stopped
+    entries = await spi.read_entries(base, n)
+    deltas = [e >> 4 for e in entries]
+    assert deltas[0] == 0 and deltas[1:] == first[:n - 1], (deltas[:12], first[:12])
 
 
 # ---------------------------------------------------------------- lockstep
@@ -227,7 +345,7 @@ async def lockstep_firmware(dut, words, cycles, models=(), run_mask=0b01, pc1=0,
     return ls, spi
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_alu_and_branches(dut):
     words, _ = asm("""
         ldw  r0, 0x1234
@@ -278,7 +396,7 @@ async def test_lockstep_alu_and_branches(dut):
     assert ls.retired >= 45 and not ls.m.threads[0].running
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_pins_timer_delay(dut):
     words, syms = asm("""
         ldi  r1, 7
@@ -343,7 +461,7 @@ async def test_lockstep_pins_timer_delay(dut):
     assert all(t.halted for t in ls.m.threads), [t.pc for t in ls.m.threads]
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_uart_loopback(dut):
     P = 40
     words, syms = fw("uart.s", {"BAUD_DIV": P})
@@ -361,7 +479,7 @@ async def test_lockstep_uart_loopback(dut):
     assert got == data, got
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_spi_master(dut):
     words, _ = fw("spi_master.s", {"SPI_HALF": 12})
     frames = [[0x9F], [0x03, 0x00, 0x10, 0xAA]]
@@ -376,7 +494,7 @@ async def test_lockstep_spi_master(dut):
     assert got == [0xEF, 0x40, 0x18, 0x11, 0x22], got
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_i2c_master(dut):
     Q = 30
     words, _ = fw("i2c_master.s", {"I2C_Q": Q})
@@ -399,7 +517,7 @@ async def test_lockstep_i2c_master(dut):
     assert got == [0, 0, 0, 0x5C], got
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_i2c_timeout(dut):
     """Stuck SCL: the slave never releases the clock after its ACK. The WRITE
     and the following STOP must each end with status 0xFF and the thread must
@@ -416,7 +534,7 @@ async def test_lockstep_i2c_timeout(dut):
     assert int(dut.uio_oe.value) & 0x0C == 0
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_capture_replay_demo(dut):
     """fw/capture_demo.s on thread 1 captures thread 0's I2C transaction
     (trigger: START condition), then replays it on the same pins. The slave
@@ -462,7 +580,7 @@ async def test_lockstep_capture_replay_demo(dut):
     assert all(((e & 0xF) & ~0xC) == 0 for e in entries)
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_replay_host_waveform_and_loopback_capture(dut):
     """Both threads stopped: the host writes a waveform and replays it on
     uo2/uo3 (group 4); uo2 is wired to ui3 externally and a capture on group 2
@@ -516,7 +634,7 @@ async def test_lockstep_replay_host_waveform_and_loopback_capture(dut):
     assert got == exp_rec, (got, exp_rec)
 
 
-@cocotb.test()
+@cocotb.test(skip=GL)
 async def test_lockstep_random_programs(dut):
     """Constrained-random instruction streams, both threads, random pin wiggling."""
     import keyer_isa as I

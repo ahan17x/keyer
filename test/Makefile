@@ -34,6 +34,8 @@ COMPILE_ARGS    += -DFUNCTIONAL
 COMPILE_ARGS    += -DSIM
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_io/verilog/sg13cmos5l_io.v
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/verilog/sg13cmos5l_stdcell.v
+# the cell models instantiate primitives (ihp_mux2, ...) defined here; the
+# template omits it and the gate-level compile fails without it (docs/AREA.md)
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/verilog/sg13cmos5l_udp.v
 VERILOG_SOURCES += $(MACRO_MODELS)
 
@@ -63,4 +65,20 @@ TOPLEVEL = tb
 COCOTB_TEST_MODULES = test
 
 # include cocotb's make rules to take care of the simulator setup
-include $(shell cocotb-config --makefiles)/Makefile.sim
+# cocotb-config is taken from the repo's virtualenv when it exists
+# (scripts/setup_mac.sh): $(shell ...) runs when make parses this file, before
+# the PATH export above can help, so a plain `make` would otherwise fail with
+# "cocotb-config: Command not found" (docs/SETUP.md).
+COCOTB_CONFIG := $(firstword $(wildcard $(PWD)/../.venv/bin/cocotb-config) cocotb-config)
+include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim
+
+# Tiny Tapeout's test workflow and its gl_test action end with
+# `! grep failure results.xml`. cocotb 2 writes failures="0" into every
+# results file, which that grep matches, so a passing run was reported as a
+# failure (DECISIONS D-023, D-027). When the run has no <failure> element the
+# attribute is dropped, so that check means what it was written to mean. The
+# default goal runs the simulation and then this step.
+.DEFAULT_GOAL := keyer_all
+.PHONY: keyer_all
+keyer_all: sim
+	@$(PYTHON_BIN) -c "import re; p='$(COCOTB_RESULTS_FILE)'; s=open(p).read(); open(p,'w').write(s if '<failure' in s else re.sub(' failures=.0.', '', s))"

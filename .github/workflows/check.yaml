@@ -1,8 +1,8 @@
 # Full check suite in CI: Python tests, firmware, Verilator lint, Icarus,
 # cocotb host-interface and lockstep tests, formal proofs. This is the
 # project's own workflow (not from the Tiny Tapeout template) and is the
-# signal to trust: the template's `test` workflow fails on cocotb 2 result
-# files (DECISIONS D-023).
+# broadest signal: lint, formal and the full cocotb suite in one job (the
+# template's `test` workflow runs the cocotb suite only; DECISIONS D-027).
 name: check
 on: [push, workflow_dispatch]
 jobs:

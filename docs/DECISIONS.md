@@ -230,3 +230,44 @@ the file headers). Tiny Tapeout had published no macro template on
 of the behavioural array, which also checks the wrapper's enable polarity.
 Rejected: waiting for the official template (unknown date); a second
 branch per experiment (one branch, one hardening run, then decide).
+
+## D-026 2026-10-03 OPEN: setup timing fails at 20 ns in the slow corner (first hardening run)
+
+Run 37073185698 (commit d979e82, program memory as flops, before capture and
+replay): setup slack +11.46 ns fast, +7.09 ns typical, **-0.59 ns slow**
+(1.08 V, 125 C), 12 endpoints, all bits of `u_core.regs[15]`. Critical path:
+instruction register (the program memory's read-data flop) -> major-opcode
+decode -> ALU and result selection -> register-file write-enable and data
+distribution -> thread 1's r7; about 20.06 ns of logic and wire, with 1.6 to
+2.1 ns slews on high-fanout nets driven by size-1 cells, at 66.9%
+utilisation. Details in docs/AREA.md. `CLOCK_PERIOD` was not changed.
+Options for Ahan:
+
+- (a) Harden the `sram-macro` branch first (prepared, committed locally, not
+  pushed: D-025). The macro removes about 300,000 um^2 of memory flops and
+  muxes (utilisation falls to roughly 20%), so the decode and write-enable
+  nets get short, and the path then starts at the macro's output. It is the
+  intended tapeout configuration anyway; the flop memory was only ever the
+  fallback. No RTL or clock change. Recommended first step.
+- (b) Keep 20 ns and restructure the RTL without changing SEMANTICS:
+  duplicate or pre-decode the opcode decode, cut the fanout of the register
+  write enables, re-balance the ALU result mux. Cheap to try, verified by
+  the lockstep suite, another three to five hours per hardening run.
+- (c) Flow knobs in `src/config.json` beyond the two keys CLAUDE.md allows
+  (synthesis for delay, a fanout constraint, resizer slack margins): needs
+  Ahan's explicit agreement.
+- (d) Relax `CLOCK_PERIOD` (22 ns = 45 MHz would cover this path): costs the
+  60 MHz goal of PLAN.md and the UART/USB divisors chosen for it.
+- (e) A pipeline register between decode and execute: changes the cycle
+  contract (SEMANTICS section 2) and every timing test; the last resort.
+
+## D-027 2026-10-03 Claude: the test Makefile makes cocotb 2 result files pass the Tiny Tapeout check (closes D-023 unless Ahan prefers the template edit)
+
+The `gl_test` job runs the same `! grep failure results.xml` as the template
+`test` workflow, inside Tiny Tapeout's action, which cannot be edited at
+all. So instead of editing a template job (D-023), `test/Makefile` (the
+project's own file) drops the `failures="0"` attribute from `results.xml`
+after a run that has no `<failure>` element. A failing test still writes
+`<failure>` and still fails both checks; `scripts/check_all.sh` looks for
+`<failure` and the test count and is unaffected. Rejected: pinning cocotb
+1.x (the harness uses the cocotb 2 API); leaving `test` and `gl_test` red.

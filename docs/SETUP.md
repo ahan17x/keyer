@@ -31,7 +31,9 @@ brew install icarus-verilog verilator yosys z3 python@3.13
 ```
 
 `scripts/check_all.sh` and `test/Makefile` put `.venv/bin` on PATH
-themselves; nothing needs activating.
+themselves, and the Makefile looks for `cocotb-config` in `.venv/bin` first
+(a `$(shell ...)` runs before the PATH export), so a plain `cd test && make`
+works without activating anything.
 
 Alternative to the brew packages: the OSS CAD Suite
 (https://github.com/YosysHQ/oss-cad-suite-build, darwin-arm64 build) bundles
