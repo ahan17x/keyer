@@ -210,6 +210,27 @@ but doubles the macro-flow risk before the first macro is through; kept as
 a later option); stealing fetch slots from a blocked running thread (would
 make firmware timing depend on the capture).
 
+## D-025 2026-10-02 Claude (branch sram-macro, within the mandate of step 5 of Ahan's instructions; not merged): the program memory is the RM_IHPSG13_1P_256x16 macro in the flow
+
+On branch `sram-macro` the macro is the default implementation in
+`src/keyer_imem.v` (`KEYER_IMEM_FLOPS` selects the flop fallback), the macro
+files are vendored in `macro/RM_IHPSG13_1P_256x16_c2_bm_bist/` (IHP Open PDK
+`dev` at bf079026, Apache-2.0), and `src/config.json` gains, against the
+rule of CLAUDE.md and only on this branch: a `MACROS` block (instance
+`u_imem.u_sram`, FS at (12, 40)), `PDN_MACRO_CONNECTIONS`, `PDN_CFG`
+(`src/pdn_cfg.tcl`), the Magic waivers `ERROR_ON_MAGIC_DRC`,
+`ERROR_ON_ILLEGAL_OVERLAPS`, `MAGIC_EXT_ABSTRACT_CELLS`,
+`MAGIC_MACRO_STD_CELL_SOURCE`, and the stripe keys `FP_PDN_VPITCH 67.44`,
+`FP_PDN_VSPACING 3.52`, `FP_PDN_VOFFSET 26.36`. The recipe is the one that
+took the sibling entry's 512 x 16 macro through hardening, precheck and
+gate-level test (thomasgilbert481/tt_um_loom, Apache-2.0,
+`docs/tt_cmos5l_facts.md` section 11 and `src/pdn_cfg.tcl`; attribution in
+the file headers). Tiny Tapeout had published no macro template on
+2026-10-02. The cocotb suite now simulates the vendored macro model instead
+of the behavioural array, which also checks the wrapper's enable polarity.
+Rejected: waiting for the official template (unknown date); a second
+branch per experiment (one branch, one hardening run, then decide).
+
 ## D-026 2026-10-03 OPEN: setup timing fails at 20 ns in the slow corner (first hardening run)
 
 Run 37073185698 (commit d979e82, program memory as flops, before capture and
