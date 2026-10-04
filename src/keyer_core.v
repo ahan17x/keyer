@@ -20,6 +20,27 @@
  * returns the thread id in bit 6 (its upper bits, for more than two threads,
  * from bit 9 up, above the capture and replay bits 7 and 8).
  * pc0_out and pc1_out export threads 0 and 1, the PCs the host can read.
+ *
+ * Thread select (DECISIONS D-028). `tid` (the low bits of cyc) stays the
+ * slot owner that the harness and keyer_capture observe, but no per-thread
+ * consumer decodes it. Each consumer group has its own registered one-hot
+ * copy of it, NTHREADS wide, reset to bit 0 and rotated every cycle in step
+ * with cyc, so bit t is set iff tid == t (formal S1 proves it for every
+ * copy in every cycle):
+ *   sel_rf  register file: thread selection of the A and B reads, register
+ *           write enables;
+ *   sel_tm  timers: NOW and DEADLINE selection, timer write enables;
+ *   sel_pc  PC (and the fetch address), LR, flags, DELAY count, blocked,
+ *           running / halted updates, RDS bit 5;
+ *   sel_io  FIFO head and flag selection, FIFO pop and push strobes, the
+ *           pin command strobe and the CAPC strobe.
+ * Per-thread reads are AND-OR selections over a copy; per-thread write
+ * enables are <thread t executes, from flops> & <field enable>, with the
+ * register-file address pre-decoded from the instruction word, so the late
+ * execute results (done, wr_en, the ALU) only meet one level of per-thread
+ * gating. Each copy rotates its own bits, so no two copies share a D input
+ * and structural merging leaves them apart; (* keep *) keeps them as named
+ * flops.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
@@ -75,47 +96,130 @@ module keyer_core #(
     localparam TW = $clog2(NTHREADS);    // thread id width
     localparam NT = NTHREADS;
     localparam [TW-1:0] TID_ONE = 1;
+    localparam [NT-1:0] SEL_RESET = 1;   // thread 0 owns cycle 0
 
     // ---- thread state ------------------------------------------------------
-    reg [15:0] regs [0:8*NT-1];          // {tid, r}
-    reg [7:0]  pc    [0:NT-1];
-    reg [7:0]  lr    [0:NT-1];
-    reg        fz    [0:NT-1];
-    reg        fc    [0:NT-1];
+    // mem2reg: plain registers with per-element enables, no memory inference
+    (* mem2reg *) reg [15:0] regs [0:8*NT-1];   // {tid, r}
+    (* mem2reg *) reg [7:0]  pc    [0:NT-1];
+    (* mem2reg *) reg [7:0]  lr    [0:NT-1];
+    (* mem2reg *) reg        fz    [0:NT-1];
+    (* mem2reg *) reg        fc    [0:NT-1];
     // timer (section 6): NOW counts ticks, one tick every `period` cycles
-    reg [15:0] period   [0:NT-1];        // 0 = timer disabled, NOW frozen
-    reg [15:0] prescale [0:NT-1];        // cycles left before the next tick
-    reg [15:0] now      [0:NT-1];        // NOW
-    reg [15:0] deadline [0:NT-1];        // DEADLINE
-    reg [7:0]  delay  [0:NT-1];
+    (* mem2reg *) reg [15:0] period   [0:NT-1];   // 0 = timer disabled, NOW frozen
+    (* mem2reg *) reg [15:0] prescale [0:NT-1];   // cycles left before the next tick
+    (* mem2reg *) reg [15:0] now      [0:NT-1];   // NOW
+    (* mem2reg *) reg [15:0] deadline [0:NT-1];   // DEADLINE
+    (* mem2reg *) reg [7:0]  delay    [0:NT-1];
     reg [15:0] cyc;
+
+    // ---- slot owner ----------------------------------------------------------
+    // One-hot thread select copies, one per consumer group (header comment).
+    (* keep *) reg [NT-1:0] sel_rf;
+    (* keep *) reg [NT-1:0] sel_tm;
+    (* keep *) reg [NT-1:0] sel_pc;
+    (* keep *) reg [NT-1:0] sel_io;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            cyc    <= 16'd0;
+            sel_rf <= SEL_RESET;
+            sel_tm <= SEL_RESET;
+            sel_pc <= SEL_RESET;
+            sel_io <= SEL_RESET;
+        end else begin
+            cyc    <= cyc + 16'd1;
+            sel_rf <= {sel_rf[NT-2:0], sel_rf[NT-1]};
+            sel_tm <= {sel_tm[NT-2:0], sel_tm[NT-1]};
+            sel_pc <= {sel_pc[NT-2:0], sel_pc[NT-1]};
+            sel_io <= {sel_io[NT-2:0], sel_io[NT-1]};
+        end
+    end
 
     wire [TW-1:0] tid  = cyc[TW-1:0];    // slot owner
     wire [TW-1:0] otid = tid + TID_ONE;  // next slot's owner = "the other thread"
-    assign fetch_addr = pc[otid];
+    // the other thread, one-hot: next cycle's owner
+    wire [NT-1:0] osel_pc = {sel_pc[NT-2:0], sel_pc[NT-1]};
+
+    // Thread t executes in this cycle (2.1), one copy per group: flops only.
+    wire [NT-1:0] run_ok = running & {NT{fetch_ok}};
+    wire [NT-1:0] x_rf   = sel_rf & run_ok;
+    wire [NT-1:0] x_tm   = sel_tm & run_ok;
+    wire [NT-1:0] x_pc   = sel_pc & run_ok;
+    wire [NT-1:0] x_io   = sel_io & run_ok;
+    wire [NT-1:0] xo_pc  = {x_pc[NT-2:0], x_pc[NT-1]};   // bit t: thread t-1 executes
+
+    wire exec    = |x_pc;                // running[tid] & fetch_ok
+    wire exec_io = |x_io;                // the same, for the strobes
+
+    // ---- per-thread reads: AND-OR over a one-hot copy ----------------------
+    reg [16*8-1:0] rf_thr;               // the slot owner's register k at [16k+15:16k]
+    reg [15:0] tm_now, tm_dl;            // NOW, DEADLINE of the slot owner
+    reg [7:0]  pc_cur, lr_cur, dly_cur;  // PC, LR, DELAY count of the slot owner
+    reg [7:0]  pc_oth;                   // PC of the other thread (next fetch)
+    reg        z_cur, c_cur, run_oth;
+    reg [7:0]  in_head;
+    reg        in_empty, in_full, out_full, out_empty;
+    integer sr, kr, st, sp, si;          // one loop variable per always block
+
+    always @(*) begin
+        rf_thr = {16*8{1'b0}};
+        for (sr = 0; sr < NT; sr = sr + 1)
+            for (kr = 0; kr < 8; kr = kr + 1)
+                rf_thr[16*kr +: 16] = rf_thr[16*kr +: 16] | (regs[8*sr+kr] & {16{sel_rf[sr]}});
+    end
+
+    always @(*) begin
+        tm_now = 16'd0; tm_dl = 16'd0;
+        for (st = 0; st < NT; st = st + 1) begin
+            tm_now = tm_now | (now[st]      & {16{sel_tm[st]}});
+            tm_dl  = tm_dl  | (deadline[st] & {16{sel_tm[st]}});
+        end
+    end
+
+    always @(*) begin
+        pc_cur = 8'd0; lr_cur = 8'd0; dly_cur = 8'd0; pc_oth = 8'd0;
+        z_cur = 1'b0; c_cur = 1'b0; run_oth = 1'b0;
+        for (sp = 0; sp < NT; sp = sp + 1) begin
+            pc_cur  = pc_cur  | (pc[sp]    & {8{sel_pc[sp]}});
+            lr_cur  = lr_cur  | (lr[sp]    & {8{sel_pc[sp]}});
+            dly_cur = dly_cur | (delay[sp] & {8{sel_pc[sp]}});
+            pc_oth  = pc_oth  | (pc[sp]    & {8{osel_pc[sp]}});
+            z_cur   = z_cur   | (fz[sp] & sel_pc[sp]);
+            c_cur   = c_cur   | (fc[sp] & sel_pc[sp]);
+            run_oth = run_oth | (running[sp] & osel_pc[sp]);
+        end
+    end
+
+    always @(*) begin
+        in_head = 8'd0;
+        in_empty = 1'b0; in_full = 1'b0; out_full = 1'b0; out_empty = 1'b0;
+        for (si = 0; si < NT; si = si + 1) begin
+            in_head   = in_head   | (inbox_rdata[8*si +: 8] & {8{sel_io[si]}});
+            in_empty  = in_empty  | (inbox_empty[si]  & sel_io[si]);
+            in_full   = in_full   | (inbox_full[si]   & sel_io[si]);
+            out_full  = out_full  | (outbox_full[si]  & sel_io[si]);
+            out_empty = out_empty | (outbox_empty[si] & sel_io[si]);
+        end
+    end
+
+    assign fetch_addr = pc_oth;
     assign pc0_out    = pc[0];
     assign pc1_out    = pc[1];
-
-    wire exec = running[tid] & fetch_ok;
 
     // ---- decode ------------------------------------------------------------
     wire [15:0] ir   = imem_rdata;
     wire [3:0]  maj  = ir[15:12];
     wire [2:0]  ra   = ir[11:9];
     wire [2:0]  rb   = ir[8:6];
-    wire [15:0] A    = regs[{tid, ra}];
-    wire [15:0] B    = regs[{tid, rb}];
+    wire [15:0] A    = rf_thr[{ra, 4'd0} +: 16];
+    wire [15:0] B    = rf_thr[{rb, 4'd0} +: 16];
     wire [7:0]  imm8 = ir[7:0];
     wire [15:0] simm8 = {{8{ir[7]}}, ir[7:0]};
     wire [4:0]  pin  = ir[4:0];
     wire [4:0]  bpin = ir[10:6];
-    wire        Z    = fz[tid];
-    wire        C    = fc[tid];
-    wire [7:0]  in_head   = inbox_rdata[8*tid +: 8];
-    wire        in_empty  = inbox_empty[tid];
-    wire        in_full   = inbox_full[tid];
-    wire        out_full  = outbox_full[tid];
-    wire        out_empty = outbox_empty[tid];
+    wire        Z    = z_cur;
+    wire        C    = c_cur;
 
     wire [31:0] lvl32  = {8'd0, level};
     wire [31:0] lvl232 = {8'd0, level2};
@@ -123,7 +227,6 @@ module keyer_core #(
     wire        lv2    = lvl232[pin];
     wire        blv    = lvl32[bpin];
 
-    wire [7:0] pc_cur  = pc[tid];
     wire [7:0] pc_inc  = pc_cur + 8'd1;
     wire [7:0] pc_rel8 = pc_inc + imm8;                     // sext(off8) wraps the same way
     wire [7:0] pc_rel6 = pc_inc + {{2{ir[5]}}, ir[5:0]};
@@ -145,8 +248,7 @@ module keyer_core #(
     wire        tm_misc    = (maj == `KEYER_MAJ_MISC);
     wire        tm_setd    = tm_misc & (ir[11:8] == `KEYER_SETD);
     wire        tm_waitd   = tm_misc & (ir[11:8] == `KEYER_WAITD);
-    wire [15:0] tm_now     = now[tid];
-    wire [15:0] tm_base    = tm_setd ? tm_now : deadline[tid];
+    wire [15:0] tm_base    = tm_setd ? tm_now : tm_dl;
     wire [7:0]  tm_k       = (tm_setd | tm_waitd) ? imm8 : 8'd0;
     wire [15:0] tm_sum     = tm_base + {8'd0, tm_k};
     wire [15:0] tm_diff    = tm_now - tm_sum;
@@ -154,7 +256,7 @@ module keyer_core #(
 
     // ---- RDS status word (section 11) --------------------------------------
     wire [15:0] tid16 = {{(16-TW){1'b0}}, tid};
-    wire [15:0] rds_word = {7'd0, rep_active, cap_active, tid16[0], running[otid], tm_reached,
+    wire [15:0] rds_word = {7'd0, rep_active, cap_active, tid16[0], run_oth, tm_reached,
                             out_full, out_empty, in_full, in_empty}
                          | ((tid16 >> 1) << 9);
     assign cr_ctrl_val = A[3:0];                             // CAPC rs: rs[3:0]
@@ -169,6 +271,7 @@ module keyer_core #(
     reg        do_sett, dl_we, do_halt, do_start, do_stop;
     reg        delay_load, delay_dec;
     reg        is_wait, wait_base, wait_tmo;
+    reg        pop_req, push_req;        // the slot owner's inbox pop / outbox push
     reg [16:0] sum;
 
     always @(*) begin
@@ -181,7 +284,7 @@ module keyer_core #(
         delay_load = 1'b0; delay_dec = 1'b0;
         is_wait = 1'b0; wait_base = 1'b0; wait_tmo = 1'b0;
         pin_valid = 1'b0; pin_op = 3'd0; pin_pin = pin; pin_data = 8'd0;
-        inbox_pop = {NT{1'b0}}; outbox_push = {NT{1'b0}}; outbox_wdata = A[7:0];
+        pop_req = 1'b0; push_req = 1'b0; outbox_wdata = A[7:0];
         cr_ctrl_we = 1'b0;
         sum = 17'd0;
 
@@ -285,19 +388,19 @@ module keyer_core #(
             wait_tmo = ir[`KEYER_XFER_TBIT];
             case (ir[8:5])
                 // PUSH/POP: the base effect happens only when the base condition holds
-                `KEYER_PUSH: begin is_wait = 1'b1; wait_base = ~out_full; outbox_push[tid] = ~out_full; end
-                `KEYER_POP:  begin is_wait = 1'b1; wait_base = ~in_empty; inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, in_head}; end
+                `KEYER_PUSH: begin is_wait = 1'b1; wait_base = ~out_full; push_req = ~out_full; end
+                `KEYER_POP:  begin is_wait = 1'b1; wait_base = ~in_empty; pop_req = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, in_head}; end
                 `KEYER_RDS:  begin wr_en = 1'b1; wr_val = rds_word; end
                 `KEYER_RDCYC: begin wr_en = 1'b1; wr_val = cyc; end
                 `KEYER_SETT: do_sett = 1'b1;
                 `KEYER_RDT:  begin wr_en = 1'b1; wr_val = tm_diff; end
-                `KEYER_PUSHNB: begin outbox_push[tid] = ~out_full; c_we = 1'b1; c_val = ~out_full; end
-                `KEYER_POPNB:  begin inbox_pop[tid] = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, in_head}; c_we = 1'b1; c_val = ~in_empty; end
+                `KEYER_PUSHNB: begin push_req = ~out_full; c_we = 1'b1; c_val = ~out_full; end
+                `KEYER_POPNB:  begin pop_req = ~in_empty; wr_en = ~in_empty; wr_val = {8'd0, in_head}; c_we = 1'b1; c_val = ~in_empty; end
                 `KEYER_OUTB:  begin pin_valid = 1'b1; pin_op = 3'd5; pin_data = A[7:0]; end
                 `KEYER_INB:   begin wr_en = 1'b1; wr_val = {8'd0, level[7:0]}; z_we = 1'b1; z_val = (level[7:0] == 8'd0); end
                 `KEYER_INW:   begin wr_en = 1'b1; wr_val = level[15:0]; z_we = 1'b1; z_val = (level[15:0] == 16'd0); end
                 `KEYER_OUTOE: begin pin_valid = 1'b1; pin_op = 3'd6; pin_data = A[7:0]; end
-                `KEYER_RDLR:  begin wr_en = 1'b1; wr_val = {8'd0, lr[tid]}; end
+                `KEYER_RDLR:  begin wr_en = 1'b1; wr_val = {8'd0, lr_cur}; end
                 `KEYER_JMPR:  pc_next = A[7:0];
                 `KEYER_CAPC:  cr_ctrl_we = 1'b1;
                 default: ;
@@ -307,15 +410,15 @@ module keyer_core #(
             case (ir[11:8])
                 `KEYER_NOP:   ;
                 `KEYER_HALT:  do_halt = 1'b1;
-                `KEYER_RET:   pc_next = lr[tid];
+                `KEYER_RET:   pc_next = lr_cur;
                 `KEYER_WAITD: begin done = tm_reached; dl_we = 1'b1; end   // DEADLINE <= DEADLINE + k
                 `KEYER_DELAY: begin
-                    if (delay[tid] == 8'd0) begin
+                    if (dly_cur == 8'd0) begin
                         if (imm8 == 8'd0) done = 1'b1;
                         else begin done = 1'b0; delay_load = 1'b1; end
                     end else begin
                         delay_dec = 1'b1;
-                        done = (delay[tid] == 8'd1);
+                        done = (dly_cur == 8'd1);
                     end
                 end
                 `KEYER_SETC:  begin c_we = 1'b1; c_val = 1'b1; end
@@ -339,86 +442,127 @@ module keyer_core #(
         end
 
         // nothing leaves the core unless the thread really executes this cycle
-        if (!exec) begin
-            pin_valid = 1'b0; inbox_pop = {NT{1'b0}}; outbox_push = {NT{1'b0}};
+        if (!exec_io) begin
+            pin_valid = 1'b0;
             cr_ctrl_we = 1'b0;
         end
     end
 
+    // FIFO strobes: one per thread, from the io copy
+    always @(*) begin
+        inbox_pop   = x_io & {NT{pop_req}};
+        outbox_push = x_io & {NT{push_req}};
+    end
+
     // ---- state update ------------------------------------------------------
     wire commit = exec & done;
-    integer t;
 
+    // Write enables. wr_en, z_we, lr_we and do_sett are only ever set by
+    // instructions that complete (done = 1; formal D1), so their enables use
+    // "thread t executes" where the other enables use "thread t commits",
+    // which keeps done (the timer comparator and the wait conditions) off the
+    // register-file write path. The register-file enable is pre-decoded:
+    // rf_pre[8t+i] (thread t executes and ra = i) depends only on flops and ir.
+    wire [7:0]      ra_hot = 8'd1 << ra;
+    wire [8*NT-1:0] rf_pre;
+    wire [8*NT-1:0] rf_we  = rf_pre & {8*NT{wr_en}};
+    wire [NT-1:0]   c_pc   = x_pc & {NT{done}};     // thread t commits (PC group)
+    wire [NT-1:0]   c_tm   = x_tm & {NT{done}};     // thread t commits (timer group)
+    genvar g;
+    generate
+        for (g = 0; g < NT; g = g + 1) begin : g_rf_pre
+            assign rf_pre[8*g +: 8] = ra_hot & {8{x_rf[g]}};
+        end
+    endgenerate
+
+    integer r, tt, tp;                   // one loop variable per always block
+
+    // register file (4)
     always @(posedge clk) begin
         if (!rst_n) begin
-            cyc <= 16'd0;
-            running <= {NT{1'b0}}; halted <= {NT{1'b0}}; blocked <= {NT{1'b0}};
-            for (t = 0; t < NT; t = t + 1) begin
-                pc[t] <= 8'd0; lr[t] <= 8'd0; fz[t] <= 1'b0; fc[t] <= 1'b0;
-                period[t] <= 16'd0; prescale[t] <= 16'd0; now[t] <= 16'd0; deadline[t] <= 16'd0;
-                delay[t] <= 8'd0;
-            end
-            for (t = 0; t < 8*NT; t = t + 1) regs[t] <= 16'd0;
+            for (r = 0; r < 8*NT; r = r + 1) regs[r] <= 16'd0;
         end else begin
-            cyc <= cyc + 16'd1;
+            for (r = 0; r < 8*NT; r = r + 1)
+                if (rf_we[r]) regs[r] <= wr_val;
+        end
+    end
 
-            // register file, flags, pc, lr
-            if (commit) begin
-                if (wr_en) regs[{tid, ra}] <= wr_val;
-                if (z_we) fz[tid] <= z_val;
-                if (c_we) fc[tid] <= c_val;
-                pc[tid] <= pc_next;
-                if (lr_we) lr[tid] <= pc_inc;
+    // timers: every thread, every cycle, running or not (2.3). Tick rule
+    // (6.1): with the timer enabled, prescale counts period-1 .. 0 and NOW
+    // advances when it wraps. SETT and SETD/WAITD (6.2) and the soft reset
+    // (3.2) override it, in that order.
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            for (tt = 0; tt < NT; tt = tt + 1) begin
+                period[tt] <= 16'd0; prescale[tt] <= 16'd0; now[tt] <= 16'd0; deadline[tt] <= 16'd0;
             end
-            blocked[tid] <= exec & ~done;
-
-            // delay counter
-            if (exec) begin
-                if (delay_load) delay[tid] <= imm8;
-                else if (delay_dec) delay[tid] <= delay[tid] - 8'd1;
-                if (done) delay[tid] <= 8'd0;
-            end
-
-            // timers: every thread, every cycle, running or not (2.3). Tick
-            // rule (6.1): with the timer enabled, prescale counts period-1 .. 0
-            // and NOW advances when it wraps. SETT (6.2) and the soft reset
-            // below override it.
-            for (t = 0; t < NT; t = t + 1) begin
-                if (period[t] != 16'd0) begin
-                    prescale[t] <= ((prescale[t] == 16'd0) ? period[t] : prescale[t]) - 16'd1;
-                    if (prescale[t] == 16'd0) now[t] <= now[t] + 16'd1;
+        end else begin
+            for (tt = 0; tt < NT; tt = tt + 1) begin
+                if (period[tt] != 16'd0) begin
+                    prescale[tt] <= ((prescale[tt] == 16'd0) ? period[tt] : prescale[tt]) - 16'd1;
+                    if (prescale[tt] == 16'd0) now[tt] <= now[tt] + 16'd1;
                 end
-                if (commit && (tid == t[TW-1:0])) begin
-                    if (dl_we) deadline[t] <= tm_sum;
-                    if (do_sett) begin
-                        period[t]   <= A;
-                        prescale[t] <= a_zero ? 16'd0 : a_dec;
-                        now[t]      <= 16'd0;
-                        deadline[t] <= 16'd0;
-                    end
+                if (c_tm[tt] & dl_we) deadline[tt] <= tm_sum;
+                if (x_tm[tt] & do_sett) begin
+                    period[tt]   <= A;
+                    prescale[tt] <= a_zero ? 16'd0 : a_dec;
+                    now[tt]      <= 16'd0;
+                    deadline[tt] <= 16'd0;
+                end
+                if (host_rst[tt]) begin
+                    period[tt] <= 16'd0; prescale[tt] <= 16'd0; now[tt] <= 16'd0; deadline[tt] <= 16'd0;
                 end
             end
+        end
+    end
 
-            // run / halt, core-initiated first, host last
-            if (exec && do_halt)  begin running[tid]  <= 1'b0; halted[tid] <= 1'b1; end
-            if (exec && do_start) begin running[otid] <= 1'b1; halted[otid] <= 1'b0; end
-            if (exec && do_stop)  begin running[otid] <= 1'b0; delay[otid] <= 8'd0; end
+    // PC, LR, flags, DELAY count, blocked, running, halted
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            running <= {NT{1'b0}}; halted <= {NT{1'b0}}; blocked <= {NT{1'b0}};
+            for (tp = 0; tp < NT; tp = tp + 1) begin
+                pc[tp] <= 8'd0; lr[tp] <= 8'd0; fz[tp] <= 1'b0; fc[tp] <= 1'b0;
+                delay[tp] <= 8'd0;
+            end
+        end else begin
+            for (tp = 0; tp < NT; tp = tp + 1) begin
+                // the executing thread: PC, flags, LR (2.2, 4)
+                if (c_pc[tp]) begin
+                    pc[tp] <= pc_next;
+                    if (c_we) fc[tp] <= c_val;
+                end
+                if (x_pc[tp] & z_we)  fz[tp] <= z_val;
+                if (x_pc[tp] & lr_we) lr[tp] <= pc_inc;
+                if (sel_pc[tp]) blocked[tp] <= x_pc[tp] & ~done;
+                // delay counter (7.6)
+                if (x_pc[tp]) begin
+                    if (delay_load) delay[tp] <= imm8;
+                    else if (delay_dec) delay[tp] <= dly_cur - 8'd1;
+                    if (done) delay[tp] <= 8'd0;
+                end
+            end
+
+            // run / halt, core-initiated first, host last (2.3)
+            for (tp = 0; tp < NT; tp = tp + 1) begin
+                if (x_pc[tp]  & do_halt)  begin running[tp] <= 1'b0; halted[tp] <= 1'b1; end
+                if (xo_pc[tp] & do_start) begin running[tp] <= 1'b1; halted[tp] <= 1'b0; end
+                if (xo_pc[tp] & do_stop)  begin running[tp] <= 1'b0; delay[tp] <= 8'd0; end
+            end
             if (host_run_we) begin
-                for (t = 0; t < NT; t = t + 1) begin
-                    if (host_run_val[t]) begin
-                        running[t] <= 1'b1; halted[t] <= 1'b0;
+                for (tp = 0; tp < NT; tp = tp + 1) begin
+                    if (host_run_val[tp]) begin
+                        running[tp] <= 1'b1; halted[tp] <= 1'b0;
                     end else begin
-                        running[t] <= 1'b0; delay[t] <= 8'd0;
+                        running[tp] <= 1'b0; delay[tp] <= 8'd0;
                     end
                 end
             end
             // host PC write and soft reset (3.2); the FIFOs are emptied in the top
-            for (t = 0; t < NT; t = t + 1) begin
-                if (host_pc_we[t] && !running[t]) pc[t] <= host_pc_val;
-                if (host_rst[t]) begin
-                    lr[t] <= 8'd0; fz[t] <= 1'b0; fc[t] <= 1'b0;
-                    period[t] <= 16'd0; prescale[t] <= 16'd0; now[t] <= 16'd0; deadline[t] <= 16'd0;
-                    delay[t] <= 8'd0;
+            for (tp = 0; tp < NT; tp = tp + 1) begin
+                if (host_pc_we[tp] && !running[tp]) pc[tp] <= host_pc_val;
+                if (host_rst[tp]) begin
+                    lr[tp] <= 8'd0; fz[tp] <= 1'b0; fc[tp] <= 1'b0;
+                    delay[tp] <= 8'd0;
                 end
             end
         end
@@ -432,9 +576,30 @@ module keyer_core #(
 `ifdef FORMAL
     // Properties proved by formal/run_core_pdr.sh (abc pdr on core_pdr.sby;
     // formal/core.sby is the same task for smtbmc). f_past_valid guards $past.
+    // They refer to the slot owner through tid (binary), independently of
+    // the one-hot copies the implementation uses.
     reg f_past_valid = 1'b0;
     always @(posedge clk) f_past_valid <= 1'b1;
     always @(*) if (!f_past_valid) assume(!rst_n);
+
+    // S1. Every thread-select copy is one-hot and equals the decode of tid
+    //     (bit t set iff tid == t), in every cycle after the first reset.
+    // D1. The fields whose write enables use "executes" instead of
+    //     "commits" are only set by instructions that complete.
+    integer fs;
+    always @(*) if (f_past_valid) begin
+        assert(sel_rf != {NT{1'b0}} && (sel_rf & (sel_rf - SEL_RESET)) == {NT{1'b0}});
+        assert(sel_tm != {NT{1'b0}} && (sel_tm & (sel_tm - SEL_RESET)) == {NT{1'b0}});
+        assert(sel_pc != {NT{1'b0}} && (sel_pc & (sel_pc - SEL_RESET)) == {NT{1'b0}});
+        assert(sel_io != {NT{1'b0}} && (sel_io & (sel_io - SEL_RESET)) == {NT{1'b0}});
+        if (wr_en || z_we || lr_we || do_sett) assert(done);
+    end
+    always @(*) for (fs = 0; fs < NT; fs = fs + 1) if (f_past_valid) begin
+        assert(sel_rf[fs] == (tid == fs));
+        assert(sel_tm[fs] == (tid == fs));
+        assert(sel_pc[fs] == (tid == fs));
+        assert(sel_io[fs] == (tid == fs));
+    end
 
     // Timer decode and reference values, written from SEMANTICS 6 and 7
     // independently of the shared adder in the execute logic.
