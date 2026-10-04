@@ -26,13 +26,15 @@ module tb ();
 
   assign uio_in = (uio_oe & uio_out) | (~uio_oe & uio_ext);
 
-`ifdef GL_TEST
+  // The IHP flow's gate-level netlist (tt_submission/*.v) has no power ports,
+  // so power pins are connected only when USE_POWER_PINS is defined.
+`ifdef USE_POWER_PINS
   wire VPWR = 1'b1;
   wire VGND = 1'b0;
 `endif
 
   tt_um_ahan17x_keyer user_project (
-`ifdef GL_TEST
+`ifdef USE_POWER_PINS
       .VPWR   (VPWR),
       .VGND   (VGND),
 `endif
