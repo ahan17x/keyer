@@ -310,3 +310,17 @@ comparison). The slow corner (-1.94 ns, 277 endpoints, from the macro's
 still failed, `decode-onehot` was hardened as well (run 37176010222: typical
 +7.41 ns, slow -0.13 ns on one endpoint); merging that branch is left to
 Ahan.
+
+## D-030 2026-10-04 Ahan: `decode-onehot` is merged into master
+
+The registered one-hot thread select (four copies, one per consumer group,
+D-028) becomes the master design. Why: its core is proven equivalent to the
+`sram-macro` core (776 of 776 points), the full suite is green on it, and
+its hardening run 37176010222 is better at every corner (setup +11.85 /
++7.41 / -0.13 ns against +11.20 / +6.40 / -1.94 ns), takes the slow-corner
+miss from 277 endpoints to one, and passed all four jobs including the
+precheck. It meets the acceptance rule of D-028 (typical slack at least
++5 ns, every sign-off check passing). The remaining slow-corner endpoint
+(`deadline[0][15]`, the `WAITD` update) is worked on next on its own branch.
+Rejected: staying on the `sram-macro` core (1.0 ns less typical slack and
+277 slow-corner endpoints for 7 flops fewer).

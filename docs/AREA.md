@@ -148,7 +148,7 @@ corner and 1.8 ns at the slow corner, and the slow-corner violations drop
 from 277 endpoints to one: `u_imem.u_sram/A_DOUT[8]` to
 `u_core.deadline[0][15]`, the `WAITD` deadline update (macro output 5.36 ns,
 then two chained 16-bit additions, the completion test and the write
-enable), 0.134 ns late. Not merged: Ahan decides (docs/HANDOFF.md).
+enable), 0.134 ns late. **Merged into master** on 2026-10-04 (D-030).
 
 ### Run 37169341232, 2026-10-04, commit 794dfac (master before the merge: capture and replay with the program memory as flops)
 
@@ -169,7 +169,29 @@ the merge of `sram-macro` superseded this run.
 Kept for the record: the flop-memory configuration is now the
 `KEYER_IMEM_FLOPS` fallback, not the tapeout configuration.
 
-### Summary of the four runs
+### Run 37181323699, 2026-10-04, commit 8dab03a (master: the merge of `sram-macro`)
+
+Started by the push of the merge (D-029); it re-hardens the design of run
+37169889955 on master. Jobs: `gds` success (59 min), `gl_test` success,
+`viewer` success, `precheck` success (27 min, all nine checks). Numbers from
+`python3 scripts/gds_report.py 37181323699`.
+
+| Item | Value |
+|---|---|
+| Standard cells | 13,203 instances (1,463 flops, 2,876 timing-repair buffers) plus the macro; 72,012 with fill |
+| Cell area / utilisation | 194,522 um^2 + 28,127 um^2 macro; 24.7% (standard cells 22.2%) |
+| Setup slack, 20 ns | fast +11.20 ns; typical +6.40 ns; slow -1.94 ns, 277 violating endpoints |
+| Hold slack | fast +0.092 ns, typical +0.270 ns, slow +0.593 ns; no violations |
+| Routing | detailed routing 31 min 33 s; DRC 0; wire length 560,364 um |
+| DRC / LVS / antenna | Magic DRC 29,294 and 10 illegal overlaps (the macro-internal and stripe-over-OBS items of the branch run); LVS 0; antenna 0 |
+| Slew / cap / fanout | 14 max-slew, 1 max-cap, 127 max-fanout |
+| gl_test | success |
+
+Every number equals the branch run's (the flow is deterministic for the same
+sources); only the wall-clock times differ with the runner. Master carried
+this design until the merge of `decode-onehot` (D-030).
+
+### Summary of the runs
 
 | Run | Design | Cells | Utilisation | Setup fast / typical / slow (ns) | Routing | Precheck | gl_test |
 |---|---|---|---|---|---|---|---|
@@ -177,3 +199,4 @@ Kept for the record: the flop-memory configuration is now the
 | 37169341232 | flops + capture (794dfac) | 41,436 | 70.0% | +10.84 / +5.96 / -2.36 (32) | 1 h 39 | superseded | pass |
 | 37169889955 | macro + capture (de17304, `sram-macro`) | 13,203 + macro | 24.7% | +11.20 / +6.40 / -1.94 (277) | 49 min | 9/9 | pass |
 | 37176010222 | macro + capture + one-hot select (23eb0dc, `decode-onehot`) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 49 min | 9/9 | pass |
+| 37181323699 | macro + capture (8dab03a, master after D-029; same design as 37169889955) | 13,203 + macro | 24.7% | +11.20 / +6.40 / -1.94 (277) | 32 min | 9/9 | pass |

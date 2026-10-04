@@ -6,7 +6,12 @@
 # to DEADLINE, SETD k sets NOW + k; T6 timeout forms report C = !base, base
 # forms leave C alone. Control: P3 PC moves only on commit or host write; P4
 # threads start only via host or START; P5 halted implies stopped; P6 thread
-# parity; P7 blocked threads hold their PC.
+# parity; P7 blocked threads hold their PC. Thread select (D-028): S1 each
+# registered one-hot thread-select copy (sel_rf, sel_tm, sel_pc, sel_io) is
+# one-hot and equals the decode of tid (bit t set iff tid == t) in every
+# cycle; D1 the fields whose write enables use "executes" rather than
+# "commits" (wr_en, z_we, lr_we, do_sett) are only set by instructions that
+# complete.
 # Properties live in src/keyer_core.v under `ifdef FORMAL.
 [options]
 mode prove
