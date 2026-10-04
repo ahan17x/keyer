@@ -271,3 +271,23 @@ after a run that has no `<failure>` element. A failing test still writes
 `<failure>` and still fails both checks; `scripts/check_all.sh` looks for
 `<failure` and the test count and is unaffected. Rejected: pinning cocotb
 1.x (the harness uses the cocotb 2 API); leaving `test` and `gl_test` red.
+
+## D-028 2026-10-03 Ahan: D-026 resolved: harden `sram-macro` now; the slow-corner miss is tracked, not blocking
+
+Tiny Tapeout's cmos5l flow signs off timing at the typical corner only:
+`TIMING_VIOLATION_CORNERS` is `*typ*` and `IHPTech.tt_corner` is
+`nom_typ_1p20V_25C` on the `ihp-sg13cmos5l` branch of tt-support-tools; the
+slow and fast corners are reported but never fail the flow. Source: the
+parallel entry's `docs/tt_cmos5l_facts.md` (sections 1 and 12, read from the
+tool source), and it agrees with our own run 37073185698, whose `gds` job
+succeeded with -0.59 ns at the slow corner. So the slow corner is logged in
+docs/AREA.md for every run and tracked, but it does not block a merge.
+
+Acceptance for merging `sram-macro` into master: typical setup slack of at
+least +5 ns and every sign-off check passing (DRC, LVS, antenna, precheck,
+gl_test). If the slow corner still fails on the macro run, the
+`decode-onehot` branch (registered one-hot thread select replicated per
+consumer: register file, timers, PC/flags, pins; no change to the cycle
+contract) is hardened next and both runs are reported. `CLOCK_PERIOD` stays
+20 ns. Not taken: relaxing the clock; a pipeline register; flow keys beyond
+the two CLAUDE.md allows.

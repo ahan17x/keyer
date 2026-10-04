@@ -92,6 +92,11 @@ after the repo had been moved from `~/Claude/loom` to `~/Desktop/loom`.
    needed. The current yowasp-sby also handles the `abc pdr` engine without
    the parser crash noted in `formal/README.md`; the script keeps calling
    abc directly, which works either way.
+0. **CI note (2026-10-03).** The same proofs behave differently on an old
+   solver: on GitHub's Ubuntu 24.04 runner the apt z3 (4.8) ran the pin-unit
+   induction for minutes after the replay port was added and the job was
+   killed; a current z3 (Homebrew here, `pip install z3-solver` in the
+   `check` workflow) finishes in a second. Keep the solver current.
 5. **`formal/fifo_props.sv` was missing from the repo.** Commit 0b2d0af
    (the BUGS 10 fix) deleted it while adding a generated
    `formal/fifo/status.sqlite`, so the FIFO proof could not run at all and
