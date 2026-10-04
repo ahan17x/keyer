@@ -130,7 +130,7 @@ than in the first run while the typical corner keeps +6.40 ns.
 
 Dispatched because the slow corner still failed on the macro run (D-028).
 Jobs: `gds` success (1 h 34 min), `gl_test` success, `viewer` success,
-`precheck` still running when this was written (HANDOFF task 1).
+`precheck` success (30 min, all nine checks).
 
 | Item | Value |
 |---|---|
@@ -176,4 +176,4 @@ Kept for the record: the flop-memory configuration is now the
 | 37073185698 | flops, no capture (d979e82) | 37,821 | 66.9% | +11.46 / +7.09 / -0.59 (12) | 2 h 00 | 9/9 | compile error (fixed) |
 | 37169341232 | flops + capture (794dfac) | 41,436 | 70.0% | +10.84 / +5.96 / -2.36 (32) | 1 h 39 | superseded | pass |
 | 37169889955 | macro + capture (de17304, `sram-macro`) | 13,203 + macro | 24.7% | +11.20 / +6.40 / -1.94 (277) | 49 min | 9/9 | pass |
-| 37176010222 | macro + capture + one-hot select (23eb0dc, `decode-onehot`) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 49 min | running | pass |
+| 37176010222 | macro + capture + one-hot select (23eb0dc, `decode-onehot`) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 49 min | 9/9 | pass |

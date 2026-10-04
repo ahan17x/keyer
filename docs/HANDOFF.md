@@ -24,8 +24,9 @@ what to do next.
 - Branch `decode-onehot` (pushed, **not merged**): the same design with a
   registered one-hot thread select replicated per consumer; equivalence
   with the `sram-macro` core proven (776 of 776 points), full suite green,
-  hardened (run 37176010222): setup +11.85 / +7.41 / -0.13 ns, one
-  slow-corner endpoint left (`u_core.deadline[0][15]`), gl_test passing.
+  hardened (run 37176010222, all four jobs green, precheck 9/9): setup
+  +11.85 / +7.41 / -0.13 ns, one slow-corner endpoint left
+  (`u_core.deadline[0][15]`).
 - `docs/SEMANTICS.md` v0.3 is the cycle-exact contract (it wins over
   `docs/isa.md`, ISA v0.2, 86 instructions); `docs/CAPTURE.md` describes
   capture and replay; `docs/spec-questions.md` holds 20 resolved questions.
@@ -55,13 +56,14 @@ All closed up to D-029. Waiting for Ahan: whether to merge `decode-onehot`.
 ## Next tasks, in order
 
 1. **Decide on `decode-onehot`.** It is equivalence-proven, better at
-   every corner and takes the slow-corner miss from 277 endpoints to one.
-   Check that the precheck of run 37176010222 passed
-   (`python3 scripts/gds_report.py 37176010222`), then merge it into master
-   if Ahan agrees (a new DECISIONS entry) and log the master run the push
+   every corner, takes the slow-corner miss from 277 endpoints to one, and
+   its run passed every job including the precheck. If Ahan agrees, merge
+   it into master (a new DECISIONS entry) and log the master run the push
    starts.
-2. **Log the master `gds` run started by the merge of `sram-macro`** in
-   `docs/AREA.md` (it re-hardens the design of run 37169889955 on master).
+2. **Log the master `gds` run started by the merge of `sram-macro`**
+   (37181323699, in progress when the session ended) in `docs/AREA.md`:
+   `python3 scripts/gds_report.py 37181323699`. It re-hardens the design of
+   run 37169889955 on master.
 3. **The last slow-corner endpoint** (`deadline[0][15]`, WAITD): the target
    `DEADLINE + k` and the test `NOW - target >= 0` are two chained 16-bit
    carry chains after the macro's 5.4 ns access time. A three-input

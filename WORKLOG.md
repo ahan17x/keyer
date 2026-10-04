@@ -265,3 +265,9 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   - Master before the merge, flops with capture (37169341232): 70.0%
     utilisation, +10.84 / +5.96 / -2.36 ns, `gl_test` passing (the first
     green gate-level run); its precheck was superseded by the merge push.
+- End of session 3: `decode-onehot` run finished with all four jobs green
+  (precheck 9/9). Master is 8dab03a (the merge of `sram-macro`) plus this
+  docs commit; on GitHub its `check`, `test` and `docs` workflows pass and
+  its own `gds` run (37181323699) is in progress. Locally the full check
+  suite is green on master: 52 Python tests, 20 cocotb tests, lint, Icarus,
+  four formal groups. Open for Ahan: merging `decode-onehot`.
