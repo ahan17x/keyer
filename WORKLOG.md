@@ -242,3 +242,26 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   forms, capture and replay, firmware table, and a "How to test" section
   built on the driver. Its capture example had a wrong wait (thread 1 halts
   twice); fixed, and the example now runs as a test.
+- `scripts/gds_report.py` added: summarises a `gds` run from its artifacts
+  (jobs, cells, utilisation, slack per corner, routing, sign-off counts,
+  precheck table, worst violators); checked against the first run's
+  hand-logged numbers.
+- Hardening results (docs/AREA.md has the tables and paths):
+  - `sram-macro` (37169889955): all four jobs green. 13,203 cells plus the
+    macro, 24.7% utilisation, routing 49 min. Setup +11.20 / **+6.40** /
+    -1.94 ns (fast / typical / slow), hold clean, LVS and antenna 0,
+    precheck 9/9, `gl_test` passing on the netlist with the macro model.
+    The waivers hold up: every Magic DRC box is inside the macro; the ten
+    overlaps are the four power stripes over the supply-split band; the PDN
+    verifier found every stripe inside same-net columns. The slow corner
+    got worse than with flops because the macro's access time is 5.4 ns at
+    that corner against 0.6 ns for a flop.
+  - Rule of D-028 applied: typical slack at least +5 ns and all sign-off
+    checks pass, so `sram-macro` was merged into master (D-029).
+  - `decode-onehot` (37176010222), dispatched because the slow corner still
+    failed: setup +11.85 / **+7.41** / **-0.13** ns, one violating endpoint
+    left (`deadline[0][15]`, the WAITD update); 13,317 cells, routing
+    49 min, `gl_test` passing. Left for Ahan to merge.
+  - Master before the merge, flops with capture (37169341232): 70.0%
+    utilisation, +10.84 / +5.96 / -2.36 ns, `gl_test` passing (the first
+    green gate-level run); its precheck was superseded by the merge push.
