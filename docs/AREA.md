@@ -21,9 +21,20 @@ Hardening results from the GitHub `gds` workflow are appended below.
 | 2026-10-02 | 6e02d4b | whole design with capture and replay, macro black-boxed (add 28,127 um^2 for the macro) | 8,336 | 1,463 | 142,277 |
 | 2026-10-02 | 6e02d4b | whole design with capture and replay, program memory as flops | 24,559 | 5,575 | 450,369 |
 | 2026-10-02 | 6e02d4b | keyer_capture alone (rtl subagent's run) | 1,152 | 203 | 18,548 |
+| 2026-10-03 | 399a889 (`decode-onehot`) | whole design, macro black-boxed, registered one-hot thread select replicated per consumer | 8,182 | 1,470 | 141,004 |
+| 2026-10-03 | 399a889 (`decode-onehot`) | keyer_core alone, NTHREADS = 2 (before: 3,866 cells, 459 flops, 55,735 um^2 on `sram-macro`) | 3,872 | 466 | 55,576 |
 
 Capture and replay (D-024) cost 210 flops and 20,481 um^2; with the macro the
 design is 170,404 um^2, 18.9% of the core (limit for the feature: 25%).
+`decode-onehot` (D-028; equivalence with the `sram-macro` core proven on all
+776 points): 154 fewer cells, 7 more flops, 1,273 um^2 less. The register
+file is reached in 26 logic levels instead of 28 and its path no longer
+starts at the thread decode (`cyc[0]`) but at the instruction word; the
+link register and timer period drop from 27 levels to 9 and 7. Rough delay
+estimates for the register-file path at the typical corner (no STA tool
+locally): 13.9 ns to 11.3 ns with area mapping, 8.8 ns to 7.8 ns with delay
+mapping. Not hardened yet.
+
 The D-018 timer and timeouts cost 63 flops and about 7,600 um^2 over the
 pre-D-018 core; the whole logic sits at 28% of the placeable area with the
 macro (121,796 + 28,127 = 149,923 um^2 of 430,000). NTHREADS = 4 adds 441

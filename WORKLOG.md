@@ -200,3 +200,45 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
 - Session ends with D-026 OPEN (slow-corner setup, -0.59 ns): no clock or
   RTL change made; master pushed (its push starts a hardening run of the
   design with capture and replay); `sram-macro` kept local.
+
+## 2026-10-03, Claude Code session 3 (macro hardening, one-hot decode, host driver, datasheet)
+
+- D-026 resolved by Ahan (D-028): harden `sram-macro` now; Tiny Tapeout
+  signs off timing at the typical corner only (`TIMING_VIOLATION_CORNERS`
+  `*typ*`), so the slow-corner miss is tracked, not blocking. Branch pushed,
+  `gds` dispatched on it (run 37169889955).
+- The `check` workflow had failed on GitHub for the last master pushes: the
+  runner's apt z3 4.8 could not finish the pin-unit induction after the
+  replay port was added (killed after 4.5 minutes; one second with a current
+  z3). The workflow now installs z3 from pip; `check` and `test` pass on the
+  branch.
+- `decode-onehot` (branch from `sram-macro`, rtl subagent in its own git
+  worktree, commit 399a889, not pushed): four registered one-hot thread
+  selects (register file, timers, PC/flags, pins/FIFO strobes), AND-OR reads,
+  pre-decoded register write enables; no change to the cycle contract. Yosys
+  equivalence with the `sram-macro` core: 776 of 776 points proven. New
+  formal properties S1 (each copy one-hot and equal to the decode of `tid`)
+  and D1; 71 asserts by PDR in 3 s. Full check suite green, also after
+  merging the driver work in. Synthesis: 8,182 cells, 1,470 flops, 141,004
+  um^2 (154 cells and 1,273 um^2 fewer, 7 flops more); the register-file
+  path loses two logic levels and no longer starts at the thread decode.
+  The subagent also noted two faults the existing core properties would
+  miss but the equivalence check catches (a blocked timeout-form wait
+  writing C; START/STOP hitting its own thread): properties to add.
+- Host driver `tools/keyerhost.py`: one `KeyerHost` API over two transports
+  that share the same `BitBangSPI` (demo board under MicroPython; cocotb
+  testbench pads). Coroutines throughout, `run_sync()` on the board, a
+  command line that runs on the board and is forwarded from a PC through
+  mpremote, and `selftest_*` bodies that run unchanged on both. Tests: 9
+  pytest cases against a pin-level fake chip, 4 cocotb tests through the SPI
+  pads (self-tests alone and under the lockstep harness, UART loopback with
+  more data than a FIFO holds, the datasheet's capture-and-replay example).
+  The board transport has not run on hardware. Two things found on the way:
+  two files both named `test_keyerhost.py` made cocotb import the pytest one
+  (renamed the cocotb module `test_host.py`), and MISO is X for a cycle in
+  simulation after a read that empties a never-written FIFO (the pad
+  sampler now reads X as 0; the transport looks at the MISO bit only).
+- `docs/info.md` rewritten as the Keyer datasheet: deadline timer, timeout
+  forms, capture and replay, firmware table, and a "How to test" section
+  built on the driver. Its capture example had a wrong wait (thread 1 halts
+  twice); fixed, and the example now runs as a test.
