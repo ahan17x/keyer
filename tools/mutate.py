@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
 """Mutation testing of the Keyer RTL.
 
-    python3 tools/mutate.py list   [FILE ...]                 # the mutants, one per line
-    python3 tools/mutate.py run    [FILE ...] [-j N] [--only ID,...] [--rerun STATUS,...]
-    python3 tools/mutate.py report                            # refresh docs/mutation/summary.md
+    python3 tools/mutate.py list   [FILE ...]
+    python3 tools/mutate.py run    [FILE ...] [-j N] [--out F.jsonl] [--resume] [--sample N --seed S]
+                                   [--shard I/N] [--only ID,...] [--timeout SECONDS]
+    python3 tools/mutate.py report [F.jsonl ...] [--md FILE]
 
-Results: docs/mutation/results.tsv, one row per mutant (it is also the store a
-later run resumes from: only mutants without a row are run unless --rerun
-says otherwise), and docs/mutation/summary.md.
+A mutant is the design with one single-line fault. `run` first takes the
+unmutated design through every check (it must pass; the times order the
+checks), then for each mutant runs the checks fastest first and stops at the
+first one that fails: each cocotb test of test/ on its own, and the formal
+proof of the mutated module if it has one. One line of JSON per mutant is
+appended to the output file as it finishes (id, file, line, operator, status,
+killing check, wall time), so a stopped run continues with --resume.
 
-A mutant is the design with one single-line fault. For each one the tool
-compiles the design (a mutant that does not compile is `invalid` and leaves
-the count), runs the cocotb suite (test/) until the first failing test, and
-runs the formal proof of the mutated module if it has one (formal/). A mutant
-is `killed` if a cocotb test fails or a proof fails; otherwise it is checked
-against the original with Yosys: if every output and every register input is
-proven equivalent it is `equivalent`, as it is when tools/mutate_equivalents.md
-lists it with a reason; what is left has `survived`. The exit status of `run`
-is non-zero while any mutant survives.
+Status:
+  killed      a cocotb test reported a failure in its results.xml, or a proof
+              reported a counterexample. Nothing else is a kill: a k-induction
+              proof that merely stops closing (sby's UNKNOWN) is noted and
+              the remaining checks decide.
+  error       the mutant did not compile, a check timed out, wrote no
+              results.xml or died; reported separately, never counted as killed.
+  equivalent  no check failed and Yosys proved every output and register
+              input equal to the original's (module level, then the flattened
+              top), or tools/mutate_equivalents.md lists the id with a reason.
+  survived    no check failed and it is not known to be equivalent.
+`report` merges result files, prints the score (killed / (killed + survived)),
+the survivors and the errors, and exits non-zero while any of either remain.
 
 Mutation operators (all confined to one source line):
   op      operator swap: + -, & |, ^ -> |, && ||, == !=, the relational
@@ -33,9 +42,9 @@ Mutation operators (all confined to one source line):
 Not mutated: comments, `ifdef FORMAL blocks (the properties, not the design),
 `ifndef SYNTHESIS blocks (simulation-only initialisation), declarations up
 to their `=`, index and range expressions inside [ ], `for` headers and
-generate loops (elaboration structure), and the port-only macro stub src/RM_IHPSG13_1P_256x16_c2_bm_bist.v (simulation
-uses the vendored model, so nothing there is exercised). Code under
-`ifdef KEYER_IMEM_FLOPS is mutated and tested with that define set.
+generate loops (elaboration structure), and the port-only macro stub
+src/RM_IHPSG13_1P_256x16_c2_bm_bist.v (simulation uses the vendored model).
+Code under `ifdef KEYER_IMEM_FLOPS is mutated and tested with that define set.
 
 IDs are stable across edits that do not touch the mutated line: a hash of the
 file name, the text of the line, which copy of that text it is in the file,
@@ -47,16 +56,18 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
+import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
-OUT = os.path.join(ROOT, "docs", "mutation")
 WORK = os.path.join(ROOT, "test", "sim_build", "mutation")
 EQUIV_DOC = os.path.join(ROOT, "tools", "mutate_equivalents.md")
 STUB = "RM_IHPSG13_1P_256x16_c2_bm_bist.v"
@@ -72,15 +83,8 @@ FORMAL = {
     "keyer_capture.v": "capture", "keyer_isa.vh": "core",
 }
 
-# cocotb tests run first because they are short and kill most mutants.
-QUICK = ("test_id_and_registers|test_capture_registers|test_fifo_roundtrip_and_status"
-         "|test_lockstep_alu_and_branches|test_lockstep_pins_timer_delay"
-         "|test_lockstep_replay_host_waveform_and_loopback_capture|test_lockstep_random_programs")
-
 # Signals wider than one bit that are still enables, strobes, selects or
 # resets (one-bit signals all get the stuck-at mutants).
-REST = "^(?!.*(%s))" % QUICK            # every other test
-
 ENABLE_NAME = re.compile(
     r"(^|_)(we|re|en|ok|valid|push|pop|rst|rst_n|clear|clr|sel|hot|pre|pulse|busy|allowed)(\d*)($|_)"
     r"|^(x|c|xo|run)_")
@@ -427,51 +431,25 @@ def env_with_venv():
     return env
 
 
-def run_cmd(cmd, cwd, timeout, env=None, kill_on=None):
-    """Run cmd; returns (status, output) with status in ok / fail / timeout.
-    kill_on: a regex; the process is stopped at the first output line matching it."""
-    start = time.time()
+def run_cmd(cmd, cwd, timeout, env=None):
+    """Run cmd in its own process group; returns (status, output), status in
+    ok / fail / timeout / signal. The whole group is killed on a timeout."""
     env = dict(env or env_with_venv())
     env["PWD"] = cwd                    # test/Makefile builds its paths from $(PWD)
-    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, start_new_session=True, shell=isinstance(cmd, str))
-    lines, hit = [], None
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, start_new_session=True)
     try:
-        import selectors
-        sel = selectors.DefaultSelector()
-        sel.register(proc.stdout, selectors.EVENT_READ)
-        while True:
-            if time.time() - start > timeout:
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
-                return "timeout", "".join(lines)
-            if not sel.select(timeout=1.0):
-                if proc.poll() is not None:
-                    break
-                continue
-            line = proc.stdout.readline()
-            if not line:
-                if proc.poll() is not None:
-                    break
-                continue
-            lines.append(line)
-            if kill_on and hit is None:
-                m = kill_on.search(line)
-                if m:
-                    hit = m
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait()
-                    return "fail", "".join(lines)
-    finally:
+        out, _ = proc.communicate(timeout=max(1, timeout))
+    except subprocess.TimeoutExpired:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
-    proc.wait()
-    return ("ok" if proc.returncode == 0 else "fail"), "".join(lines)
-
-
-FAILED = re.compile(r"(?:^|\s)((?:test\w*)\.(?:test_\w+))\s+(?:failed|errored)|\*\*\s+((?:test\w*)\.(?:test_\w+))\s+(?:FAIL|ERROR)")
+        out, _ = proc.communicate()
+        return "timeout", out or ""
+    if proc.returncode < 0:
+        return "signal", out or ""
+    return ("ok" if proc.returncode == 0 else "fail"), out or ""
 
 
 def prepare(work, mt):
@@ -501,58 +479,99 @@ def compile_ok(work, define):
     return run_cmd(cmd, work, 120)
 
 
-def cocotb(work, define, test_filter, timeout):
+def read_results(path):
+    """results.xml -> {module.test: (verdict, seconds)}, verdict pass / fail / skip; None if unreadable."""
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    res = {}
+    for tc in root.iter("testcase"):
+        name = "%s.%s" % (tc.get("classname"), tc.get("name"))
+        if tc.find("failure") is not None or tc.find("error") is not None:
+            verdict = "fail"
+        elif tc.find("skipped") is not None:
+            verdict = "skip"
+        else:
+            verdict = "pass"
+        res[name] = (verdict, float(tc.get("time") or 0))
+    return res
+
+
+def cocotb(work, define, test, timeout):
+    """Run the cocotb suite (test None) or one test ('module.name'). Returns
+    (verdict, detail): pass / fail (a test reported a failure) / error."""
+    xml = os.path.join(work, "results.xml")
+    if os.path.exists(xml):
+        os.remove(xml)
     cmd = ["make", "SRC_DIR=" + os.path.join(work, "src"), "SIM_BUILD=" + os.path.join(work, "sim_build"),
-           "COCOTB_RESULTS_FILE=" + os.path.join(work, "results.xml")]
-    if test_filter:
-        # cocotb's Makefile puts the value on a shell command line unquoted
-        cmd.append("COCOTB_TEST_FILTER='%s'" % test_filter)
+           "COCOTB_RESULTS_FILE=" + xml]
+    if test:
+        module, name = test.split(".")
+        # cocotb's Makefile puts the filter on a shell command line unquoted; $$ is make's $
+        cmd += ["COCOTB_TEST_MODULES=" + module, "COCOTB_TEST_FILTER='%s$$'" % name]
     env = env_with_venv()
     if define:
         env["COMPILE_ARGS"] = "-D" + define
-    status, out = run_cmd(cmd, os.path.join(ROOT, "test"), timeout, env=env, kill_on=FAILED)
-    m = FAILED.search(out)
-    if m:
-        return "killed", (m.group(1) or m.group(2))
-    if status == "timeout":
-        return "timeout", "cocotb"
-    if status != "ok" or "FAIL=0" not in out:
-        return "error", out[-2000:]
-    return "pass", ""
+    status, out = run_cmd(cmd, os.path.join(ROOT, "test"), timeout, env=env)
+    if status in ("timeout", "signal"):
+        return "error", status
+    res = read_results(xml)
+    if res is None:
+        return "error", "no results.xml"
+    ran = {k: v for k, v in res.items() if v[0] != "skip"}
+    if test and test not in ran:
+        return "error", "the test did not run"
+    failed = [k for k, v in ran.items() if v[0] == "fail"]
+    if failed:
+        return "fail", failed[0]
+    return ("pass", res) if ran else ("error", "no test ran")
 
 
 def formal(work, group, timeout):
+    """pass / fail (a counterexample) / error."""
     fdir = os.path.join(work, "formal")
     if group == "core":
         status, out = run_cmd(["sh", "./run_core_pdr.sh"], fdir, timeout)
+        if status in ("timeout", "signal"):
+            return "error", status
         if "Property proved" in out:
             return "pass", ""
-        if status == "timeout":
-            return "timeout", "formal core"
-        if "failed" in out or "was asserted" in out:
-            return "killed", "formal: core"
-        return "error", out[-2000:]
+        if re.search(r"Output \d+ of miter .* was asserted|Property failed|was asserted in frame", out):
+            return "fail", "formal:core"
+        return "error", "proof did not run: " + out.strip()[-120:]
     status, out = run_cmd(["yowasp-sby", "-f", group + ".sby"], fdir, timeout)
+    if status in ("timeout", "signal"):
+        return "error", status
     done = re.findall(r"DONE \((\w+)", out)
     want = {"fifo": 2, "pins": 1, "capture": 2}[group]
-    if status == "timeout":
-        return "timeout", "formal " + group
     if len(done) == want and all(d == "PASS" for d in done):
         return "pass", ""
-    if any(d == "FAIL" for d in done):
-        return "killed", "formal: " + group
-    return "error", out[-2000:]
+    if "FAIL" in done:
+        return "fail", "formal:" + group
+    if done and set(done) <= {"PASS", "UNKNOWN"}:
+        return "inconclusive", "induction did not close"     # no counterexample from reset: not a kill
+    return "error", "proof did not run: " + " ".join(done)
 
 
+# Only state (flop outputs) and ports are matched between the two sides:
+# internal wire names are hidden first, so a fault on a signal nothing
+# observable depends on does not leave an unprovable point.
 EQUIV_YS = """
 read_verilog {defs} -I{gold} {gold_files}
 hierarchy -top {top}
 proc; flatten; memory_map; opt_clean
+select -set keep x:* t:$*dff* %co:+[Q] w:* %i %u
+rename -hide w:* @keep %d
+opt_clean
 rename {top} gold
 design -stash gold
 read_verilog {defs} -I{gate} {gate_files}
 hierarchy -top {top}
 proc; flatten; memory_map; opt_clean
+select -set keep x:* t:$*dff* %co:+[Q] w:* %i %u
+rename -hide w:* @keep %d
+opt_clean
 rename {top} gate
 design -stash gate
 design -copy-from gold -as gold gold
@@ -622,110 +641,107 @@ def documented_equivalents():
     return ids
 
 
-def run_one(mt, args, base):
-    work = os.path.join(WORK, mt["id"])
-    rec = dict(mt)
-    t0 = time.time()
-    try:
-        prepare(work, mt)
-        status, out = compile_ok(work, mt["define"])
-        if status != "ok":
-            rec.update(status="invalid", cocotb="-", formal="-", note=out.strip().split("\n")[0][:200])
-            return rec
-        # cocotb: the short tests first, then the whole suite, stopping at the first failure
-        c, who = cocotb(work, mt["define"], QUICK, base["quick"] * 4 + 120)
-        if c == "pass":
-            c, who = cocotb(work, mt["define"], REST, base["rest"] * 4 + 300)
-        rec["cocotb"] = {"pass": "survived", "killed": who, "timeout": "timeout", "error": "error"}[c]
-        if c == "error":
-            rec["note"] = who[-300:]
-        # the proof of the mutated module, independently of the simulation result
-        group = FORMAL.get(mt["file"])
-        if group and not (args.no_formal_if_killed and c == "killed"):
-            f, what = formal(work, group, base.get("formal_" + group, 60) * 4 + 240)
-            rec["formal"] = {"pass": "survived", "killed": "killed", "timeout": "timeout", "error": "error"}[f]
-            if f == "error":
-                rec["note"] = (rec.get("note", "") + " | formal: " + what)[-300:]
-        else:
-            rec["formal"] = "-"
-        killed = c in ("killed", "timeout") or rec["formal"] in ("killed", "timeout")
-        if killed:
-            rec["status"] = "killed"
-        elif "error" in (rec["cocotb"], rec["formal"]):
-            rec["status"] = "error"
-        else:
-            level = yosys_equiv(work, mt)
-            rec["status"] = "equivalent" if level else "survived"
-            if level:
-                rec["note"] = "proved by Yosys at the %s level" % level
-        return rec
-    finally:
-        rec["seconds"] = round(time.time() - t0, 1)
-        rec["before"], rec["after"] = rec["before"].strip(), rec["after"] or "(removed)"
-        if not args.keep and rec.get("status") not in ("error",):
-            shutil.rmtree(work, ignore_errors=True)
-
-
-def baseline(args):
-    """The unmutated design through every stage: it must pass, and the times
-    set the per-mutant timeouts."""
+def baseline(configs, groups):
+    """The unmutated design through every check. Everything must pass; the
+    times decide the order of the checks and the default timeout."""
     work = os.path.join(WORK, "baseline")
-    base = {}
-    for define in (None, "KEYER_IMEM_FLOPS"):
+    base = {"tests": {}, "formal": {}}
+    for define in configs:
         prepare(work, None)
         status, out = compile_ok(work, define)
-        assert status == "ok", "baseline does not compile:\n" + out
+        assert status == "ok", "the unmutated design does not compile:\n" + out
+        verdict, res = cocotb(work, define, None, 3600)
+        assert verdict == "pass", "the unmutated design fails the cocotb suite (%s): %s" % (define, res)
+        base["tests"][define or ""] = {k: v[1] for k, v in res.items() if v[0] == "pass"}
+        print("baseline%s: %d cocotb tests, %.0f s" % (" with " + define if define else "", len(base["tests"][define or ""]),
+                                                      sum(base["tests"][define or ""].values())), flush=True)
+    for group in groups:
         t = time.time()
-        c, who = cocotb(work, define, QUICK, 900)
-        assert c == "pass", "baseline fails the short tests (%s): %s" % (define, who)
-        q = time.time() - t
-        t = time.time()
-        c, who = cocotb(work, define, REST, 3600)
-        assert c == "pass", "baseline fails the suite (%s): %s" % (define, who)
-        r = time.time() - t
-        if define is None:
-            base["quick"], base["rest"] = q, r
-        print("baseline%s: short tests %.0f s, rest of the suite %.0f s" % (" with " + define if define else "", q, r), flush=True)
-    for group in sorted(set(FORMAL.values())):
-        t = time.time()
-        f, what = formal(work, group, 1800)
-        assert f == "pass", "baseline proof %s does not pass: %s" % (group, what)
-        base["formal_" + group] = time.time() - t
-        print("baseline: formal %s %.0f s" % (group, base["formal_" + group]), flush=True)
+        verdict, what = formal(work, group, 1800)
+        assert verdict == "pass", "the proof %s does not pass on the unmutated design: %s" % (group, what)
+        base["formal"][group] = time.time() - t
+        print("baseline: formal %s %.0f s" % (group, base["formal"][group]), flush=True)
     shutil.rmtree(work, ignore_errors=True)
     return base
 
 
-COLUMNS = ("id", "file", "line", "col", "op", "before", "after", "status", "cocotb", "formal", "note")
-HEADER = "id\tfile\tline\tcol\toperator\tbefore\tafter\tstatus\tcocotb (first failing test)\tformal\tnote"
-RESULTS = os.path.join(OUT, "results.tsv")
+def run_one(mt, args, base):
+    work = os.path.join(WORK, mt["id"])
+    rec = dict(id=mt["id"], file=mt["file"], line=mt["line"], op=mt["op"], before=mt["before"].strip(),
+               after=mt["after"] or "(removed)", status="error", killed_by="", note="")
+    t0 = time.time()
+    tests = base["tests"][mt["define"] or ""]
+    checks = [(sec, "cocotb", name) for name, sec in tests.items()]
+    group = FORMAL.get(mt["file"])
+    if group:
+        checks.append((base["formal"][group], "formal", group))
+    checks.sort()
+    limit = args.timeout or 4 * sum(c[0] for c in checks) + 300
+    inconclusive = ""
+    try:
+        prepare(work, mt)
+        status, out = compile_ok(work, mt["define"])
+        if status != "ok":
+            rec["note"] = "does not compile: " + (out.strip().split("\n") or [""])[0][:160]
+            return rec
+        for _, kind, name in checks:
+            left = limit - (time.time() - t0)
+            if left <= 0:
+                rec["note"] = "timeout after %d s" % limit
+                return rec
+            verdict, detail = cocotb(work, mt["define"], name, left) if kind == "cocotb" else formal(work, name, left)
+            if verdict == "fail":
+                rec["status"], rec["killed_by"] = "killed", (name if kind == "cocotb" else "formal:" + name)
+                return rec
+            if verdict == "error":
+                rec["note"] = "%s %s: %s" % (kind, name, detail)
+                return rec
+            if verdict == "inconclusive":
+                inconclusive = "the %s proof no longer closes (no counterexample); " % name
+        level = None if args.no_equiv else yosys_equiv(work, mt)
+        rec["status"] = "equivalent" if level else "survived"
+        rec["note"] = inconclusive + ("proved by Yosys at the %s level" % level if level else "")
+        return rec
+    except Exception as e:                           # a harness fault is an error, never a kill
+        rec["status"], rec["note"] = "error", "harness: %r" % (e,)
+        return rec
+    finally:
+        rec["seconds"] = round(time.time() - t0, 1)
+        if not args.keep:
+            shutil.rmtree(work, ignore_errors=True)
 
 
-def load_results():
-    """docs/mutation/results.tsv is both the report and the store a later run resumes from."""
+def read_jsonl(paths):
     res = {}
-    if os.path.exists(RESULTS):
-        for line in open(RESULTS).read().split("\n")[1:]:
-            if line:
-                rec = dict(zip(COLUMNS, line.split("\t")))
-                rec["line"], rec["col"] = int(rec["line"]), int(rec["col"])
-                res[rec["id"]] = rec
+    for p in paths:
+        if os.path.exists(p):
+            for line in open(p):
+                line = line.strip()
+                if line:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue                     # a line cut off by a kill
+                    res[r["id"]] = r
     return res
 
 
-def save_results(res, order=None):
-    os.makedirs(OUT, exist_ok=True)
-    order = order or {}
-    rows = sorted(res.values(), key=lambda r: (order.get(r["id"], 1 << 30), r["id"]))
-    with open(RESULTS + ".tmp", "w") as f:
-        f.write(HEADER + "\n")
-        for r in rows:
-            f.write("\t".join(str(r.get(c, "")).replace("\t", " ").replace("\n", " ") for c in COLUMNS) + "\n")
-    os.replace(RESULTS + ".tmp", RESULTS)
+def select(args):
+    mutants = all_mutants(args.files or DEFAULT_FILES)
+    if args.only:
+        want = set(args.only.split(","))
+        return [m for m in mutants if m["id"] in want]
+    if args.sample:
+        mutants = sorted(random.Random(args.seed).sample(mutants, min(args.sample, len(mutants))),
+                         key=lambda m: (m["file"], m["line"], m["col"]))
+    if args.shard:
+        i, n = (int(x) for x in args.shard.split("/"))
+        mutants = [m for k, m in enumerate(mutants) if k % n == i]
+    return mutants
 
 
 def cmd_list(args):
-    for mt in all_mutants(args.files or DEFAULT_FILES):
+    for mt in select(args):
         print("%-18s %s:%d:%d  %-5s  %s  ->  %s%s" % (mt["id"], mt["file"], mt["line"], mt["col"], mt["op"],
                                                     mt["before"].strip() or "(nothing)", mt["after"] or "(removed)",
                                                     "  [%s]" % mt["define"] if mt["define"] else ""))
@@ -733,127 +749,107 @@ def cmd_list(args):
 
 
 def cmd_run(args):
-    mutants = all_mutants(args.files or DEFAULT_FILES)
-    results = load_results()
-    order = {mt["id"]: i for i, mt in enumerate(all_mutants(DEFAULT_FILES))}
-    for stale in [k for k in results if k not in order]:
-        del results[stale]                         # the line it mutated has changed or gone
-    if args.only:
-        want = set(args.only.split(","))
-        todo = [mt for mt in mutants if mt["id"] in want]
-    elif args.rerun:
-        want = set(args.rerun.split(","))
-        todo = [mt for mt in mutants if mt["id"] not in results or results[mt["id"]]["status"] in want or "all" in want]
+    todo = select(args)
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+    if args.resume:
+        done_ids = {k for k, r in read_jsonl([args.out]).items() if not (args.retry_errors and r["status"] == "error")}
+        todo = [m for m in todo if m["id"] not in done_ids]
+        print("resuming: %d results already in %s" % (len(done_ids), args.out), flush=True)
     else:
-        todo = [mt for mt in mutants if mt["id"] not in results]
-    print("%d mutants, %d to run, %d workers" % (len(mutants), len(todo), args.jobs), flush=True)
+        open(args.out, "w").close()
+    print("%d mutants to run, %d workers" % (len(todo), args.jobs), flush=True)
     if not todo:
-        return cmd_report(args)
+        return 0
     os.makedirs(WORK, exist_ok=True)
+    configs = sorted({m["define"] for m in todo}, key=lambda d: d or "")
+    groups = sorted({FORMAL[m["file"]] for m in todo if m["file"] in FORMAL})
     bfile = os.path.join(WORK, "baseline.json")
-    if args.reuse_baseline and os.path.exists(bfile):
-        base = json.load(open(bfile))
-    else:
-        base = baseline(args)
+    base = json.load(open(bfile)) if args.reuse_baseline and os.path.exists(bfile) else None
+    if base is None or any((c or "") not in base["tests"] for c in configs) or any(g not in base["formal"] for g in groups):
+        base = baseline(configs, groups)
         json.dump(base, open(bfile, "w"))
-    done = 0
+    lock, n, t0 = threading.Lock(), [0], time.time()
+
+    def work(mt):
+        rec = run_one(mt, args, base)
+        with lock, open(args.out, "a") as f:
+            f.write(json.dumps(rec, sort_keys=True) + "\n")
+            n[0] += 1
+            print("[%d/%d] %-18s %-10s %-45s %5.0f s  %s" % (n[0], len(todo), rec["id"], rec["status"], rec["killed_by"],
+                                                           rec["seconds"], rec["note"]), flush=True)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(run_one, mt, args, base): mt for mt in todo}
-        for fut in concurrent.futures.as_completed(futures):
-            rec = fut.result()
-            results[rec["id"]] = rec
-            done += 1
-            print("[%d/%d] %-18s %-10s cocotb=%s formal=%s (%.0f s)" % (
-                done, len(todo), rec["id"], rec["status"], rec.get("cocotb"), rec.get("formal"), rec["seconds"]), flush=True)
-            if done % 10 == 0:
-                save_results(results, order)
-    save_results(results, order)
-    return cmd_report(args)
+        list(pool.map(work, todo))
+    print("wall time %.0f s for %d mutants with %d workers" % (time.time() - t0, len(todo), args.jobs))
+    return 0
 
 
 def cmd_report(args):
-    results = load_results()
+    rows = list(read_jsonl(args.results or [DEFAULT_OUT]).values())
     doc = documented_equivalents()
-    order = {mt["id"]: i for i, mt in enumerate(all_mutants(DEFAULT_FILES))}
-    rows = sorted((r for r in results.values() if r["id"] in order), key=lambda r: order[r["id"]])
     for r in rows:
         if r["status"] == "survived" and r["id"] in doc:
             r["status"], r["note"] = "equivalent", "tools/mutate_equivalents.md"
-        elif r["status"] == "equivalent" and r.get("note") == "tools/mutate_equivalents.md" and r["id"] not in doc:
-            r["status"], r["note"] = "survived", ""
-    save_results({r["id"]: r for r in rows}, order)
-    files = []
-    for r in rows:
-        if r["file"] not in files:
-            files.append(r["file"])
-    lines = ["| File | Mutants | Invalid | Killed | by cocotb | by a proof | by both | Equivalent | Survived | Score |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
-
-    def by_cocotb(r):
-        return r.get("cocotb") not in ("survived", "-", "", None, "error")
-
-    def by_proof(r):
-        return r.get("formal") in ("killed", "timeout")
+    rows.sort(key=lambda r: (r["file"], r["line"], r["id"]))
 
     def stat(sel):
-        n = len(sel)
-        inv = sum(r["status"] == "invalid" for r in sel)
-        killed = [r for r in sel if r["status"] == "killed"]
-        kc = sum(by_cocotb(r) for r in killed)
-        kf = sum(by_proof(r) for r in killed)
-        kb = sum(by_cocotb(r) and by_proof(r) for r in killed)
-        eq = sum(r["status"] == "equivalent" for r in sel)
-        sv = sum(r["status"] in ("survived", "error") for r in sel)
-        denom = n - inv - eq
-        score = "%.1f%%" % (100.0 * len(killed) / denom) if denom else "n/a"
-        return [n, inv, len(killed), kc, kf, kb, eq, sv, score]
+        c = {k: sum(r["status"] == k for r in sel) for k in ("killed", "survived", "equivalent", "error")}
+        denom = c["killed"] + c["survived"]
+        return [len(sel), c["killed"], c["survived"], c["equivalent"], c["error"],
+                "%.1f%%" % (100.0 * c["killed"] / denom) if denom else "n/a"]
 
-    for fn in files:
-        lines.append("| `%s` | %s |" % (fn, " | ".join(str(x) for x in stat([r for r in rows if r["file"] == fn]))))
-    lines.append("| **all** | %s |" % " | ".join("**%s**" % x for x in stat(rows)))
-    byop = ["| Operator | Mutants | Invalid | Killed | Equivalent | Survived |", "|---|---|---|---|---|---|"]
+    out = ["| File | Mutants | Killed | Survived | Equivalent | Error | Score |", "|---|---|---|---|---|---|---|"]
+    for fn in sorted({r["file"] for r in rows}):
+        out.append("| `%s` | %s |" % (fn, " | ".join(str(x) for x in stat([r for r in rows if r["file"] == fn]))))
+    out.append("| **all** | %s |" % " | ".join("**%s**" % x for x in stat(rows)))
+    out += ["", "| Operator | Mutants | Killed | Survived | Equivalent | Error | Score |", "|---|---|---|---|---|---|---|"]
     for op in ("op", "neg", "const", "cond", "stuck"):
-        s = stat([r for r in rows if r["op"] == op])
-        byop.append("| %s | %d | %d | %d | %d | %d |" % (op, s[0], s[1], s[2], s[6], s[7]))
-    proofs = ["| Proof | Mutants of the file | Killed by the proof | of those, not killed by any cocotb test |", "|---|---|---|---|"]
-    for fn, group in FORMAL.items():
-        sel = [r for r in rows if r["file"] == fn and r["status"] != "invalid"]
-        proofs.append("| %s (`%s`) | %d | %d | %d |" % (group, fn, len(sel), sum(by_proof(r) for r in sel),
-                                                      sum(by_proof(r) and not by_cocotb(r) for r in sel)))
-    tests = {}
+        out.append("| %s | %s |" % (op, " | ".join(str(x) for x in stat([r for r in rows if r["op"] == op]))))
+    by = {}
     for r in rows:
-        if r["status"] == "killed" and by_cocotb(r):
-            tests[r["cocotb"]] = tests.get(r["cocotb"], 0) + 1
-    first = ["| First failing cocotb test | Mutants |", "|---|---|"]
-    first += ["| `%s` | %d |" % kv for kv in sorted(tests.items(), key=lambda kv: -kv[1])]
-    summary = "\n\n".join("\n".join(t) for t in (lines, byop, proofs, first)) + "\n"
-    open(os.path.join(OUT, "summary.md"), "w").write(summary)
-    print(summary)
+        if r["status"] == "killed":
+            by[r["killed_by"]] = by.get(r["killed_by"], 0) + 1
+    out += ["", "| Killing check (the fastest that fails) | Mutants |", "|---|---|"]
+    out += ["| `%s` | %d |" % kv for kv in sorted(by.items(), key=lambda kv: -kv[1])]
+    secs = [r.get("seconds", 0) for r in rows]
+    out += ["", "%d mutants, %.0f s of checks in total, %.1f s per mutant on average (max %.0f s)." % (
+        len(rows), sum(secs), sum(secs) / max(1, len(secs)), max(secs or [0]))]
     left = [r for r in rows if r["status"] in ("survived", "error")]
-    for r in left:
-        print("%s %-18s %s:%d  %s -> %s" % (r["status"].upper(), r["id"], r["file"], r["line"], r["before"], r["after"]))
-    missing = len(order) - len(rows)
-    if missing:
-        print("%d mutants have not been run" % missing)
-    return 1 if left or missing else 0
+    if left:
+        out += ["", "| Status | Id | Where | Mutation | Note |", "|---|---|---|---|---|"]
+        out += ["| %s | `%s` | `%s:%d` | `%s` -> `%s` | %s |" % (r["status"], r["id"], r["file"], r["line"], r["before"].replace("|", "\\|"),
+                                                              r["after"].replace("|", "\\|"), r["note"]) for r in left]
+    text = "\n".join(out) + "\n"
+    print(text)
+    if args.md:
+        open(args.md, "w").write(text)
+    return 1 if left else 0
+
+
+DEFAULT_OUT = os.path.join(WORK, "results.jsonl")
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("list")
-    p.add_argument("files", nargs="*")
-    p = sub.add_parser("run")
-    p.add_argument("files", nargs="*")
-    p.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 2))
-    p.add_argument("--only", help="comma-separated mutant ids")
-    p.add_argument("--rerun", help="also rerun mutants whose last status is one of these (e.g. survived,error; all = every mutant)")
+    for name in ("list", "run"):
+        p = sub.add_parser(name)
+        p.add_argument("files", nargs="*")
+        p.add_argument("--only", help="comma-separated mutant ids")
+        p.add_argument("--sample", type=int, help="a random subset of this many mutants")
+        p.add_argument("--seed", type=int, default=1, help="seed of --sample (default 1)")
+        p.add_argument("--shard", help="I/N: every N-th mutant starting at the I-th (0-based)")
+    p.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    p.add_argument("--out", default=DEFAULT_OUT, help="JSONL result file (default test/sim_build/mutation/results.jsonl)")
+    p.add_argument("--resume", action="store_true", help="keep the results already in --out and run only the others")
+    p.add_argument("--retry-errors", action="store_true", help="with --resume: run the mutants whose result is an error again")
+    p.add_argument("--timeout", type=float, help="seconds allowed per mutant (default: 4 x the unmutated run + 300)")
     p.add_argument("--keep", action="store_true", help="keep the scratch directory of every mutant")
-    p.add_argument("--reuse-baseline", action="store_true",
-                   help="skip the run of the unmutated design and reuse its recorded times (only right after a run that did it)")
-    p.add_argument("--no-formal-if-killed", action="store_true",
-                   help="skip the proof for mutants a cocotb test already killed (faster; the report then cannot say what the proofs alone catch)")
-    sub.add_parser("report")
+    p.add_argument("--no-equiv", action="store_true", help="skip the Yosys equivalence check of mutants nothing kills")
+    p.add_argument("--reuse-baseline", action="store_true", help="reuse the recorded run of the unmutated design")
+    p = sub.add_parser("report")
+    p.add_argument("results", nargs="*")
+    p.add_argument("--md", help="also write the report to this file")
     args = ap.parse_args(argv)
     return {"list": cmd_list, "run": cmd_run, "report": cmd_report}[args.cmd](args)
 

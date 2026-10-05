@@ -1,0 +1,73 @@
+# Mutation testing of the RTL (tools/mutate.py). Started by hand only, from
+# the Actions tab: it takes hours of runner time and is never run on a push.
+# Each shard runs its slice of the mutants and uploads one JSON line per
+# mutant; the last job merges them, prints the score and lists the survivors
+# and the errors in the run summary.
+#
+# Shards: about 1,500 mutants, on average under a minute each on a runner
+# with 4 workers; 16 shards keep every job far inside GitHub's 6 h limit.
+# The input can lower the count for a quick look (`sample`) or restrict the
+# run to some files.
+name: mutation
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "Run only a random sample of this many mutants (0 = all)"
+        default: "0"
+      seed:
+        description: "Seed of the sample"
+        default: "1"
+      files:
+        description: "Files to mutate (space separated, empty = all of src/)"
+        default: ""
+
+jobs:
+  shard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y iverilog yosys
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install pytest cocotb yowasp-yosys z3-solver
+      - name: run the shard
+        run: |
+          SAMPLE=""
+          if [ "${{ inputs.sample }}" != "0" ]; then SAMPLE="--sample ${{ inputs.sample }} --seed ${{ inputs.seed }}"; fi
+          python3 tools/mutate.py run ${{ inputs.files }} $SAMPLE --shard ${{ matrix.shard }}/16 \
+            -j 4 --out mutation-${{ matrix.shard }}.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-${{ matrix.shard }}
+          path: mutation-${{ matrix.shard }}.jsonl
+
+  report:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mutation-*
+          merge-multiple: true
+          path: results
+      - name: merge, score, survivors
+        run: |
+          cat results/mutation-*.jsonl > mutation.jsonl
+          python3 tools/mutate.py report mutation.jsonl --md mutation.md || true
+          cat mutation.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutation-merged
+          path: |
+            mutation.jsonl
+            mutation.md
