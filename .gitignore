@@ -24,3 +24,4 @@ formal/capture_*/
 test/gate_level_netlist.v
 .claude/worktrees/
 fpga/alhambra2/build/
+test/ser_unit/build/
