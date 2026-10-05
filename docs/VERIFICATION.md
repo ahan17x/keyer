@@ -19,13 +19,13 @@ each other.
 | # | Layer | What it compares | Size | Command |
 |---|---|---|---|---|
 | 1 | Lint and compile | the RTL against the language rules | Verilator `-Wall`, Icarus `-g2005`, header freshness | `bash scripts/check_all.sh quick` |
-| 2 | Model tests | the golden model, the assembler and the encoding table against SEMANTICS and isa.md | 472 pytest cases (119 on the model, the serializer scenarios and the host driver, 6 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
+| 2 | Model tests | the golden model, the assembler and the encoding table against SEMANTICS and isa.md | 473 pytest cases (120 on the model, the serializer scenarios and the host driver, 6 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
 | 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 313 pytest cases; 10 cases of published and hand-built vectors against the USB and Ethernet models | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py tools/test_protomodels.py -q` |
-| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 74 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
+| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 75 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
 | 5 | Formal | the RTL against properties stated from SEMANTICS, for all inputs | FIFO, pin unit, core (timer, control, thread select), capture and replay, serializer (stuffing, CRC, round trip) | `cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh && yowasp-sby -f capture.sby && yowasp-sby --yosys yowasp-yosys -f ser.sby` |
 | 6 | Equivalence | a restructured core against the core it replaces | every flop input and output bit | `bash formal/equiv_core.sh GIT_REF` |
 | 7 | Gate level | the hardened netlist (and the FPGA netlist) against the pads-only tests | the 13 pads-only tests (10 in the runs logged so far, which predate three of them) | `gl_test` job of the `gds` workflow; `bash fpga/alhambra2/sim.sh` |
-| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 1,542 mutants on GitHub (2026-10-05, before the serializer); every survivor processed | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4` |
+| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 2,118 mutants on GitHub (2026-10-05, the design with the serializer, D-038 and D-039); every survivor processed: 2,021 killed, 97 equivalent | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4` |
 | 9 | Static firmware timing | every `WAITD` of every program against the slots the program can spend before it, on all paths | 38 `WAITD` sites in 12 programs | `python3 tools/keyerasm.py fw/NAME.s --check-timing` |
 
 ### 1. Lint and compile
@@ -322,9 +322,6 @@ by `A_BIST_EN = 0` in the macro's own netlist. One documented equivalent
 from the sample, `host-c6659575`, held only if CS_n is high when reset is
 released; SEMANTICS 10.1 now requires that (D-038, BUGS 48).
 
-Not yet mutated: `src/keyer_ser.v` and the lines the serializer changed in
-the core, the pin unit and the top (the campaign ran on the design before
-the merge). `keyer_ser.v` is in the tool's target list with its proof.
 
 Which check kills first (the fastest failing check, so slow tests are
 under-represented):
@@ -356,6 +353,41 @@ under-represented):
 | `test_corners.test_miso_is_low_outside_a_transaction` | 1 |
 | `test_ps2_host.test_lockstep_ps2_host` | 1 |
 | `test_spi_slave.test_lockstep_spi_slave_filler_and_foreign_traffic` | 1 |
+
+**Full campaign of 2026-10-05, second run** (GitHub run 37339747331, 16
+shards, 2 h 11 min, on branch `d039` at 103b52d, the commit that
+became master: the design with the serializer, D-038 and D-039; rows in
+`docs/mutation_full.jsonl`, which this run replaces). 2,118 mutants: the
+1,541 of the first campaign that still exist, every one with the verdict
+it had, and 577 new ones (499 in `keyer_ser.v`, 40 in the core, 18 in the
+pin unit, 10 each in the header and the top). As the runners reported it:
+
+| File | Mutants | Killed | Equivalent (Yosys) | Documented equivalent | Not killed | Error |
+|---|---|---|---|---|---|---|
+| `keyer_capture.v` | 357 | 348 | 4 | 5 | 0 | 0 |
+| `keyer_core.v` | 466 | 453 | 12 | 1 | 0 | 0 |
+| `keyer_fifo.v` | 35 | 35 | 0 | 0 | 0 | 0 |
+| `keyer_host.v` | 357 | 324 | 3 | 30 | 0 | 0 |
+| `keyer_imem.v` | 15 | 8 | 0 | 7 | 0 | 0 |
+| `keyer_isa.vh` | 107 | 95 | 12 | 0 | 0 | 0 |
+| `keyer_pins.v` | 194 | 181 | 6 | 5 | 2 | 0 |
+| `keyer_ser.v` | 499 | 488 | 4 | 0 | 5 | 2 |
+| `tt_um_ahan17x_keyer.v` | 88 | 82 | 4 | 2 | 0 | 0 |
+| **all** | **2,118** | **2,014** | **45** | **50** | **7** | **2** |
+
+The nine open ones, by the rule of D-031 (each re-run locally afterwards):
+
+| Mutant | What it changes | Outcome |
+|---|---|---|
+| `pins-1f01193d`, `pins-6aebafec` | a pin command on pin 8 (`ui0`) is taken for `uio0` | killed by three lines added to `test_lockstep_pin_modes_and_reserved_pins`. The first campaign had them killed by the random-program test alone; the serializer changed what that seed generates. A kill that rests on a random program is luck: the directed lines are the test |
+| `ser-91be2d9b`, `ser-aa3e5967`, `ser-3ec99bb2` | `rx_drop` set only when a byte and a frame end are both untaken, or only when a `SERRX` completes | killed by the new `test_lockstep_ser_drop_of_a_frame_end_alone` |
+| `ser-0ee4765b`, `ser-868ac465` | `rx_drop` set although a `SERRX` takes the item in the cycle of the frame start; cleared by a `SERRX` that returns a byte | killed by the new formal property S6 (`formal/ser_stuff_props.sv`): `rx_drop` as a function of the previous cycle's ports, proved unbounded. No firmware test puts a `SERRX` in the exact cycle of a frame start |
+| `ser-4ecb1f42`, `ser-6c7f8fd9` | default values of `e_b` and `bit_d`, read only when their strobe is set | the runner's serializer proof timed out on them; locally Yosys proves both equivalent at the module level |
+
+**Score: 2,021 killed, 97 equivalent (47 by Yosys, 50 documented), 0
+errors, 0 survivors: 2,021 of 2,021 non-equivalent mutants.** No RTL or
+model fault was found; the campaign found two holes in the suite (the pin
+8 boundary and the same-cycle cases of `rx_drop`) and both are closed.
 
 Would miss: faults the operators do not make (two-line faults, timing,
 anything inside the macro); code under `KEYER_IMEM_FLOPS` is tested with
@@ -432,5 +464,3 @@ are assembled with: a smaller divider needs its own run (`-D NAME=VALUE`).
 - USB and 10BASE-T are checked against protocol models only: no USB host,
   hub, PHY or link partner has seen these waveforms, and the electrical
   layer (levels, edge rates, the transformer) is outside the simulation.
-- The serializer and the lines it changed elsewhere have not been through
-  mutation testing yet.

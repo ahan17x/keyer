@@ -113,7 +113,8 @@ async def test_lockstep_pin_modes_and_reserved_pins(dut):
     Kills pins-983c45a8, pins-455f94c1 (OEN), pins-8d8945d2, pins-1849ef72
     (OEF), pins-84e03b92 (open-drain pinwrite), pins-4c33f4c6 (OD),
     pins-64cccf68, pins-ff23e1f7, pins-0fc6aa13, pins-a0a64703,
-    pins-900fcd0c (PP), pins-96a9f093 (PINMODE), core-ddbd449f (level of
+    pins-900fcd0c (PP), pins-96a9f093 (PINMODE), pins-1f01193d and
+    pins-6aebafec (pin 8 taken for a uio pin), core-ddbd449f (level of
     pin 24), core-f7cb0614 (level2 of pin 24)."""
     words, syms = asm("""
             oen   uio1
@@ -132,6 +133,9 @@ async def test_lockstep_pin_modes_and_reserved_pins(dut):
             pp    uio0          ; only bit 0 cleared
             pp    ui3           ; pins >= 8: no effect
             oen   ui3
+            oen   ui0           ; pin 8, the first above the uio range: not uio0
+            set   ui0
+            od    ui0
             oef   uo2
             od    uo3
             set   uo0           ; uo0, uo1 belong to the host interface: no effect

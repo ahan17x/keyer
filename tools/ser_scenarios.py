@@ -267,14 +267,15 @@ def nrzi_rx(T=8, k=0, gap=6):
     return words, [drv], 30 + len(syms) * T + 200, check, drv
 
 
-def drop_then_abort(T=8, k=0):
+def drop_then_abort(T=8, k=0, take=0):
     """DECISIONS D-039 in one program. Two frames arrive while firmware
     sleeps: the second frame's start discards the first frame's untaken
     byte and frame end and sets the sticky bit 10, the first SERST returns
     it and clears it, the second no longer shows it. Then a frame is
     aborted by SERCFG in mid-byte: the pair is released in the next cycle
     (the pull-ups show J), and the frame sent afterwards is coded from J
-    and complete."""
+    and complete. With take = 3 firmware first takes the three bytes of the
+    first frame and leaves only its frame end: bit 10 is set all the same."""
     token = [0x2D, 0x00, 0x10]
     syms = [J] * 10 + usb_packet_syms(token) + [J] * 6 + usb_packet_syms(token) + [J] * 6
     cfg = NRZI | STUFF | RXEN | RXSKIP | pair(k)
@@ -283,7 +284,7 @@ def drop_then_abort(T=8, k=0):
         sett r1
         ldi r0, %d
         sercfg r0
-        ldi r3, %d
+%s        ldi r3, %d
     nap:
         delay 255
         djnz r3, nap
@@ -306,7 +307,7 @@ def drop_then_abort(T=8, k=0):
         ldi r5, 0xA5
         push r5
         halt
-    """ % (T, cfg, (30 + len(syms) * T) // 512 + 1))
+    """ % (T, cfg, "        serrx r2\n" * take, (30 + len(syms) * T) // 512 + 1))
     drv = LineDriver(k, [PN[s] for s in syms], T, 30, PN[J])
     log = PairLog(k)
 
@@ -314,6 +315,7 @@ def drop_then_abort(T=8, k=0):
         assert len(got) == 4 and got[3] == 0xA5, got
         st = got[0] | got[1] << 8
         assert st & ST_DROP and st & ST_END and st & ST_C5OK, hex(st)
+        assert st & ST_OVR, hex(st)                             # nobody takes the second frame's bytes
         assert not got[2] & (ST_DROP >> 8), got
         driven, cur = [], []
         for c, n, pad, oe in log.runs():

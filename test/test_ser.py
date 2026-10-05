@@ -109,6 +109,17 @@ async def test_lockstep_ser_drop_then_abort(dut):
     check(ls.m, got)
 
 
+@cocotb.test(skip=GL)
+async def test_lockstep_ser_drop_of_a_frame_end_alone(dut):
+    """The same with the first frame's bytes taken and only its frame end
+    left: the next frame start still sets bit 10 (SEMANTICS 15.5). Kills
+    ser-91be2d9b and ser-aa3e5967 (the set needing both a byte and a frame
+    end)."""
+    words, models, cycles, check = S.drop_then_abort(T=8, take=3)
+    ls, got = await _run(dut, words, models, cycles)
+    check(ls.m, got)
+
+
 async def _random(dut, seed):
     words, base, models = S.random_scenario(seed)
     ls, _ = await lockstep_firmware(dut, words, 9000, models=models, run_mask=0b11, pc1=base)

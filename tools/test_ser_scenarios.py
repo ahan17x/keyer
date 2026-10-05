@@ -62,9 +62,9 @@ def test_manchester_rx(T):
     check(m, got)
 
 
-@pytest.mark.parametrize("T", [4, 8, 32])
-def test_drop_then_abort(T):
-    words, models, cycles, check = S.drop_then_abort(T=T)
+@pytest.mark.parametrize("T,take", [(4, 0), (8, 0), (32, 0), (8, 3)])
+def test_drop_then_abort(T, take):
+    words, models, cycles, check = S.drop_then_abort(T=T, take=take)
     m, got = run(words, models, cycles)
     check(m, got)
 

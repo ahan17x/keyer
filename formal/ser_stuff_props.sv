@@ -38,6 +38,11 @@
 //     mode 2 both pins driven low; and it is the only engine write of that
 //     cycle, to the old pair.
 `default_nettype none
+// S6  rx_drop (15.2, 15.5, 15.7), from the ports alone: after a cycle with
+//     SERCFG it is 0; otherwise it is 1 iff a frame started in that cycle
+//     (rx_state went from HUNT to DATA) over a byte no SERRX took or a frame
+//     end no SERRX took, or it was 1 and the status word was not read
+//     (SERST, or a SERRX with no byte to return). The set wins.
 module ser_stuff_props (
     input wire        clk,
     input wire        rst_n,
@@ -152,4 +157,16 @@ module ser_stuff_props (
         cover(abort && m1 && f_line);                                    // an NRZI abort with K on the pair
         cover(abort && !m1 && f_line);                                   // a Manchester abort with P high
     end
+    // S6: the previous cycle's inputs and flags
+    reg f_live, f_v, f_e, f_ack, f_stack, f_cfg, f_hunt, f_drop;
+    always @(posedge clk) begin
+        f_live <= rst_n; f_v <= rx_valid; f_e <= rx_end; f_ack <= rx_ack; f_stack <= st_ack;
+        f_cfg <= cfg_we; f_hunt <= !rd_st[3]; f_drop <= rd_st[10];
+    end
+    wire f_fs   = f_hunt && rd_st[3];                       // a frame started
+    wire f_set  = f_fs && ((f_v && !f_ack) || (f_e && !(f_ack && !f_v)));
+    wire f_read = f_stack || (f_ack && !f_v);
+    always @(*) if (!f_init && rst_n && f_live)
+        assert(rd_st[10] == (!f_cfg && (f_set || (f_drop && !f_read))));
+    always @(*) if (!f_init) assert(rd_st[15:11] == 5'd0);
 endmodule
