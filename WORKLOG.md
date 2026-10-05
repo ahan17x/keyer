@@ -340,3 +340,28 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   build is a synthesis and post-synthesis-simulation result only; the task
   is gone from HANDOFF).
 
+- Serializer RTL (rtl subagent, branch of `serializer`, written from
+  SEMANTICS 0.4 section 15 without opening the golden model):
+  `src/keyer_ser.v` (all 15.1 registers by name and width, every
+  "don't care" value as specified), decode / blocking / timeout forms /
+  write data / Z and C in `src/keyer_core.v`, a third write port in
+  `src/keyer_pins.v` (after replay, before PINMODE, push-pull pins of the
+  pair only), instance `u_ser` in the top; file lists updated (info.yaml,
+  test/Makefile, check_all.sh, synth, FPGA; `tools/mutate.py` still lacks
+  keyer_ser.v: tools/ was out of bounds for this task).
+  Verified: Verilator -Wall lint and Icarus compile (both check_all lines,
+  and the core alone with NTHREADS = 4); formal pins (open-drain
+  invariant with the serializer port free, plus property 6), fifo, core
+  PDR (T9 extended to the serializer strobes), capture: all pass; new
+  directed bench `test/ser_unit/run.sh` (8 phases: NRZI and Manchester
+  transmit and receive, CRC-16/CRC-32 catalog check values, CRC-5 token,
+  stuffing, overrun, stuffing error, frame not on a byte boundary, owner
+  thread, open-drain pin in the pair, SERCFG mid-frame, blocking and
+  timeout forms) passes, and 19 seeded RTL mutations each make it fail.
+  Area (Yosys, typ liberty, macro black-boxed): 8,155 -> 9,489 cells,
+  1,470 -> 1,598 flops, 141,595 -> 157,841 um^2; the engine alone 1,080
+  cells, 128 flops, 15,253 um^2. Not run: the cocotb suite and pytest (the
+  model does not implement the new instructions yet). Spec questions
+  Q21-Q25 in docs/spec-questions.md. `formal/equiv_core.sh` against
+  master no longer applies (the core gains ports on purpose): run
+  check_all with EQUIV_REF=none on this branch.

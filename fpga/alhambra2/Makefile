@@ -31,7 +31,7 @@ $(NETLIST): $(wildcard $(SRC_DIR)/*.v) $(SRC_DIR)/keyer_isa.vh
 	mkdir -p build
 	yosys -q -l build/synth_sim.log -p "read_verilog -DKEYER_IMEM_FLOPS -I$(SRC_DIR) \
 	  $(SRC_DIR)/keyer_fifo.v $(SRC_DIR)/keyer_imem.v $(SRC_DIR)/keyer_pins.v $(SRC_DIR)/keyer_core.v \
-	  $(SRC_DIR)/keyer_host.v $(SRC_DIR)/keyer_capture.v $(SRC_DIR)/tt_um_ahan17x_keyer.v; \
+	  $(SRC_DIR)/keyer_host.v $(SRC_DIR)/keyer_capture.v $(SRC_DIR)/keyer_ser.v $(SRC_DIR)/tt_um_ahan17x_keyer.v; \
 	  synth_ice40 -top tt_um_ahan17x_keyer; write_verilog -noattr $(NETLIST)"
 
 include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim

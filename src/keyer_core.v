@@ -33,7 +33,7 @@
  *   sel_pc  PC (and the fetch address), LR, flags, DELAY count, blocked,
  *           running / halted updates, RDS bit 5;
  *   sel_io  FIFO head and flag selection, FIFO pop and push strobes, the
- *           pin command strobe and the CAPC strobe.
+ *           pin command strobe, the CAPC strobe and the serializer strobes.
  * Per-thread reads are AND-OR selections over a copy; per-thread write
  * enables are <thread t executes, from flops> & <field enable>, with the
  * register-file address pre-decoded from the instruction word, so the late
@@ -87,6 +87,21 @@ module keyer_core #(
     output wire [3:0]            cr_ctrl_val,
     input  wire                  cap_active,
     input  wire                  rep_active,
+    // serializer (SEMANTICS 15): strobes of the committed instruction, the
+    // engine's registered state, and the timers it takes its tick from
+    output reg                   ser_cfg_we,     // SERCFG rs
+    output reg                   ser_tx_we,      // SERTX SERTXC SERI SERIC take the holding register
+    output wire                  ser_tx_c,       // SERTXC, SERIC: the byte is in the CRC
+    output wire [7:0]            ser_wdata,      // rs[7:0] (SERCFG, SERTX, SERTXC) or n (SERI, SERIC)
+    output reg                   ser_rx_ack,     // SERRX takes a byte or a frame end
+    input  wire                  ser_tx_full,
+    input  wire                  ser_tx_idle,
+    input  wire                  ser_rx_valid,
+    input  wire                  ser_rx_end,
+    input  wire [15:0]           ser_rd_st,      // status (15.7)
+    input  wire [15:0]           ser_rd_rx,      // SERRX data: byte if rx_valid, else status
+    output wire [NTHREADS-1:0]   tm_tick,        // thread t: period != 0 and prescale = 0 (15.1)
+    output wire [16*NTHREADS-1:0] tm_period,     // period[t] at [16t+15:16t]
     // debug / trace (unused in silicon)
     output wire        dbg_retire,
     output wire [$clog2(NTHREADS)-1:0] dbg_tid,
@@ -285,6 +300,17 @@ module keyer_core #(
                          | ((tid16 >> 1) << 9);
     assign cr_ctrl_val = A[3:0];                             // CAPC rs: rs[3:0]
 
+    // ---- serializer operands (section 15.2) ----------------------------------
+    // Decoded from the instruction word beside the main decode, not behind
+    // it. ser_word is the engine's read data: rd_rx (byte or status, chosen
+    // in the engine from its own rx_valid) for SERRX, rd_st for SERST and
+    // everything else; one 2:1 mux on the function field, from flops.
+    wire [3:0]  ser_g    = ir[`KEYER_SER_G_MSB:`KEYER_SER_G_LSB];
+    wire        ser_g_rx = (ser_g == `KEYER_SERG_RX);
+    wire [15:0] ser_word = ser_g_rx ? ser_rd_rx : ser_rd_st;
+    assign ser_wdata = tm_misc ? imm8 : A[7:0];
+    assign ser_tx_c  = tm_misc ? (ir[11:8] == `KEYER_SERIC) : (ser_g == `KEYER_SERG_TXC);
+
     // ---- execute (combinational) -------------------------------------------
     reg        done;
     reg        wr_en;
@@ -296,6 +322,7 @@ module keyer_core #(
     reg        delay_load, delay_dec;
     reg        is_wait, wait_base, wait_tmo;
     reg        pop_req, push_req;        // the slot owner's inbox pop / outbox push
+    reg        ser_cfg_req, ser_tx_req, ser_rx_req;
     reg [16:0] sum;
 
     always @(*) begin
@@ -310,6 +337,7 @@ module keyer_core #(
         pin_valid = 1'b0; pin_op = 3'd0; pin_pin = pin; pin_data = 8'd0;
         pop_req = 1'b0; push_req = 1'b0; outbox_wdata = A[7:0];
         cr_ctrl_we = 1'b0;
+        ser_cfg_req = 1'b0; ser_tx_req = 1'b0; ser_rx_req = 1'b0;
         sum = 17'd0;
 
         case (maj)
@@ -427,6 +455,25 @@ module keyer_core #(
                 `KEYER_RDLR:  begin wr_en = 1'b1; wr_val = {8'd0, lr_cur}; end
                 `KEYER_JMPR:  pc_next = A[7:0];
                 `KEYER_CAPC:  cr_ctrl_we = 1'b1;
+                // serializer (15.2); the T bit makes TX TXC RX WT timeout forms
+                // and is ignored by CFG and ST. Undefined functions: no effect.
+                `KEYER_SER: begin
+                    wr_val = ser_word;
+                    case (ser_g)
+                        `KEYER_SERG_CFG: ser_cfg_req = 1'b1;
+                        `KEYER_SERG_TX, `KEYER_SERG_TXC: begin
+                            is_wait = 1'b1; wait_base = ~ser_tx_full; ser_tx_req = ~ser_tx_full;
+                        end
+                        `KEYER_SERG_RX: begin
+                            is_wait = 1'b1; wait_base = ser_rx_valid | ser_rx_end;
+                            ser_rx_req = wait_base; wr_en = wait_base;
+                            z_we = wait_base; z_val = ~ser_rx_valid;
+                        end
+                        `KEYER_SERG_ST: wr_en = 1'b1;
+                        `KEYER_SERG_WT: begin is_wait = 1'b1; wait_base = ser_tx_idle & ~ser_tx_full; end
+                        default: ;
+                    endcase
+                end
                 default: ;
             endcase
         end
@@ -450,6 +497,10 @@ module keyer_core #(
                 `KEYER_START: do_start = 1'b1;
                 `KEYER_STOP:  do_stop = 1'b1;
                 `KEYER_SETD:  dl_we = 1'b1;                                // DEADLINE <= NOW + k
+                // SERI n / SERIC n: SERTX / SERTXC with the byte n; no timeout form
+                `KEYER_SERI, `KEYER_SERIC: begin
+                    is_wait = 1'b1; wait_base = ~ser_tx_full; ser_tx_req = ~ser_tx_full;
+                end
                 default: ;
             endcase
         end
@@ -470,6 +521,13 @@ module keyer_core #(
             pin_valid = 1'b0;
             cr_ctrl_we = 1'b0;
         end
+    end
+
+    // serializer strobes, from the io copy like the pin and CAPC strobes
+    always @(*) begin
+        ser_cfg_we = exec_io & ser_cfg_req;
+        ser_tx_we  = exec_io & ser_tx_req;
+        ser_rx_ack = exec_io & ser_rx_req;
     end
 
     // FIFO strobes: one per thread, from the io copy
@@ -496,6 +554,11 @@ module keyer_core #(
     generate
         for (g = 0; g < NT; g = g + 1) begin : g_rf_pre
             assign rf_pre[8*g +: 8] = ra_hot & {8{x_rf[g]}};
+        end
+        // the serializer's symbol tick and period (15.1), from the timer flops
+        for (g = 0; g < NT; g = g + 1) begin : g_tm_out
+            assign tm_tick[g]            = (period[g] != 16'd0) & (prescale[g] == 16'd0);
+            assign tm_period[16*g +: 16] = period[g];
         end
     endgenerate
 
@@ -687,12 +750,13 @@ module keyer_core #(
         // T9. A thread that executes and does not complete (2.2, 7.1)
         //     changes no state but its DELAY count: no register is written,
         //     its flags and LR keep their values unless the host soft-resets
-        //     it in that cycle, and no pin command, FIFO pop or push or CAPC
-        //     strobe leaves the core. Generally, a thread's flags change
-        //     only when it commits or is soft-reset. (A blocked timeout-form
-        //     wait never writes C.)
+        //     it in that cycle, and no pin command, FIFO pop or push, CAPC
+        //     strobe or serializer strobe leaves the core. Generally, a
+        //     thread's flags change only when it commits or is soft-reset.
+        //     (A blocked timeout-form wait never writes C.)
         if (exec && !done)
-            assert(!pin_valid && !cr_ctrl_we && inbox_pop == {NT{1'b0}} && outbox_push == {NT{1'b0}});
+            assert(!pin_valid && !cr_ctrl_we && inbox_pop == {NT{1'b0}} && outbox_push == {NT{1'b0}}
+                   && !ser_cfg_we && !ser_tx_we && !ser_rx_ack);
         if ($past(exec && !done))
             for (fr = 0; fr < 8*NT; fr = fr + 1) assert(regs[fr] == $past(regs[fr]));
         for (ft = 0; ft < NT; ft = ft + 1) begin
