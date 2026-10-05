@@ -143,7 +143,9 @@ and the vendored macro model and runs the tests that need only the pads
 (host interface, the driver's self-tests, UART loopback, capture and
 replay demo); the lockstep tests skip. `fpga/alhambra2/sim.sh` does the
 same on the Yosys iCE40 netlist, where the program memory and the four
-FIFOs are block RAMs.
+FIFOs are block RAMs. That is the whole of the FPGA result: synthesis, place
+and route, and this simulation; the bitstream has not run on a board
+(D-035).
 
 Found: two faults of the test configuration on the first run (a missing
 primitive file, power pins the netlist does not have; docs/AREA.md), none
@@ -199,7 +201,7 @@ treated as an error, now as inconclusive). Of those 22:
   | `test_lockstep_status_word_fifo_bits` | `RDS` bit 1 (inbox full) stuck at 0 |
   | `test_thread1_fifos_from_the_host` | the INBOX1 register address decoded as OUTBOX1's: no test had written thread 1's inbox over SPI |
   | `test_two_byte_registers_take_exactly_two_bytes` | CAP_CFG and CAP_BUF written after every byte instead of after byte 1 |
-  | `test_miso_is_low_outside_a_transaction` | MISO idling high (SEMANTICS is silent: D-033, open) |
+  | `test_miso_is_low_outside_a_transaction` | MISO idling high (SEMANTICS 10.1 since D-033) |
   | `test_lockstep_capture_trigger_needs_a_transition` | the capture triggering on a level that already matched at ARM |
   | `test_lockstep_replay_stop_and_underrun` | the underrun conditions swapped; the prefetch not emptied on STOP or underrun |
 
@@ -256,8 +258,11 @@ not against lint or the model tests.
 
 ## What no layer covers yet
 
-- Real devices: no firmware has run against hardware; the FPGA build exists
-  for that (`fpga/alhambra2/`).
+- Real devices: no firmware has run against hardware and no hardware
+  bring-up is planned (D-035). The FPGA build (`fpga/alhambra2/`) is a
+  synthesis and post-synthesis-simulation result only: it has never been
+  programmed into a board. Every protocol claim rests on the protocol
+  models of layer 3.
 - The host interface and the top level have no formal properties; they
   rely on layers 4, 7 and 8.
 - The lockstep comparison trusts the mirroring of host effects; a fault in

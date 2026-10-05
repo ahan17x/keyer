@@ -138,7 +138,7 @@ async def test_two_byte_registers_take_exactly_two_bytes(dut):
 async def test_miso_is_low_outside_a_transaction(dut):
     """MISO (uo[0]) is 0 while CS_n is high: after reset, between
     transactions, and after a read that ended with ones on the wire
-    (proposed for SEMANTICS 10.1, DECISIONS D-033)."""
+    (SEMANTICS 10.1, DECISIONS D-033)."""
     pads = await start(dut)
     spi = SpiMaster(dut, pads, half=4)
     await ClockCycles(dut.clk, 6)

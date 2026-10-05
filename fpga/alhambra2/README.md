@@ -6,7 +6,10 @@ ASIC's `src/` files with `KEYER_IMEM_FLOPS` defined, which selects the
 behavioural program memory; it maps to one block RAM. `keyer_alhambra2.v` is
 the board wrapper: pins, a power-on reset and nothing else.
 
-Not yet run on the board.
+This is a synthesis and post-synthesis-simulation result only. It has not
+been run on a board and no hardware bring-up is planned for this project
+(DECISIONS D-035); the sections on using it describe what a bring-up would
+do, untested.
 
 ## Build
 

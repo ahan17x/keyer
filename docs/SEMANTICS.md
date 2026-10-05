@@ -1,6 +1,6 @@
 # Keyer semantics: the cycle-exact contract
 
-Version 0.3, 2026-10-02 (section 14 added: capture and replay). This document is the reference for the golden model
+Version 0.3.1, 2026-10-04 (section 14 added: capture and replay; 10.1 states the idle level of MISO). This document is the reference for the golden model
 (`tools/keyersim.py`) and the RTL (`src/`). Where it disagrees with
 `docs/isa.md`, this document wins; `docs/isa.md` is the programmer's
 reference and is kept consistent with it. The encodings are in
@@ -360,6 +360,10 @@ clk / 8); SCK must be low when CS_n falls; CS_n must stay high for at least 4
 core cycles between transactions. The interface samples SCK, MOSI and CS_n
 through two flops; an edge on the pad during cycle e is acted on in cycle
 e + 2. Outside these constraints the behaviour is undefined.
+
+MISO (`uo[0]`) is 0 while CS_n is high, as seen through the synchroniser,
+and after reset (DECISIONS D-033): a read that ended with ones on the wire
+does not leave the line high between transactions.
 
 ### 10.2 Byte timing
 

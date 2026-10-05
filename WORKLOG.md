@@ -330,3 +330,13 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
     pytest, 39 cocotb, lint, Icarus, four formal groups). The full
     mutation campaign has not run (workflow, by hand). Open for Ahan:
     merging `waitd-csa`, D-033.
+
+## 2026-10-04, Claude Code session 5 (merge of waitd-csa, mutation campaign, serializer, stretch firmware)
+
+- Ahan's decisions applied: D-034 (`waitd-csa` merged into master; full
+  check suite green on the merged tree), D-033 resolved (SEMANTICS 10.1
+  states that MISO is 0 while CS_n is high; the test stays), D-035 (no
+  hardware bring-up; README, VERIFICATION and the FPGA README say the FPGA
+  build is a synthesis and post-synthesis-simulation result only; the task
+  is gone from HANDOFF).
+

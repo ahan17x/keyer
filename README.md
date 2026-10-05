@@ -28,7 +28,7 @@ for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 | `test/` | cocotb tests, including the ISS-vs-RTL lockstep harness. |
 | `synth/` | Yosys area-estimate scripts against the CMOS5L liberty. |
 | `formal/` | SymbiYosys proofs (FIFO, pin unit, core, capture and replay) and `equiv_core.sh`, the Yosys equivalence check of the core against a git reference. |
-| `fpga/alhambra2/` | Build for the Alhambra II (iCE40 HX4K): wrapper, pins, build and post-synthesis simulation scripts. |
+| `fpga/alhambra2/` | Build for the Alhambra II (iCE40 HX4K): wrapper, pins, build and post-synthesis simulation scripts. A synthesis and post-synthesis-simulation result only: it has not been run on a board and no hardware bring-up is planned (D-035). |
 
 ## Running the tests
 

@@ -379,3 +379,35 @@ line. `test_miso_is_low_outside_a_transaction` (test/test_corners.py)
 already checks the current behaviour and kills the mutant; nothing in the
 RTL or the model changes either way. Alternative: declare the idle level
 undefined and list the mutant as equivalent (then the test goes).
+
+## D-033 (resolved) 2026-10-04 Ahan: MISO is 0 while CS_n is high
+
+The proposal of the OPEN entry above is taken: SEMANTICS 10.1 now states
+that MISO is 0 while CS_n is high (as seen through the synchroniser) and
+after reset, and `test_miso_is_low_outside_a_transaction` stays as the test
+of that sentence. Nothing changes in the RTL or the model (the model does
+not drive the host pads). Rejected: declaring the idle level undefined and
+listing mutant `host-de4cf058` as equivalent.
+
+## D-034 2026-10-04 Ahan: `waitd-csa` is merged into master
+
+The carry-save `WAITD` completion test becomes the master design. Why: its
+core is proven equivalent to the previous master core (533 of 533 points,
+`formal/equiv_core.sh`), the full suite is green on it, and its hardening
+run 37247680638 meets setup at all three corners (+12.33 / +8.12 / +0.76 ns)
+for 184 cells more, which removes the last slow-corner endpoint tracked
+since D-026. It also brings formal properties T9 and P8 and check scripts
+that fail on a failed proof (BUGS 19). Rejected: staying on the one-hot
+master (-0.13 ns at the slow corner on `deadline[0][15]`).
+
+## D-035 2026-10-04 Ahan: no hardware bring-up in this project
+
+No board bring-up is planned. The Alhambra II build (`fpga/alhambra2/`) is
+kept as a synthesis and post-synthesis-simulation result only: it shows the
+design maps to an FPGA with the behavioural memory and that the pads-only
+tests pass on that netlist; it has not been programmed into a board and
+the documentation says so. The bring-up task is removed from HANDOFF.
+Consequence for verification: no firmware runs against a real device, so
+every protocol claim rests on the protocol models (docs/VERIFICATION.md).
+Rejected: keeping bring-up as an open task nobody will do.
+
