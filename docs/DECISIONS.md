@@ -641,3 +641,43 @@ then the work list, and a branch hardening run before any merge is the
 first step. Alternatives if only a little room is wanted: shorter
 descriptor tables in `usb_ls_device.s`, or the capture buffer's ninth bit
 without the larger memory (no gain).
+
+## D-041 2026-10-05 Claude (within Ahan's instruction for the slew step: a config.json change is allowed with a DECISIONS entry): `DESIGN_REPAIR_MAX_SLEW_PCT` 20 -> 50
+
+The 13 max-slew entries of runs 37266431182 and 37286790227 are 13 pins on
+two nets at the slow corner only, both in our logic (docs/AREA.md, run
+37286790227): the `SERCFG` commit strobe from the core's decode to the
+serializer (7 loads, 3.62 ns against a limit of 2.51) and inbox 1's
+pointer comparison (4 loads, 2.57 ns). They are real violations of the
+library's `max_transition` at that corner; the flow reports them and does
+not fail, and the sign-off corner (typical, D-028) has none.
+
+The fix is one key in `src/config.json`: `DESIGN_REPAIR_MAX_SLEW_PCT`
+from its default 20 to 50. Why this and not the RTL, which Ahan prefers:
+
+- Fanout is not the cause. The nets have 7 and 4 loads. Each is driven by
+  a `nor4_1`, the weakest four-input gate, over a long route, and the flow
+  repairs slew once, after global placement, at the typical corner, to 80%
+  of the limit. A net it leaves at 2.0 ns there is at about 3.6 ns at the
+  slow corner (the cells are 1.7 to 1.8 times slower), which is exactly
+  the worst value seen. Earlier runs of other designs had 33, 14 and 0
+  such pins: which nets land above the limit is placement luck.
+- Duplicating a combinational net in RTL does not survive synthesis (Yosys
+  merges identical cells and ABC restructures the cone), and the next
+  placement would put other nets over the limit. Registering the strobe
+  would change SEMANTICS 15.2.
+- A margin of 50% holds every net to about 1.25 ns at the typical corner
+  and about 2.2 ns at the slow one, under the limit with room for the
+  difference between estimated and routed wires. Cost: more repair
+  buffers; the run says how many.
+
+This goes beyond the two keys CLAUDE.md lets a session edit
+(`CLOCK_PERIOD`, `PL_TARGET_DENSITY_PCT`); it rests on Ahan's instruction
+of 2026-10-05 for this step. Rejected: `MAX_TRANSITION_CONSTRAINT` (it
+would also lower the limit the slow-corner check reports against, turning
+compliant nets into reported ones); `RSZ_CORNERS` set to the slow corner
+(it would also move hold repair away from the fast corner, where hold is
+tightest: +0.075 ns); leaving it (the slow-corner timing of two paths
+stays extrapolated). Confirmed or not by the branch run of `d039`
+(docs/AREA.md).
+

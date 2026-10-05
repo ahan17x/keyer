@@ -81,6 +81,12 @@
   "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_.*"],
   "//": "======================= end SRAM macro integration =======================",
 
+  "//": "Slew repair margin (DECISIONS D-041). The flow repairs slew once, after global placement, at the",
+  "//": "typical corner, to (100 - this)% of the library limit; the default 20 left nets that are over the",
+  "//": "limit at the slow corner, where the cells are 1.7 to 1.8 times slower (13 pins on two nets in run",
+  "//": "37286790227). 50 holds a net to 1.25 ns at the typical corner, about 2.2 ns at the slow one (limit 2.507).",
+  "DESIGN_REPAIR_MAX_SLEW_PCT": 50,
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
