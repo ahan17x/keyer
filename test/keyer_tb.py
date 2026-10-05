@@ -145,6 +145,13 @@ CR_STATE = ("cap_armed", "cap_trig", "cap_done", "cap_ovf", "cap_last", "cap_pre
             "cap_base", "cap_len", "rep_group", "rep_mask", "rep_base", "rep_len")
 
 
+# SEMANTICS 13: every register of the serializer, compared every cycle
+SER_STATE = ("cfg", "owner", "tx_hold", "tx_hold_c", "tx_full", "tx_state", "tx_sh", "tx_c", "tx_app",
+             "tx_n", "tx_half", "tx_bit", "tx_ones", "tx_line", "crc_m", "crc5", "rx_state", "rx_sh",
+             "rx_n", "rx_ones", "rx_psym", "rx_last", "rx_cnt", "rx_w", "rx_first", "rx_hold",
+             "rx_valid", "rx_end", "rx_ovr", "rx_serr", "rx_ferr", "rx_c5ok", "rx_cok")
+
+
 class Lockstep:
     """Runs the ISS one cycle per RTL cycle and compares.
 
@@ -165,6 +172,7 @@ class Lockstep:
         self.mismatches = []
         u = dut.user_project
         self.core, self.host, self.pins, self.cr = u.u_core, u.u_host, u.u_pins, u.u_cr
+        self.ser = u.u_ser
         self.regs_ok = True
         try:
             _ = self.core.regs[0].value
@@ -195,6 +203,10 @@ class Lockstep:
         for name in CR_STATE:
             if ival(getattr(r, name)) != getattr(cr, name):
                 self._fail("cr.%s" % name, getattr(cr, name), ival(getattr(r, name)))
+        sm, sr = m.ser, self.ser
+        for name in SER_STATE:
+            if ival(getattr(sr, name)) != int(getattr(sm, name)):
+                self._fail("ser.%s" % name, int(getattr(sm, name)), ival(getattr(sr, name)))
         for t in (0, 1):
             th = m.threads[t]
             if ival(c.pc[t]) != th.pc:

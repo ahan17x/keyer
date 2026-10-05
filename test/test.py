@@ -656,7 +656,11 @@ async def test_lockstep_random_programs(dut):
                           if i.name not in ("HALT", "STOP", "JMP", "JMPR", "CALL", "RET",
                                             "WT0", "WT1", "WTR", "WTF", "WAITD", "POP",
                                             "PUSH", "DELAY", "WT0T", "WT1T", "WTRT", "WTFT",
-                                            "POPT", "PUSHT", "CAPC")])
+                                            "POPT", "PUSHT", "CAPC",
+                                            # the serializer has its own random test
+                                            # (test_ser.py); its waits would stall this one
+                                            "SERTX", "SERTXC", "SERRX", "SERWT", "SERI", "SERIC",
+                                            "SERTXT", "SERTXCT", "SERRXT", "SERWTT")])
         ops = {}
         for opname, fname in ins.operands:
             if fname in ("rd", "rs", "r"):
