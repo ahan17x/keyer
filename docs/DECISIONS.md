@@ -552,3 +552,92 @@ Ahan's decisions, and the cycle-exact form Claude gave them in SEMANTICS
 The encoding does not change, so the ISA version stays 3. The model and
 the RTL are updated independently from SEMANTICS (subagents).
 
+
+## D-040 2026-10-05 OPEN: moving the program memory to 512 words (not implemented; for Ahan)
+
+The question left open since D-004. Nothing below is implemented.
+
+**Why one would.** `fw/usb_ls_device.s` uses 253 of 256 words; the next
+largest program uses 117. A capture buffer lives in program memory (120
+entries next to a small program), and two threads share the 256 words.
+512 words would let the USB device grow (string descriptors, a HID report
+endpoint), or run a second protocol or a capture beside it.
+
+**What changes in the ISA** (it would be ISA version 4, SEMANTICS 0.6):
+
+- `PC[t]` and `LR[t]` grow from 8 to 9 bits; "every address is taken mod
+  256" (2.4) becomes mod 512. The reset vector stays 0 for both threads.
+- `JMP` and `CALL` keep their encoding: the field is already 11 bits and
+  the machine would use the low 9 instead of the low 8. Relative branches
+  (`Bcc` +-128, `BP0/BP1` +-32, `DJNZ` +-16) are unchanged.
+- `JMPR` and `RET` take 9 bits of the register or `LR`; `RDLR` returns 9.
+- `LDI rd, label` no longer reaches every label: a label at or above 256
+  needs `LDW` (two words). `usb_ls_device.s` loads handler addresses with
+  `LDI`; they would stay in the low half or cost a word each.
+- Capture and replay: `cap_base` and `rep_base` are 8 bits and the write
+  and fetch addresses wrap mod 256. Either the buffers stay in the low 256
+  words (no change), or base gets a ninth bit from the unused bit 3 of
+  CAP_CFG byte 0 and of REP_CFG.
+
+**Host register map.** PC0, PC1 and IMEM_ADDR are already two-byte
+registers whose second byte is ignored on write and reads 0: bit 0 of that
+byte becomes address bit 8, so existing host code that writes 0 there keeps
+working. The IMEM_DATA auto-increment becomes 9 bits. `tools/keyerhost.py`
+(`load_program`, `read_program`), the assembler's image size, the golden
+model's memory, the lockstep harness's address masks and the 256-word load
+of the tests all change; the ID register reads version 4.
+
+**config.json and PDN.** `MACROS` names the other macro
+(`RM_IHPSG13_1P_512x16_c2_bm_bist`: gds, lef, three libs, blackbox,
+spice), `PDN_MACRO_CONNECTIONS` keeps its two lines. The macro has the same
+width (236.8 um) and the same Metal4 power columns as ours, which is why
+`src/pdn_cfg.tcl` and the `FP_PDN_V*` keys were taken from the sibling
+entry's 512 x 16 recipe in the first place: they stay as they are, the
+stripe verifier in `pdn_cfg.tcl` checks it at run time. Placement
+`[12, 40]` still fits: the macro is 191.34 um tall instead of 118.78 (die
+710.64). These edits to `config.json` are outside the two keys CLAUDE.md
+allows, so they would ride on this decision.
+
+**The macro, from the PDK** (IHP-Open-PDK `dev` at bf079026, the commit our
+macro was vendored from; `.lib` and `.lef` of both):
+
+| | 256 x 16 (now) | 512 x 16 | difference |
+|---|---|---|---|
+| Size | 236.8 x 118.78 um | 236.8 x 191.34 um | +72.56 um height |
+| Area | 28,127 um^2 | 45,309 um^2 | +17,182 um^2 |
+| Clock to data out, slow 1.08 V 125 C | 4.99 to 5.13 ns | 6.25 to 6.39 ns | **+1.26 ns** |
+| Clock to data out, typical | 2.98 to 3.06 ns | 3.73 to 3.82 ns | +0.76 ns |
+| Clock to data out, fast | 1.83 to 1.89 ns | 2.29 to 2.35 ns | +0.46 ns |
+| Address setup, slow / typ / fast | 0.74 / 0.42 / 0.24 ns | the same | 0 |
+
+Utilisation would go from 27.0% to about 28.9% (17,182 um^2 of a
+902,417 um^2 core, plus a handful of flops): area is not the question.
+
+**Timing.** In master run 37286790227 the twelve worst slow-corner paths
+all start at the macro's data output (instruction word into decode; the
+worst has 5.29 ns in the macro and ends with +1.37 ns). The 512-word
+macro adds 1.26 ns to every one of them before anything else changes:
+expected slow-corner slack about **+0.1 ns**, less whatever the ninth
+address bit, the taller macro's longer routes and D-039's logic cost, and
+runs of the same RTL have differed by more than that (+0.76 to +1.37 ns
+across the last three designs). Typical would go from +8.41 to about
++7.65 ns, fast from +12.53 to about +12.1 ns. So the design would still
+sign off at the typical corner (D-028), but "clean at all corners", the
+merge rule since D-037 and the reason for the carry-save `WAITD` (D-034),
+would probably be lost or be a matter of placement luck.
+
+**Verification cost.** A SEMANTICS change on both independent sides, the
+host tests, the formal core proof (PC width), the FPGA build (a second
+block RAM), a full mutation campaign and a hardening run: about what the
+serializer step cost, without a new feature to show for it.
+
+**Recommendation: no.** It spends essentially the whole slow-corner margin
+(1.26 of 1.37 ns), on the one path every worst endpoint shares, to buy
+memory that a single program is close to needing and none needs today. The
+case changes if a firmware goal that does not fit 256 words is put on the
+plan (a USB HID device with strings is the likely one) and Ahan accepts
+either typical-only sign-off or a slower clock for it; the entry above is
+then the work list, and a branch hardening run before any merge is the
+first step. Alternatives if only a little room is wanted: shorter
+descriptor tables in `usb_ls_device.s`, or the capture buffer's ninth bit
+without the larger memory (no gain).
