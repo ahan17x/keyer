@@ -545,7 +545,7 @@ def formal(work, group, timeout):
             return "fail", "formal:core"
         return "error", "proof did not run: " + out.strip()[-120:]
     tasks = FORMAL_TASKS.get(group)
-    status, out = run_cmd(["yowasp-sby", "-f", group + ".sby"] + (tasks or []), fdir, timeout)
+    status, out = run_cmd(["yowasp-sby", "--yosys", "yowasp-yosys", "-f", group + ".sby"] + (tasks or []), fdir, timeout)
     if status in ("timeout", "signal"):
         return "error", status
     done = re.findall(r"DONE \((\w+)", out)
