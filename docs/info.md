@@ -63,6 +63,20 @@ pins into a small logic analyser and waveform generator.
   is being recorded. A thread can arm, stop and start them itself (`CAPC`),
   and the host can read the buffer back over SPI.
 
+**Serializer**
+
+One shared engine does the bit level of coded serial lines, so firmware
+works in bytes: a shift register clocked by the owning thread's timer, NRZI
+or Manchester coding, bit stuffing, CRC-5 (receive check), CRC-16 and
+CRC-32, J, K and SE0 on a pin pair `uio[2k]`, `uio[2k+1]`, sync and
+end-of-frame detection and framing status. A frame is the bytes firmware
+queues without a gap; the engine appends the CRC and the end of packet.
+Every wait on it has a timeout form. `docs/SERIALIZER.md` is the guide and
+`docs/SEMANTICS.md` section 15 the cycle-exact rules. The two protocols
+that use it need their own clock setting, both inside the signed-off
+50 MHz: 48 MHz for low-speed USB (32 cycles per bit) and 40 MHz for
+10BASE-T (2 cycles per half-bit; 50 MHz would need 2.5).
+
 **Host interface**
 
 SPI slave, mode 0, MSB first, up to clk/8, on `ui[0]` (SCK), `ui[1]` (MOSI),
@@ -94,6 +108,8 @@ the host SPI), `uo[7:2]` firmware outputs 18-23.
 | `swd.s` | ARM Serial Wire Debug host: connect sequence, any DP or AP read or write with ACK and parity handling (DPIDR is one read); SWCLK up to clk/24 | SWCLK `uo[3]`, SWDIO `uio[0]` (pull-up) |
 | `ps2_host.s` | PS/2 host: receives device frames with parity and framing checks and a frame timeout, sends commands with the device's ACK checked | CLK `uio[0]`, DATA `uio[1]` (open-drain) |
 | `ws2812.s` | WS2812B LED strip driver at the datasheet's 800 kbit/s timing, frames streamed through the inbox, underrun reported | DOUT `uo[2]` |
+| `usb_ls_device.s` | Low-speed USB device on the serializer (clock 48 MHz; 24 MHz also works): bus reset, SETUP/IN/OUT on endpoint 0 with data toggles and ACK/NAK/STALL, CRC-5 and CRC-16 checked, GET_DESCRIPTOR (device and configuration, honouring wLength), SET_ADDRESS, SET_CONFIGURATION, everything else STALLed; responses start 3.7 to 4.7 bit times after the host's packet (allowed: 2 to 6.5). 253 of 256 words, one thread. Simulated against a USB host model only | D+ `uio[0]`, D- `uio[1]` (1.5 k pull-up on D- outside) |
+| `eth_10bt_tx.s` | 10BASE-T transmit on the serializer (clock 40 MHz; 20 MHz also works): link pulses every 16 ms, and Ethernet frames (preamble, SFD, broadcast destination, fixed source and EtherType 0x88B5, up to 15 payload bytes staged by the host plus generated padding or filler up to a 1474-byte frame, CRC-32, start of idle, inter-frame gap). 88 words, one thread. Transmit only; simulated against a Manchester/Ethernet receiver model only. A real link needs a line driver and magnetics | TX+ `uio[0]`, TX- `uio[1]` |
 
 **Verification**
 
@@ -102,9 +118,10 @@ model and the RTL were written from it independently and run in lockstep
 from reset in simulation, every cycle compared, with all host traffic
 mirrored; every firmware program is checked against a model of its peer
 that knows only the protocol (UART, SPI master and slave, I2C master and
-slave, a JTAG TAP, an SW-DP target, a PS/2 device, a WS2812 decoder); the
-FIFO, the pin unit, the core's timer and control rules and the capture and
-replay engines carry formal proofs; the host-interface and pads-only
+slave, a JTAG TAP, an SW-DP target, a PS/2 device, a WS2812 decoder, a USB
+host, a 10BASE-T receiver); the FIFO, the pin unit, the core's timer and
+control rules, the capture and replay engines and the serializer carry
+formal proofs; the host-interface and pads-only
 firmware tests also run on the gate-level netlist; and the test suite
 itself is measured by mutation testing. `docs/VERIFICATION.md` has the
 layers, what each found and the commands.
