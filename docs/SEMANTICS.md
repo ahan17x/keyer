@@ -914,6 +914,8 @@ smaller values follow the rules above literally.
 | 9 | `rx_ferr` |
 | 15:10 | 0 |
 
-The verdict and error bits describe the last frame that ended and stand
-until the next frame starts (15.5) or `SERCFG`.
+`rx_c5ok` and `rx_cok` are written only by `end()` from DATA and by
+`SERCFG`: they describe the last frame that ended and a frame start does
+not clear them. `rx_ovr`, `rx_serr` and `rx_ferr` are cleared by a frame
+start and accumulate until the next one (spec-questions Q21).
 
