@@ -324,3 +324,44 @@ precheck. It meets the acceptance rule of D-028 (typical slack at least
 (`deadline[0][15]`, the `WAITD` update) is worked on next on its own branch.
 Rejected: staying on the `sram-macro` core (1.0 ns less typical slack and
 277 slow-corner endpoints for 7 flops fewer).
+
+## D-031 2026-10-04 Ahan: mutation testing rules; the full campaign runs on GitHub, by hand
+
+`tools/mutate.py` decides a kill only from a cocotb `results.xml` that
+reports a failed test, or from a proof that reports a counterexample. A
+mutant that does not compile, times out, leaves no results file or dies is an
+`error`, reported separately and never counted as killed. Checks run
+fastest first and stop at the first kill; each result is appended to a JSONL
+file as it completes and `--resume` continues a stopped run; `--sample N
+--seed S` picks a seeded subset. The full campaign (about 1,500 mutants) is
+not run on the development machine: `.github/workflows/mutation.yaml`,
+started by `workflow_dispatch` only, runs it in 16 shards and merges the
+results. Every survivor is either a test gap (a test is written that kills
+it) or listed in `tools/mutate_equivalents.md` with a reason. Added by
+Claude within these rules: a k-induction proof that merely stops closing
+(sby `UNKNOWN`, no counterexample from reset) is not a kill, the remaining
+checks decide; a mutant no check fails is called equivalent without a
+manual entry only when Yosys proves every output and register input equal
+to the original's. Why: the first version judged from process exit and log
+text and ran everything locally, which made a killed simulator look like a
+killed mutant and took the machine for hours. Rejected: counting lint
+warnings or timeouts as kills; a full local campaign.
+
+## D-032 2026-10-04 Claude (within Ahan's instruction for the FPGA build): the behavioural memory holds its read data in a write cycle; Alhambra II pin map
+
+`KEYER_IMEM_FLOPS` path of `src/keyer_imem.v`: `rdata` no longer loads in a
+write cycle (`if (we) ... else rdata_q <= mem[addr]`), exactly as the macro
+path behaves (`A_REN = ~we`). Why: reading and writing one address in the
+same cycle forced Yosys to wrap the iCE40 block RAM in 42 flops and 29 LUTs
+of read-during-write emulation; gated, the memory is one SB_RAM40_4K and one
+LUT. The read data of a write cycle is never used (SEMANTICS 2.1: the fetch
+after any memory access is invalid; the host and the replay engine take
+read data only after a read request), so SEMANTICS is unchanged and the
+lockstep suite passes on this path. Board choices (`fpga/alhambra2/`): the
+board's 12 MHz oscillator is the core clock, no PLL; host SPI on the
+Arduino SPI positions (D13 SCK, D11 MOSI, D12 MISO, D10 CS_n); `uio` on
+D0-D7; reset is a power-on counter plus DD5 (pulled up, low resets), not a
+push button, because the buttons' polarity is unverified; IRQ on an LED
+only; `ui[7]`/`uo[7]` on the USB serial port. Rejected: a separate FPGA
+memory module (two descriptions of one memory); a PLL to 48 MHz (not needed
+for bring-up; the build reaches about 40 MHz).
