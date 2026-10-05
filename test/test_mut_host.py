@@ -194,6 +194,8 @@ async def test_reads_of_ctrl_pins_pinout_and_unmapped_registers(dut):
     # uio pads: pin 0 driven low, the rest pulled up; ui: no inputs and the
     # SPI pins low when the byte is sampled (test_id_and_registers); uo
     assert await spi.read(R_PINS, 3) == [0xFE, 0x00, 0x14]
+    # the fourth byte is 0, then the pattern repeats (D-038; host-b6056c12)
+    assert await spi.read(R_PINS, 8) == [0xFE, 0x00, 0x14, 0x00] * 2
     await spi.set_pc(1, syms["spin"])
     await spi.run(0b10)
     assert await spi.read(R_CTRL, 1) == [0b10]

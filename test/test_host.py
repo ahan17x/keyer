@@ -120,3 +120,62 @@ async def test_host_capture_replay_demo(dut):
     assert st["capture_done"] and st["replay_done"] and not st["overflow"] and not st["underrun"], st
     assert n == k == len(entries) and n >= 10
     assert [d for d, _ in entries][1:] == first[:n - 1]
+
+
+@cocotb.test()
+async def test_host_reset_through_the_driver(dut):
+    """No transaction is in progress when reset is released (SEMANTICS 10.1,
+    DECISIONS D-038): the driver's reset() holds CS_n high from before rst_n
+    falls until after it rises, the chip answers at once afterwards, a
+    reset from inside a transaction is refused, and no transaction starts
+    while rst_n is low."""
+    from cocotb.triggers import ClockCycles, RisingEdge
+    pads = await start(dut)
+    t = kh.SimTransport(dut, pads)
+    host = kh.KeyerHost(t)
+    await host.write(kh.R_PINMODE, [0xA5])
+    await host.write(kh.R_IRQEN, [0xFF])
+    csn_low_in_reset = []
+
+    async def watch():
+        prev = 1
+        while True:
+            await RisingEdge(dut.clk)
+            rst = int(dut.rst_n.value)
+            csn = (int(dut.ui_in.value) >> 2) & 1
+            if (rst == 0 or prev == 0) and csn == 0:
+                csn_low_in_reset.append(1)
+            prev = rst
+
+    cocotb.start_soon(watch())
+    await host.reset()
+    assert await host.id() == (kh.ID_BYTE, 3)
+    assert await host.read(kh.R_PINMODE, 1) == [0] and await host.read(kh.R_IRQEN, 1) == [0]
+
+    async def reset_inside():
+        await ClockCycles(dut.clk, 20)              # the read below is under way
+        assert t.spi.busy
+        try:
+            await host.reset()
+        except kh.KeyerError:
+            return True
+        return False
+
+    task = cocotb.start_soon(reset_inside())
+    assert await host.read(kh.R_ID, 4) == [kh.ID_BYTE, 3, kh.ID_BYTE, 3]
+    assert await task is True and int(dut.rst_n.value) == 1
+
+    dut.rst_n.value = 0                             # a reset the driver did not make
+    await ClockCycles(dut.clk, 3)
+    try:
+        await host.id()
+        raised = False
+    except kh.KeyerError:
+        raised = True
+    assert raised and (int(dut.ui_in.value) >> 2) & 1 == 1
+    await ClockCycles(dut.clk, 3)
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 4)
+    assert await host.id() == (kh.ID_BYTE, 3)
+    assert not csn_low_in_reset
+

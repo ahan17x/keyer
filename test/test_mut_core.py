@@ -29,33 +29,13 @@ def asm(src):
     return [words.get(a, 0) for a in range(max(words) + 1)], syms
 
 
-class LockstepW(Lockstep):
-    """keyer_tb.Lockstep with one comparison corrected. The harness compares
-    the executing instruction word with the model's memory after the model
-    has stepped the cycle, so a capture write in that cycle to the word the
-    slot executes (a thread blocked or in a DELAY at the capture address:
-    with one thread running, the free cycles are that thread's own slots)
-    is reported as a mismatch although the RTL executes, as SEMANTICS 2.1 and
-    14.4 say, the word as it was during the cycle. Here that word is the
-    reference; every other check is the harness's own."""
-
-    def _snapshot_host(self):
-        self._word_during = self.m.imem[self.m.threads[self.m.cycle & 1].pc & 0xFF]
-        return super()._snapshot_host()
-
-    def _fail(self, what, exp, got):
-        if what.startswith("ir ") and got == "%04X" % self._word_during:
-            return
-        super()._fail(what, exp, got)
-
-
 async def lockstep_firmware(dut, words, cycles, models=(), run_mask=0b01, pc1=0, after_load=None,
                             run_after=False):
-    """test.lockstep_firmware with LockstepW: load over SPI with the model
+    """As test.lockstep_firmware: load over SPI with the model
     mirroring every host action, RUN, then `cycles` cycles in lockstep."""
     pads = await start(dut)
     spi = SpiMaster(dut, pads, half=4)
-    ls = LockstepW(dut, pads, models=models)
+    ls = Lockstep(dut, pads, models=models)
 
     async def host():
         await spi.load_program(words)
@@ -111,7 +91,7 @@ async def lockstep_host(dut, body, models=()):
     (both threads stopped unless body starts them)."""
     pads = await start(dut)
     spi = SpiMaster(dut, pads, half=4)
-    ls = LockstepW(dut, pads, models=list(models))
+    ls = Lockstep(dut, pads, models=list(models))
     task = cocotb.start_soon(body(spi))
     while not task.done():
         await ls.run(100)
@@ -561,7 +541,7 @@ async def test_lockstep_hard_reset_in_the_middle_of_activity(dut):
     pads = ls.pads
     await reset(dut, pads, cycles=3)
     assert int(dut.uo_out.value) == 0 and int(dut.uio_oe.value) == 0
-    ls2 = LockstepW(dut, pads)
+    ls2 = Lockstep(dut, pads)
     seen = {}
     words2, _ = asm("""
             delay 3

@@ -321,7 +321,9 @@ then, with `Z = 1`, the status of the frame that ended.
 SPI slave, mode 0 (CPOL = 0, CPHA = 0), MSB first, CS_n framed. Pins:
 `ui[0]` = SCK, `ui[1]` = MOSI, `ui[2]` = CS_n, `uo[0]` = MISO, `uo[1]` = IRQ.
 SCK must be at most core clock / 8 (each half period at least 4 cycles);
-CS_n high for at least 4 cycles between transactions. Exact timing of when a
+CS_n high for at least 4 cycles between transactions, and from two cycles
+before `rst_n` rises (no transaction across the release of reset). MISO is
+0 except while a read data byte is shifted out. Exact timing of when a
 write takes effect: `docs/SEMANTICS.md` section 10.
 
 A transaction is a command byte followed by data bytes until CS_n rises.
@@ -344,7 +346,7 @@ during the byte following the command.
 | 0x0A | LEVELS | - | 4 bytes: inbox0, outbox0, inbox1, outbox1 counts |
 | 0x0B | PINMODE | OD mask for uio[7:0] | current mask |
 | 0x0C | IRQEN | bit0 outbox0 non-empty, bit1 outbox1 non-empty, bit2 HALTED0, bit3 HALTED1, bit4 inbox0 empty, bit5 inbox1 empty, bit6 capture done, bit7 replay done | mask |
-| 0x0D | PINS | - | 3 bytes: uio pad levels, ui levels, uo driven values |
+| 0x0D | PINS | - | 3 bytes: uio pad levels, ui levels, uo driven values; a fourth byte reads 0 |
 | 0x0E | FIFOCLR | bit0 inbox0, bit1 outbox0, bit2 inbox1, bit3 outbox1 | - |
 | 0x0F | ID | - | 2 bytes: 0x4B ('K'), ISA version |
 | 0x10 | PINOUT | - | 2 bytes: uio_out, uio_oe |

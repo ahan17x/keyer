@@ -36,6 +36,7 @@ class FakeChip:
         self.max_tx_bytes = 0       # longest data phase seen
         self.echo_per_idle = echo_per_idle
         self.tx = 0
+        self.resets = []            # (edge, CS_n level at that edge)
 
     # -- the "thread": echo inbox + 1 to outbox while RUN0 is set
     def work(self, n):
@@ -144,6 +145,14 @@ class FakeTransport:
     async def idle(self, cycles):
         self.chip.work(self.chip.echo_per_idle)
 
+    async def reset(self):
+        self.spi.park()
+        self.spi.in_reset = True
+        self.chip.resets.append(("assert", self.chip.csn))
+        self.chip.run = 0
+        self.chip.resets.append(("release", self.chip.csn))
+        self.spi.in_reset = False
+
 
 def make(echo_per_idle=4, **kw):
     chip = FakeChip(echo_per_idle)
@@ -235,3 +244,88 @@ def test_command_line_layer():
     assert "running [1, 0]" in kh.run_sync(kh.command(host, ["status"]))
     with pytest.raises(kh.KeyerError):
         kh.run_sync(kh.command(host, ["frobnicate"]))
+
+
+# ---- reset: no transaction in progress when it is released (SEMANTICS 10.1, D-038)
+
+def test_reset_keeps_cs_high_and_refuses_inside_a_transaction():
+    chip, host = make()
+    kh.run_sync(host.run(0b01))
+    kh.run_sync(host.reset())
+    assert chip.resets == [("assert", 1), ("release", 1)] and chip.run == 0
+    assert kh.run_sync(host.id()) == (0x4B, 2)
+
+    # a reset requested from inside a transaction (here: from the half-period
+    # wait of its first bit) is refused, and the transaction is not cut
+    spi = host.t.spi
+    seen = []
+
+    async def half():
+        if spi.busy and not seen:
+            seen.append(1)
+            with pytest.raises(kh.KeyerError):
+                kh.run_sync(host.reset())
+    spi.half = half
+    assert kh.run_sync(host.id()) == (0x4B, 2) and seen == [1]
+    assert chip.resets == [("assert", 1), ("release", 1)]
+
+    # and no transaction starts while the transport holds the chip in reset
+    spi.in_reset = True
+    with pytest.raises(kh.KeyerError):
+        kh.run_sync(host.id())
+    assert chip.csn == 1
+    spi.in_reset = False
+    assert kh.run_sync(host.id()) == (0x4B, 2)
+
+
+def test_board_transport_parks_the_pins_around_reset(monkeypatch):
+    """BoardTransport.setup() and reset() with a fake MicroPython `machine`
+    and board SDK: CS_n is high and SCK low at both edges of every reset."""
+    import types
+    log, pins = [], {}
+
+    class Pin:
+        OUT, IN = 1, 0
+
+        def __init__(self, num, mode, value=0):
+            self.num, self.v = num, value
+            pins[num] = self
+
+        def value(self, v=None):
+            if v is None:
+                return self.v
+            self.v = v
+            log.append(("pin", self.num, v))
+
+    class Board:
+        shuttle = types.SimpleNamespace(tt_um_ahan17x_keyer=types.SimpleNamespace(enable=lambda: log.append(("enable",))))
+
+        def reset_project(self, on):
+            log.append(("reset", on, pins[19].v, pins[17].v))
+
+        def clock_project_PWM(self, hz):
+            log.append(("clock", hz))
+
+    board = Board()
+    monkeypatch.setitem(sys.modules, "machine", types.SimpleNamespace(Pin=Pin))
+    monkeypatch.setitem(sys.modules, "ttboard", types.ModuleType("ttboard"))
+    monkeypatch.setitem(sys.modules, "ttboard.demoboard",
+                        types.SimpleNamespace(DemoBoard=types.SimpleNamespace(get=lambda: board)))
+    slept = []
+    monkeypatch.setitem(sys.modules, "time", types.SimpleNamespace(sleep_us=slept.append))
+    t = kh.BoardTransport()
+    with pytest.raises(kh.KeyerError):              # no SDK handle yet
+        kh.run_sync(t.reset())
+    pins[19].v = 0                                  # CS_n left low by something else
+    t.setup()
+    resets = [e for e in log if e[0] == "reset"]
+    assert resets == [("reset", True, 1, 0), ("reset", False, 1, 0)]
+    assert not t.spi.in_reset and slept and min(slept) >= 1
+    kh.run_sync(t.xfer(kh.R_ID, [0, 0]))
+    del log[:]
+    kh.run_sync(kh.KeyerHost(t).reset())
+    assert [e for e in log if e[0] == "reset"] == [("reset", True, 1, 0), ("reset", False, 1, 0)]
+    t.spi.busy = True                               # as if inside a transaction
+    with pytest.raises(kh.KeyerError):
+        kh.run_sync(t.reset())
+

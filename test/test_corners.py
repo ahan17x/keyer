@@ -7,7 +7,7 @@ All run in lockstep with the golden model unless they only use the pads.
 import random
 
 import cocotb
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, RisingEdge
 
 import keyer_isa as I
 from keyer_tb import (R_CTRL, R_INBOX0, R_LEVELS, R_OUTBOX0, R_STAT, SpiMaster)
@@ -149,6 +149,61 @@ async def test_miso_is_low_outside_a_transaction(dut):
         assert int(dut.uo_out.value) & 1 == 0
         await ClockCycles(dut.clk, 1)
     await spi.write(R_INBOX0 + 5, [0x00])
+
+
+@cocotb.test()
+async def test_miso_is_low_except_while_read_data_is_shifted_out(dut):
+    """SEMANTICS 10.1 (DECISIONS D-038): MISO is 0 during the command byte of
+    a read, during the whole of a write (one and several data bytes, to
+    registers that read back as ones), and again once CS_n is high; it
+    carries data only from the first data byte of a read on. MISO is sampled
+    in every clock cycle. Kills host-931f4e64 (a write command arms the
+    read path), host-2b5da9fb (so does every write data byte),
+    host-160d459e and host-4bbc0a41 (a 1 in or into the idle shift
+    register)."""
+    from keyer_tb import R_CAP_CFG, R_IRQEN, R_PINMODE
+    pads = await start(dut)
+    spi = SpiMaster(dut, pads, half=4)
+    log = []
+
+    async def monitor():
+        while True:
+            await RisingEdge(dut.clk)
+            log.append(int(dut.uo_out.value) & 1)
+
+    cocotb.start_soon(monitor())
+    await ClockCycles(dut.clk, 4)
+    # registers whose read value is all ones, so a read path armed by a
+    # write would show on the wire
+    await spi.write(R_PINMODE, [0xFF])
+    await spi.write(R_IRQEN, [0xFF])
+    await spi.write(R_CAP_CFG, [0xFF, 0xFF])
+    for reg, data in ((R_PINMODE, [0xFF]), (R_PINMODE, [0xFF, 0xFF, 0xFF, 0xFF]), (R_IRQEN, [0xFF, 0xFF]),
+                      (R_CAP_CFG, [0xFF, 0xFF, 0xFF, 0xFF]), (0x7F, [0x00, 0xFF, 0x00])):
+        await spi.write(reg, data)
+    await ClockCycles(dut.clk, 4)
+    assert 1 not in log, "MISO moved during a write, at cycle %d" % log.index(1)
+
+    # a read, by hand: the command byte, then two data bytes of ones
+    pads.set_spi(0, 0, 0)
+    await ClockCycles(dut.clk, spi.half)
+    await spi._byte(R_PINMODE)
+    # the pad falling edge that samples data byte 0 comes now; MISO moves
+    # three cycles after it (10.2), so everything logged up to here is 0
+    await ClockCycles(dut.clk, 1)
+    assert 1 not in log, "MISO moved during a read's command byte, at cycle %d" % log.index(1)
+    mark = len(log)
+    assert [await spi._byte(0), await spi._byte(0)] == [0xFF, 0xFF]
+    pads.set_spi(0, 0, 0)
+    await ClockCycles(dut.clk, spi.half)
+    assert sum(log[mark:]) >= 14 * spi.half, "the read data did not appear on MISO"
+    pads.set_spi(0, 0, 1)
+    await ClockCycles(dut.clk, 4)                            # CS_n high is acted on within three cycles
+    mark = len(log)
+    await ClockCycles(dut.clk, 12)
+    await spi.write(R_PINMODE, [0x00])
+    await spi.write(R_IRQEN, [0x00])
+    assert 1 not in log[mark:], "MISO high after the read"
 
 
 async def _lockstep_host(dut, body, models=()):

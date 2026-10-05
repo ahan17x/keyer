@@ -12,8 +12,8 @@ and pins, drain the capture buffer, load and start a replay.
     await host.push(0, b"hello")
     data = await host.pop(0, 5, wait=True)
 
-Two transports implement the same two calls, `xfer(cmd, data)` and
-`idle(cycles)`:
+Two transports implement the same three calls, `xfer(cmd, data)`,
+`idle(cycles)` and `reset()`:
 
 - `SimTransport(dut, pads)`: drives the pads of the cocotb testbench
   (test/tb.v). Used by test/test_host.py.
@@ -22,7 +22,12 @@ Two transports implement the same two calls, `xfer(cmd, data)` and
 
 Both use the same `BitBangSPI`, so the code that wiggles SCK, MOSI and CS_n on
 the board is the code the simulation exercises; only the four pin functions
-and the delay differ. Every call is a coroutine so that one test body runs on
+and the delay differ. No transaction may be in progress when the chip's
+reset is released: CS_n must be high from two core clocks before `rst_n`
+rises (SEMANTICS 10.1, DECISIONS D-038). Every transport enforces it:
+`reset()` parks the SPI pins (CS_n high, SCK and MOSI low) before it asserts
+reset and keeps them parked until after the release, refuses to run inside a
+transaction, and `xfer()` refuses to start while reset is asserted. Every call is a coroutine so that one test body runs on
 both: under cocotb it is awaited, on the board `run_sync()` drives it to
 completion (nothing there really suspends). The `selftest_*` functions at the
 bottom are such bodies; `test/test_host.py` runs them in simulation and
@@ -43,6 +48,7 @@ R_IRQEN, R_PINS, R_FIFOCLR, R_ID, R_PINOUT = 0x0C, 0x0D, 0x0E, 0x0F, 0x10
 R_CR_CTRL, R_CAP_CFG, R_CAP_BUF, R_REP_CFG, R_REP_BUF, R_CR_COUNT = 0x11, 0x12, 0x13, 0x14, 0x15, 0x16
 
 FIFO_DEPTH = 16
+RESET_GUARD = 4         # core clocks CS_n is held high around a reset edge (the chip needs 2 before release)
 ID_BYTE = 0x4B          # 'K'
 CR_ARM, CR_DISARM, CR_START, CR_STOP = 1, 2, 4, 8
 
@@ -76,11 +82,28 @@ class BitBangSPI:
     sample MISO, half. A transaction is CS_n low, half, command byte, data
     bytes, SCK low, half, CS_n high, two halves. The chip needs each half to
     be at least 4 core clocks and CS_n high for at least 4 (SEMANTICS 10.1).
+
+    `busy` is true from CS_n low to CS_n high; `in_reset` is set by the
+    transport while it holds the chip in reset. xfer() raises KeyerError
+    while `in_reset`, and park() (the idle pin state: CS_n high, SCK and MOSI
+    low) raises inside a transaction, so a reset can never be released over
+    a transaction (SEMANTICS 10.1, DECISIONS D-038).
     """
 
     def __init__(self, set_sck, set_mosi, set_csn, get_miso, half):
         self.set_sck, self.set_mosi, self.set_csn, self.get_miso, self.half = \
             set_sck, set_mosi, set_csn, get_miso, half
+        self.busy = False
+        self.in_reset = False
+
+    def park(self):
+        """Drive the idle state. Called by a transport before it asserts
+        reset; the pins then stay parked until the reset is released."""
+        if self.busy:
+            raise KeyerError("reset inside a host transaction: CS_n must be high when reset is released")
+        self.set_sck(0)
+        self.set_mosi(0)
+        self.set_csn(1)
 
     async def _byte(self, b):
         got = 0
@@ -96,8 +119,13 @@ class BitBangSPI:
     async def xfer(self, cmd, data):
         """Send cmd, then the data bytes; returns the bytes clocked in during
         the data phase (meaningful for reads)."""
+        if self.in_reset:
+            raise KeyerError("host transaction while reset is asserted")
+        if self.busy:
+            raise KeyerError("host transaction inside another")
         self.set_sck(0)
         self.set_mosi(0)
+        self.busy = True
         self.set_csn(0)
         await self.half()
         await self._byte(cmd)
@@ -108,6 +136,7 @@ class BitBangSPI:
         self.set_mosi(0)
         await self.half()
         self.set_csn(1)
+        self.busy = False
         await self.half()
         await self.half()
         return rx
@@ -148,10 +177,26 @@ class SimTransport:
         await self._cc(self.dut.clk, self.half_cycles)
 
     async def xfer(self, cmd, data):
+        if int(self.dut.rst_n.value) == 0:        # a reset this transport did not make
+            await self._cc(self.dut.clk, 1)       # (a release written in this very time step shows a cycle later)
+            if int(self.dut.rst_n.value) == 0:
+                raise KeyerError("host transaction while reset is asserted")
         return await self.spi.xfer(cmd, data)
 
     async def idle(self, cycles):
         await self._cc(self.dut.clk, max(1, cycles))
+
+    async def reset(self, cycles=5):
+        """Hard reset with the SPI pins parked: CS_n is high from at least
+        four core clocks before rst_n falls until four after it rises."""
+        self.spi.park()
+        self.spi.in_reset = True
+        await self._cc(self.dut.clk, RESET_GUARD)
+        self.dut.rst_n.value = 0
+        await self._cc(self.dut.clk, max(RESET_GUARD, cycles))
+        self.dut.rst_n.value = 1
+        await self._cc(self.dut.clk, RESET_GUARD)
+        self.spi.in_reset = False
 
 
 class BoardTransport:
@@ -166,8 +211,10 @@ class BoardTransport:
 
     `setup()` selects and clocks the project through the board's SDK
     (`ttboard`) when it is present: enable the design, hold reset, start the
-    project clock, release reset. Without the SDK it only configures the four
-    pins; select and clock the project by other means first.
+    project clock, release reset, with the SPI pins parked (CS_n high) all
+    the while. Without the SDK it only configures the four pins; select and
+    clock the project by other means first, and reset it only while no
+    transaction is in progress (the constructor leaves CS_n high).
 
     NOT yet run on hardware.
     """
@@ -187,16 +234,39 @@ class BoardTransport:
         self._csn = machine.Pin(p["csn"], machine.Pin.OUT, value=1)
         self._miso = machine.Pin(p["miso"], machine.Pin.IN)
         self.spi = BitBangSPI(self._sck.value, self._mosi.value, self._csn.value, self._miso.value, self._half)
+        self._tt = None
 
     def setup(self, project="tt_um_ahan17x_keyer"):
         """Select, clock and reset the project via the demo board SDK."""
         from ttboard.demoboard import DemoBoard
         tt = DemoBoard.get()
+        self.spi.park()
+        self.spi.in_reset = True
         getattr(tt.shuttle, project).enable()
         tt.reset_project(True)
         tt.clock_project_PWM(self.clock_hz)
+        self._guard()
         tt.reset_project(False)
+        self._guard()
+        self.spi.in_reset = False
+        self._tt = tt
         return tt
+
+    def _guard(self):
+        self._time.sleep_us(max(1, (RESET_GUARD * 1000000) // self.clock_hz))
+
+    async def reset(self):
+        """Hard reset through the SDK with the SPI pins parked."""
+        if self._tt is None:
+            raise KeyerError("no board SDK: call setup() first, or reset the project with CS_n high")
+        self.spi.park()
+        self.spi.in_reset = True
+        self._guard()
+        self._tt.reset_project(True)
+        self._guard()
+        self._tt.reset_project(False)
+        self._guard()
+        self.spi.in_reset = False
 
     async def _half(self):
         if self.half_us:
@@ -213,7 +283,7 @@ class BoardTransport:
 
 class KeyerHost:
     """Everything a host does with the chip. `transport` provides
-    `xfer(cmd, data)` and `idle(cycles)`. All methods are coroutines."""
+    `xfer(cmd, data)`, `idle(cycles)` and `reset()`. All methods are coroutines."""
 
     def __init__(self, transport, poll_idle=200, poll_limit=2000):
         self.t = transport
@@ -226,6 +296,11 @@ class KeyerHost:
 
     async def read(self, reg, n):
         return await self.t.xfer(reg & 0x7F, [0] * n)
+
+    async def reset(self):
+        """Hard reset of the chip. The transport keeps CS_n high across it
+        (SEMANTICS 10.1) and raises KeyerError inside a transaction."""
+        await self.t.reset()
 
     # -- identity, control, status
     async def id(self):

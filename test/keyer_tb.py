@@ -136,6 +136,8 @@ async def reset(dut, pads, cycles=5):
     pads.flush()
     await ClockCycles(dut.clk, cycles)
     await RisingEdge(dut.clk)
+    # no transaction in progress when reset is released (SEMANTICS 10.1)
+    assert cycles >= 2 and pads.ui & 0x04, "CS_n must be high from two cycles before rst_n rises"
     dut.rst_n.value = 1          # cycle 0 begins now (cyc == 0, rst_n == 1)
 
 
@@ -260,6 +262,10 @@ class Lockstep:
             # 4. step the ISS for this cycle and compare the execution record
             t = m.threads[tid]
             exp_pc = t.pc
+            # the word as it is during this cycle: a capture write landing at
+            # the end of the cycle does not change what the slot executes
+            # (SEMANTICS 2.1, 14.4; BUGS 45)
+            exp_ir = m.imem[exp_pc]
             m.host_port_busy = bool(host_snapshot["imem_we"] or host_snapshot["imem_re"])
             done = m.step()
             exp_exec = 1 if m.executed else 0
@@ -268,8 +274,8 @@ class Lockstep:
             if exec_:
                 if pc != exp_pc:
                     self._fail("pc_cur T%d" % tid, "%02X" % exp_pc, "%02X" % pc)
-                if ir != m.imem[exp_pc]:
-                    self._fail("ir T%d pc=%02X" % (tid, exp_pc), "%04X" % m.imem[exp_pc], "%04X" % ir)
+                if ir != exp_ir:
+                    self._fail("ir T%d pc=%02X" % (tid, exp_pc), "%04X" % exp_ir, "%04X" % ir)
                 if commit != (1 if done else 0):
                     self._fail("commit T%d pc=%02X ir=%04X" % (tid, exp_pc, ir), int(done), commit)
                 if commit:

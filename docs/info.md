@@ -71,6 +71,12 @@ or Manchester coding, bit stuffing, CRC-5 (receive check), CRC-16 and
 CRC-32, J, K and SE0 on a pin pair `uio[2k]`, `uio[2k+1]`, sync and
 end-of-frame detection and framing status. A frame is the bytes firmware
 queues without a gap; the engine appends the CRC and the end of packet.
+Every frame starts from the idle line: reconfiguring the engine in the
+middle of a frame (an abort) returns the pair to idle in the same clock
+cycle. The status word has a sticky overrun bit for a received byte or
+frame end that firmware had not taken when the next frame started; it
+clears when the status is read. A frame being received is abandoned,
+without a flag, when firmware starts the transmitter (half duplex).
 Every wait on it has a timeout form. `docs/SERIALIZER.md` is the guide and
 `docs/SEMANTICS.md` section 15 the cycle-exact rules. The two protocols
 that use it need their own clock setting, both inside the signed-off
@@ -87,6 +93,17 @@ blocked), PCs, program memory address and data, the four FIFOs and their
 levels, open-drain mask, pin read-back, interrupt enables, and the capture
 and replay configuration, control, status and counts. The full map is in
 `docs/isa.md` section 6.
+
+Three rules a board or a host program can rely on: MISO is 0 at all times
+except while a read data byte is being shifted out (after reset, between
+transactions, during every command byte and during writes), so the line can
+be shared or probed; no transaction may be in progress when reset is
+released (CS_n high from two clock cycles before `rst_n` rises; the host
+driver `tools/keyerhost.py` parks the SPI pins around every reset it makes
+and refuses a reset inside a transaction); and a `PINS` read returns the
+three pin bytes and then a fourth byte of 0. Program memory is read back
+only while both threads are stopped; what `IMEM_DATA` returns while a
+thread runs is unspecified.
 
 **Pins**
 

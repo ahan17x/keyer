@@ -768,7 +768,7 @@ and their effects are registered at its end.
 
 | Instruction | Completes iff | Effect on completion |
 |---|---|---|
-| `SERCFG rs` | always | `cfg <= rs[7:0]`; `owner <= ` the executing thread; every other register of 15.1 `<= 0`, except `rx_sh <= 0xFF`, `rx_w <= 1`, and `rx_last` (15.1). If `tx_state(c) != IDLE` the `SERCFG` is an **abort** and also writes `idle(m, P, N)` with m, P and N from `cfg(c)`, the configuration it replaces; otherwise the pin registers are not changed. |
+| `SERCFG rs` | always | `cfg <= rs[7:0]`; `owner <= ` the executing thread; every other register of 15.1 `<= 0`, except `rx_sh <= 0xFF`, `rx_w <= 1`, and `rx_last` (15.1). If `tx_state(c) != IDLE` the `SERCFG` is an **abort** and also writes `idle(m, P, N)` with m, P and N from `cfg(c)`, the configuration it replaces (m is 1 or 2 there: the transmitter leaves IDLE only at a symbol tick, and `SERCFG` returns it to IDLE); otherwise the pin registers are not changed. |
 | `SERTX rs` | `tx_full(c) = 0` | `tx_hold <= rs[7:0]`; `tx_hold_c <= 0`; `tx_full <= 1` |
 | `SERTXC rs` | `tx_full(c) = 0` | the same with `tx_hold_c <= 1` |
 | `SERI n`, `SERIC n` | `tx_full(c) = 0` | `SERTX`, `SERTXC` with the byte n of the instruction word |
@@ -849,8 +849,9 @@ when a frame starts, and the engine keeps it so: the state every tail
 leaves and the state an abort writes (15.2) are idle, so an aborted frame
 returns the pair to idle at the end of the cycle of the `SERCFG`, well
 within one symbol period, and the next frame is coded from J again. After
-reset the pins are released, which is idle in mode 1; in mode 2 firmware
-drives the pair low once before the first frame. (Before version 0.5 an
+reset the pins are released, so a pulled-up bus shows J as in mode 1's
+idle state (the output registers hold 0, which no rule reads); in mode 2
+firmware drives the pair low once before the first frame. (Before version 0.5 an
 abort left the last symbol on the pair; found by the formal proof of the
 stuffing property, `formal/ser_stuff_props.sv`.) Only firmware that writes
 the pair's pins itself between frames can break the precondition, and then
