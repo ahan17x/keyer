@@ -49,7 +49,7 @@ if [ "${1:-}" != "quick" ]; then
     fi
     run "formal: capture and replay (prove + cover)" bash -c 'cd formal && rm -rf capture_prove capture_cover && out=$(yowasp-sby -f capture.sby 2>&1); echo "$out" | grep -E "DONE"; [ "$(echo "$out" | grep -c "DONE (PASS")" -eq 2 ]'
     # ten tasks: stuff, crc_any (pdr), crc16, crc32, rt_nrzi, rt_manch (bmc), four covers
-    run "formal: serializer (stuffing, CRC, round trip; prove + bmc + cover)" bash -c 'cd formal && rm -rf ser ser_stuff ser_crc_any ser_crc16 ser_crc32 ser_rt_nrzi ser_rt_manch ser_stuff_cover ser_crc_cover ser_crc_any_cover ser_rt_cover && out=$(yowasp-sby -f ser.sby 2>&1); echo "$out" | grep -E "DONE"; [ "$(echo "$out" | grep -c "DONE (PASS")" -eq 10 ]'
+    run "formal: serializer (stuffing, CRC, round trip; prove + bmc + cover)" bash -c 'cd formal && rm -rf ser ser_stuff ser_crc_any ser_crc16 ser_crc32 ser_rt_nrzi ser_rt_manch ser_stuff_cover ser_crc_cover ser_crc_any_cover ser_rt_cover && out=$(yowasp-sby -f ser.sby 2>&1); echo "$out" | grep -E "DONE"; [ "$(echo "$out" | grep -c "DONE (PASS")" -eq 10 ] || { echo "not all ten tasks passed; last lines of the sby output:"; echo "$out" | grep -v "DONE (PASS" | tail -40; exit 1; }'
   else
     echo "(formal skipped: yowasp-sby not installed)"
   fi
