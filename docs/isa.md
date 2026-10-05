@@ -1,4 +1,4 @@
-# Keyer ISA, version 0.2 (draft, not yet frozen)
+# Keyer ISA, version 0.3 (draft, not yet frozen)
 
 Keyer is a two-thread, 16-bit, pin-oriented processor. This document is the
 programmer's reference. The cycle-exact contract between the instruction-set
@@ -131,7 +131,7 @@ The register field is always at `[11:9]` (a second register, when present, at
 | B JMP/CALL | `1011 c aaaaaaaaaaa` | c=0: PC = a. c=1: LR = PC + 1; PC = a |
 | C PIN | `1100 ffff t xx ppppp` | pin op on p; t = timeout form of a wait |
 | D PINR | `1101 rrr fff x ppppp` | pin op with register |
-| E XFER | `1110 rrr ffff t xxxx` | register <-> unit; t = timeout form of PUSH/POP |
+| E XFER | `1110 rrr ffff t gggg` | register <-> unit; t = timeout form of PUSH/POP and the serializer waits; g = serializer function when f = 15, otherwise must be 0 |
 | F MISC | `1111 ffff iiiiiiii` | control |
 
 ## 4. Instruction list
@@ -258,6 +258,13 @@ level.
 | 12 | `RDLR rd` | rd = LR (save the return address before a nested CALL) | - | 1 |
 | 13 | `JMPR rs` | PC = rs (return through a saved LR, or a jump table) | - | 1 |
 | 14 | `CAPC rs` | capture/replay control: rs[0] arm capture, rs[1] disarm, rs[2] start replay, rs[3] stop replay (docs/CAPTURE.md) | - | 1 |
+| 15, g=0 | `SERCFG rs` | serializer configuration = rs[7:0], engine reset, this thread's timer sets the symbol period (docs/SERIALIZER.md) | - | 1 |
+| 15, g=1 | `SERTX rs` | queue rs[7:0] for transmission, not in the CRC | - | blocking (holding register full) |
+| 15, g=2 | `SERTXC rs` | queue rs[7:0] for transmission, in the CRC | - | blocking (holding register full) |
+| 15, g=3 | `SERRX rd` | rd = received byte, Z = 0; or at a frame end rd = serializer status, Z = 1 | Z | blocking (no byte and no frame end) |
+| 15, g=4 | `SERST rd` | rd = serializer status | - | 1 |
+| 15, g=5 | `SERWT` | wait until the transmitter is idle and its holding register empty | - | blocking |
+| 15, g=1,2,3,5, t=1 | `SERTXT rs` `SERTXCT rs` `SERRXT rd` `SERWTT` | as above, or give up when the deadline is reached; C = 0 done, C = 1 timeout | C (and Z for `SERRXT`) | blocking |
 
 ### Misc (major F)
 
@@ -273,6 +280,8 @@ level.
 | 7 | `START` | start the other thread at its current PC | 1 |
 | 8 | `STOP` | stop the other thread | 1 |
 | 9 | `SETD k` | DEADLINE = NOW + k (k = 0..255) | 1 |
+| 10 | `SERI n` | `SERTX` with the byte n (0..255) from the instruction word | blocking (holding register full) |
+| 11 | `SERIC n` | `SERTXC` with the byte n | blocking (holding register full) |
 
 ## 5. Timing recipes
 
@@ -293,6 +302,19 @@ wait.
 Fastest software bit rate per thread is one bit every two slots (`WRC` +
 `WAITD 1`), i.e. F / 4 = 15 Mbit/s at 60 MHz, with the edge timing set by the
 timer rather than the loop.
+
+## 5a. The serializer
+
+One shared engine does the bit level of coded serial lines: a shift
+register clocked by the owning thread's timer, NRZI or Manchester coding,
+bit stuffing, CRC-5, CRC-16 and CRC-32, SE0/J/K on the pin pair `uio[2k]`,
+`uio[2k+1]`, and framing status. `docs/SERIALIZER.md` is the programmer's
+guide (configuration byte, status word, an example); the cycle-exact rules
+are `docs/SEMANTICS.md` section 15. In short: `SETT` the symbol period,
+`SERCFG` once, then `SERTX`/`SERI` bytes outside the CRC and
+`SERTXC`/`SERIC` bytes inside it; the frame, its CRC and its end of packet
+are sent when the bytes stop coming. `SERRX` returns received bytes and
+then, with `Z = 1`, the status of the frame that ended.
 
 ## 6. Host interface
 
@@ -344,4 +366,5 @@ trigger, overflow and underrun rules): `docs/CAPTURE.md` and
 - 256 vs 512 words of IMEM (the 512 x 16 macro is 45,300 um^2). The encoding already allows 11-bit addresses.
 - Whether `DELAY` should count core cycles instead of slots.
 - A `WTA mask` (wait for any change on a pin mask) instruction for the capture feature.
+- XFER sub-opcode 15 now holds the serializer (function codes 6 to 15 free); MISC sub-opcodes 12 to 15 are free.
 - Side-set style "write pin and wait" fusion, if the UART/SPI loops turn out to need it.

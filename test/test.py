@@ -86,7 +86,7 @@ async def test_id_and_registers(dut):
     pads = await start(dut)
     for half in (4, 8, 16):                 # SCK = clk/8 (the limit), clk/16, clk/32
         spi = SpiMaster(dut, pads, half=half)
-        assert await spi.read(R_ID, 2) == [0x4B, 0x02], half
+        assert await spi.read(R_ID, 2) == [0x4B, 0x03], half
         assert await spi.read(R_STAT, 1) == [0]
         await spi.write(R_PINMODE, [0xA5])
         assert await spi.read(R_PINMODE, 1) == [0xA5]
