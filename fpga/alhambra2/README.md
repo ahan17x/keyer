@@ -27,18 +27,18 @@ Build of 2026-10-04 (Yosys 0.69, nextpnr 0.7, seed 1):
 
 | Item | Value |
 |---|---|
-| Synthesis | 2,786 LUT4, 1,039 flip-flops, 412 carry cells |
+| Synthesis | 2,761 LUT4, 997 flip-flops, 412 carry cells |
 | Block RAM | 5 of 32: the program memory and the four FIFOs |
-| Placed logic cells | 3,557 of 7,680 (46% of the die) |
+| Placed logic cells | 3,501 of 7,680 (46% of the die) |
 | I/O | 32 |
-| Clock | 40.8 MHz achieved (nextpnr; icetime 39.2 MHz) against the 12 MHz required |
+| Clock | 45.5 MHz achieved (nextpnr; icetime 44.5 MHz) against the 12 MHz required |
 | Post-synthesis simulation | 10 of 10 host-interface and pads-only tests pass (`sim.sh`) |
 
 The HX4K-TQ144 is the HX8K die in a smaller package. The open flow (and apio,
 for this board) targets it as `--hx8k --package tq144:4k` and can use all
 7,680 logic cells; the vendor tools limit the part to 3,520. The design
-fits the die with room to spare; it does not fit the vendor's 3,520-cell
-limit, which only matters if the vendor tools are used.
+fits the die with room to spare; at 3,501 cells it is at the edge of the
+vendor's limit, which only matters if the vendor tools are used.
 
 `sim.sh` synthesises the Tiny Tapeout top for the iCE40 without the wrapper
 and runs the tests the ASIC's gate-level job runs (host interface, the host

@@ -365,3 +365,17 @@ push button, because the buttons' polarity is unverified; IRQ on an LED
 only; `ui[7]`/`uo[7]` on the USB serial port. Rejected: a separate FPGA
 memory module (two descriptions of one memory); a PLL to 48 MHz (not needed
 for bring-up; the build reaches about 40 MHz).
+
+## D-033 2026-10-04 OPEN: SEMANTICS does not say what MISO does while CS_n is high
+
+Mutation testing left a survivor that is not equivalent: the host's `miso`
+register resetting to 1 instead of 0 while no transaction is active
+(`host-de4cf058`). The RTL drives MISO (`uo[0]`) low whenever CS_n is high;
+SEMANTICS 10.1 and 3.1 do not state it, and no test looked. Proposal for
+Ahan: add to SEMANTICS 10.1 "MISO is 0 while CS_n is high (as seen through
+the synchroniser) and after reset". Why: it is what the RTL does, it is
+visible at a pad, and a defined idle level lets a board share or probe the
+line. `test_miso_is_low_outside_a_transaction` (test/test_corners.py)
+already checks the current behaviour and kills the mutant; nothing in the
+RTL or the model changes either way. Alternative: declare the idle level
+undefined and list the mutant as equivalent (then the test goes).

@@ -4,8 +4,9 @@
 # mutant; the last job merges them, prints the score and lists the survivors
 # and the errors in the run summary.
 #
-# Shards: about 1,500 mutants, on average under a minute each on a runner
-# with 4 workers; 16 shards keep every job far inside GitHub's 6 h limit.
+# Shards: about 1,500 mutants at roughly 50 s each on a developer machine
+# with 4 workers (measured on a 150-mutant sample); 16 shards put each job at
+# about 45 minutes on a runner half as fast, far inside the 6 h limit.
 # The input can lower the count for a quick look (`sample`) or restrict the
 # run to some files.
 name: mutation

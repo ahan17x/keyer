@@ -88,16 +88,26 @@ the host SPI), `uo[7:2]` firmware outputs 18-23.
 | `spi_master.s` | SPI master, mode 0, frames from the host | SCK `uo[3]`, MOSI `uo[4]`, CS_n `uo[5]`, MISO `ui[4]` |
 | `i2c_master.s` | I2C master: start, repeated start, stop, write with ACK check, read, clock stretching with timeout | SCL `uio[2]`, SDA `uio[3]` (open-drain) |
 | `capture_demo.s` | thread 1 records thread 0's I2C transaction and replays it | same I2C pins |
+| `spi_slave.s` | SPI slave, mode 0: received bytes to the host, queued reply bytes out, MISO tri-stated when deselected, resynchronises after an aborted frame; SCK up to clk/20 | SCK `ui[3]`, MOSI `ui[4]`, CS_n `ui[5]`, MISO `uio[0]` |
+| `i2c_slave.s` | I2C slave behaving like a 24Cxx EEPROM: pointer write, sequential and current-address reads, repeated START, clock stretching, bus timeout. The contents are a table in program memory (up to 64 bytes) that the host loads; written bytes are handed to the host | SCL `uio[2]`, SDA `uio[3]` (open-drain) |
+| `jtag_master.s` | JTAG master: TAP reset, IR and DR scans of 1 to 256 bits (IDCODE is a reset and a 32-bit DR scan); TCK up to clk/36 | TCK `uo[3]`, TMS `uo[4]`, TDI `uo[5]`, TDO `ui[4]` |
+| `swd.s` | ARM Serial Wire Debug host: connect sequence, any DP or AP read or write with ACK and parity handling (DPIDR is one read); SWCLK up to clk/24 | SWCLK `uo[3]`, SWDIO `uio[0]` (pull-up) |
+| `ps2_host.s` | PS/2 host: receives device frames with parity and framing checks and a frame timeout, sends commands with the device's ACK checked | CLK `uio[0]`, DATA `uio[1]` (open-drain) |
+| `ws2812.s` | WS2812B LED strip driver at the datasheet's 800 kbit/s timing, frames streamed through the inbox, underrun reported | DOUT `uo[2]` |
 
 **Verification**
 
 The behaviour is defined cycle by cycle in `docs/SEMANTICS.md`. A Python
 model and the RTL were written from it independently and run in lockstep
 from reset in simulation, every cycle compared, with all host traffic
-mirrored; the firmware is checked against independent UART, SPI and I2C
-protocol models; the FIFO, the pin unit, the timer and the capture and
-replay engines carry formal proofs; and the host-interface and pads-only
-firmware tests also run on the gate-level netlist.
+mirrored; every firmware program is checked against a model of its peer
+that knows only the protocol (UART, SPI master and slave, I2C master and
+slave, a JTAG TAP, an SW-DP target, a PS/2 device, a WS2812 decoder); the
+FIFO, the pin unit, the core's timer and control rules and the capture and
+replay engines carry formal proofs; the host-interface and pads-only
+firmware tests also run on the gate-level netlist; and the test suite
+itself is measured by mutation testing. `docs/VERIFICATION.md` has the
+layers, what each found and the commands.
 
 ## How to test
 
@@ -170,6 +180,9 @@ driver does this through the board's SDK when it is present.
 
 None is needed for the self-test. For the firmware: pull-up resistors
 (4.7 kOhm) on any bidirectional pin used in open-drain mode (I2C on
-`uio[2]`/`uio[3]`); a wire or a USB-UART adapter on `uo[2]`/`ui[3]`; an SPI
-flash or sensor on `uo[3..5]`/`ui[4]`; an I2C device on `uio[2]`/`uio[3]`. A
-logic analyser is useful to see the replayed waveforms.
+`uio[2]`/`uio[3]`, PS/2 on `uio[0]`/`uio[1]`, SWDIO on `uio[0]`); a wire or
+a USB-UART adapter on `uo[2]`/`ui[3]`; an SPI flash or sensor on
+`uo[3..5]`/`ui[4]`; an I2C device on `uio[2]`/`uio[3]`; for the other
+firmware a JTAG or SWD target on `uo[3..5]`/`ui[4]`/`uio[0]`, an SPI or I2C
+master, a PS/2 keyboard, a WS2812B strip on `uo[2]` (through a 3.3 V to 5 V
+level shifter). A logic analyser is useful to see the replayed waveforms.
