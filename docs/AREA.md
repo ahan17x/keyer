@@ -349,3 +349,42 @@ after global placement, at the typical corner, to 80% of the limit
 to about 3.6 ns at the slow corner, where the same cells are 1.7 to 1.8
 times slower. Which nets end up above the limit is then a matter of
 placement: earlier runs of other designs had 33, 14 and 0. Fix: D-041.
+
+### Run 37339746749, 2026-10-05, commit 103b52d (branch `d039`: D-039 and the slew margin of D-041)
+
+Started by the push of the branch. Jobs: `gds` success (1 h 37 min),
+`gl_test` success, `viewer` success, `precheck` success (all nine checks).
+Numbers from `python3 scripts/gds_report.py 37339746749`.
+
+| Item | Value |
+|---|---|
+| Standard cells | 15,085 instances (1,601 flops, 3,287 timing-repair buffers) plus the macro; 73,033 with fill |
+| Cell area / utilisation | 216,717 um^2 + 28,127 um^2 macro; 27.1% (standard cells 24.8%) |
+| Setup slack, 20 ns | fast +12.39 ns; typical +8.25 ns; slow +0.99 ns; no violating endpoint at any corner |
+| Hold slack | fast +0.104 ns, typical +0.286 ns, slow +0.610 ns; no violations |
+| Routing | detailed routing 54 min (eight iterations); DRC 0; wire length 619,655 um |
+| DRC / LVS / antenna | Magic DRC 29,294 and 10 illegal overlaps (as before); LVS 0; antenna 0 |
+| Slew / cap / fanout | **0 max-slew**, 1 max-cap, 138 max-fanout |
+| gl_test | success |
+
+Against master (37286790227): +226 cells, +1 flop (`rx_drop`), +823 um^2,
++0.1 point of utilisation, for D-039's logic and the extra slew repair.
+
+**The slew fix is confirmed** (D-041): no pin is above the library's
+`max_transition` at any corner (13 at the slow corner before).
+`resolved.json` shows `DESIGN_REPAIR_MAX_SLEW_PCT` 50.
+
+Setup is met at all three corners; the slow corner has +0.99 ns where the
+last run had +1.37. The worst path is the same one (macro data output into
+decode, 12 of the 12 worst start at the macro); the difference is within
+what placement alone has moved this figure between runs (+0.76 to +1.37).
+
+**One max-cap entry, at all three corners**: the macro's output pin
+`A_DOUT[7]` drives 68.4 fF against the 64 fF the macro's library allows
+(7% over; the net goes to one buffer over a long route). The flow reports
+it and does not fail. Runs before the serializer had 1 or 5 entries of
+this kind; the last two had none. Not fixed here: the key that would do it
+(`DESIGN_REPAIR_MAX_CAP_PCT`, the same mechanism as D-041) is not covered
+by Ahan's instruction for the slew step. Open, see HANDOFF.
+
+Merge rule (timing clean at all corners, utilisation under 40%): met.

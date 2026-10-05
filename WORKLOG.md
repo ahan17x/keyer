@@ -414,3 +414,70 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   equivalence 547 of 547, five formal groups). Pushed. Open for Ahan:
   D-038.
 
+
+## 2026-10-05, Claude Code session 6 (D-038, D-039, slew, model vectors, mutation campaign, timing check, D-040)
+
+- **D-038 resolved** (Ahan): SEMANTICS 0.5 section 10 (MISO is 0 except
+  while a read data byte is shifted out; CS_n high from two cycles before
+  `rst_n` rises; a fourth PINS byte of 0; IMEM_DATA while a thread runs
+  unspecified), datasheet and isa.md. Tests:
+  `test_miso_is_low_except_while_read_data_is_shifted_out`, the PINS read
+  to eight bytes, `test_host_reset_through_the_driver`.
+  `tools/keyerhost.py` parks the SPI pins around every reset in both
+  transports, refuses a reset inside a transaction and a transaction under
+  reset (two pytest cases, one with a fake MicroPython board). The ten
+  mutants concerned, run again: five killed, five equivalent;
+  `host-c6659575` is not a kill under the new rule and keeps its row with
+  the reason rewritten. The lockstep harness's instruction-word comparison
+  is fixed (BUGS 45) and `LockstepW` is gone. BUGS 48, 49.
+- **D-039** (Ahan; cycle-exact form by Claude): `rx_drop`, status bit 10;
+  a `SERCFG` that aborts a frame writes the idle state of the pair it
+  leaves (NRZI: released with J in the output registers; Manchester: both
+  low); a receive is abandoned when the transmitter starts. Model and RTL
+  by the two subagents from SEMANTICS alone, in separate worktrees; the
+  first lockstep run after merging had no mismatch. 27 model tests, five
+  new phases in the unit bench, the stuffing proof without its J
+  precondition plus properties S4 (every frame starts from idle), S5 (the
+  abort) and later S6 (`rx_drop`). New scenario `drop_then_abort` on the
+  model and in lockstep. Neither agent had a spec question; two sentences
+  of 15.2 and 15.3 were clarified on the model agent's remarks.
+- **Step 1.** Master run 37286790227 logged: success, equal to branch run
+  37266431182. The 13 max-slew entries are 13 pins on two nets at the slow
+  corner (the `SERCFG` strobe, inbox 1's pointer comparison): real
+  violations of the library limit that the flow only reports. Fixed by
+  `DESIGN_REPAIR_MAX_SLEW_PCT` 50 (D-041; not by RTL, the entry says why).
+- **Step 2.** `tools/test_protomodels.py`, 10 cases: USB CRC-5 and CRC-16
+  white-paper examples and 8.3.5 residuals, CRC-32 check value, the
+  fpga4fun UDP frame with FCS B3 31 88 1B, hand-built SETUP and DATA0
+  packets as J/K strings, the two models' decoders on them. The models
+  agreed with every vector. Two vectors I first wrote from memory were
+  wrong (a fourth CRC-5 example, the frame's FCS); both were caught by an
+  independent computation before any test was written, and the frame was
+  then checked against the published page.
+- **Step 4.** `keyerasm.py --check-timing` (`tools/keytiming.py`, 24
+  pytest cases): 38 `WAITD` sites in the twelve programs, none late, none
+  unbounded; three behind a blocking instruction, each with a
+  `; timing:` waiver in the source. Its count for the USB response path
+  (15 slots of 48) equals the one derived by hand in the firmware header.
+- **Step 5.** D-040 (OPEN) on 512 words, recommendation no: the 512 x 16
+  macro adds 1.26 ns clock-to-output at the slow corner on the path all
+  twelve worst endpoints share.
+- **Hardening, branch `d039`**, run 37339746749: +12.39 / +8.25 / +0.99 ns,
+  no violation at any corner, 27.1%, 0 max-slew (D-041 confirmed), one
+  max-cap entry on the macro's `A_DOUT[7]` (68.4 fF against 64), precheck
+  9/9, gl_test passing. Merged into master by the rule of step 6.
+- **Step 3.** Mutation campaign 37339747331 on the same commit: 2,118
+  mutants, 2,014 killed, 95 equivalent, 7 not killed, 2 errors. Processed:
+  the 7 killed (pin 8 boundary: three lines in an existing test; `rx_drop`:
+  one new lockstep test and formal property S6), the 2 errors proved
+  equivalent by Yosys locally. 2,021 of 2,021 non-equivalent.
+- The `check` workflow failed twice on the branch with the suite green
+  locally: `yowasp-yosys` crashing in a model build when sby ran the
+  serializer tasks side by side (BUGS 50); `run_ser.sh` now runs one task
+  at a time and retries a task that ends without a verdict.
+- GitHub refused artifact downloads for a while ("Egress is over the
+  account limit", five of fourteen shards); they went through half an hour
+  later. `scripts/gds_report.py` pulls about 300 MB per run: two runs were
+  logged this session.
+- End of session: `bash scripts/check_all.sh` green on master (473 pytest,
+  75 cocotb, lint, the unit bench, five formal groups). Pushed.

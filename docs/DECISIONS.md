@@ -681,3 +681,15 @@ tightest: +0.075 ns); leaving it (the slow-corner timing of two paths
 stays extrapolated). Confirmed or not by the branch run of `d039`
 (docs/AREA.md).
 
+
+## D-042 2026-10-05 Claude, applying Ahan's rule for step 6: `d039` is merged into master
+
+The rule: merge if timing is clean at all corners and utilisation is under
+40%. Run 37339746749 on the branch: setup +12.39 / +8.25 / +0.99 ns (fast /
+typical / slow), no violating endpoint, hold clean, utilisation 27.1%,
+routing DRC, LVS and antenna 0, no max-slew entry, precheck 9 of 9,
+`gl_test` passing; the full check suite is green on the branch and the
+mutation campaign on the same commit has no survivor. Master now carries
+D-039 (model and RTL) and the slew margin of D-041. Not clean in the
+reports and left for Ahan: one max-cap entry on the macro's `A_DOUT[7]`
+(docs/AREA.md). Rejected: nothing; the rule was met.
