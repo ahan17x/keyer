@@ -48,6 +48,8 @@ if [ "${1:-}" != "quick" ]; then
       echo; echo "(formal: core equivalence skipped, no git ref '$EQUIV_REF' in this checkout)"
     fi
     run "formal: capture and replay (prove + cover)" bash -c 'cd formal && rm -rf capture_prove capture_cover && out=$(yowasp-sby -f capture.sby 2>&1); echo "$out" | grep -E "DONE"; [ "$(echo "$out" | grep -c "DONE (PASS")" -eq 2 ]'
+    # ten tasks: stuff, crc_any (pdr), crc16, crc32, rt_nrzi, rt_manch (bmc), four covers
+    run "formal: serializer (stuffing, CRC, round trip; prove + bmc + cover)" bash -c 'cd formal && rm -rf ser ser_stuff ser_crc_any ser_crc16 ser_crc32 ser_rt_nrzi ser_rt_manch ser_stuff_cover ser_crc_cover ser_crc_any_cover ser_rt_cover && out=$(yowasp-sby -f ser.sby 2>&1); echo "$out" | grep -E "DONE"; [ "$(echo "$out" | grep -c "DONE (PASS")" -eq 10 ]'
   else
     echo "(formal skipped: yowasp-sby not installed)"
   fi
