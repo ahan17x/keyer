@@ -481,3 +481,6 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   logged this session.
 - End of session: `bash scripts/check_all.sh` green on master (473 pytest,
   75 cocotb, lint, the unit bench, five formal groups). Pushed.
+- After the merge the master `gds` and `docs` runs (37363511492,
+  37363511559) were cancelled by GitHub: no hosted runner took the jobs.
+  Both re-run; not logged yet (HANDOFF, next task 1).

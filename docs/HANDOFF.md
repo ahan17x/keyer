@@ -65,6 +65,10 @@ edit his slew instruction did not cover.
 1. Log the master `gds` run that the merge of `d039` started (see
    `gh run list --workflow gds --branch master`) in docs/AREA.md and
    WORKLOG.md with `scripts/gds_report.py`; it should equal 37339746749.
+   It is run 37363511492: its first attempt was cancelled by GitHub after
+   15 minutes ("The job was not acquired by Runner of type hosted"), as
+   was the `docs` run; both were started again at the end of session 6.
+   Check that the second attempt finished.
    The script downloads about 300 MB per run and the account has an
    egress limit: once per run.
 2. After Ahan's answer on D-040 and on the max-cap entry: act on them.
