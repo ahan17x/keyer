@@ -19,9 +19,17 @@ for t in $TASKS; do
 done
 status=0
 if [ -n "$SBY" ]; then
-  yowasp-sby --yosys yowasp-yosys -f ser.sby $SBY >/dev/null 2>&1
+  # One task at a time, and a task whose model build crashed is run once
+  # more: on the GitHub runner several yowasp-yosys processes side by side
+  # die now and then with a bus error (returncode -7, a different task each
+  # time, BUGS 50). A verdict (PASS, FAIL, UNKNOWN) is never retried.
   for t in $SBY; do
-    v=$(grep -o "DONE ([A-Z]*" "ser_$t/logfile.txt" 2>/dev/null | tail -1 | sed "s/DONE (//")
+    for try in 1 2; do
+      yowasp-sby --yosys yowasp-yosys -f ser.sby "$t" >/dev/null 2>&1
+      v=$(grep -o "DONE ([A-Z]*" "ser_$t/logfile.txt" 2>/dev/null | tail -1 | sed "s/DONE (//")
+      if [ "${v:-ERROR}" != ERROR ]; then break; fi
+      if [ $try = 1 ]; then echo "(ser_$t: no verdict, running it again)"; grep "returncode" "ser_$t/logfile.txt" 2>/dev/null | tail -2; rm -rf "ser_$t"; fi
+    done
     echo "SER $t ${v:-ERROR}"
     if [ "$v" != PASS ]; then
       status=1
