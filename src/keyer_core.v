@@ -236,22 +236,46 @@ module keyer_core #(
     wire        a_zero = (A == 16'd0);
 
     // ---- timer datapath of the executing thread (section 6.2) --------------
-    // One adder and one subtractor serve every timer instruction:
-    //   tm_sum  = base + k, base = NOW for SETD and DEADLINE otherwise,
-    //             k = imm8 for SETD and WAITD and 0 otherwise;
-    //   tm_diff = NOW - tm_sum.
-    // WAITD: tm_sum is the target DEADLINE + k, tm_reached = reached(NOW, target).
-    // SETD:  tm_sum = NOW + k is the new DEADLINE (tm_diff unused).
-    // Any other instruction: tm_sum = DEADLINE, tm_diff = NOW - DEADLINE (RDT)
-    // and tm_reached = reached(NOW, DEADLINE) (BDR, RDS bit 4, timeout forms).
-    // reached(a, b) is bit 15 of a - b being 0 (section 1).
+    // Two results, each one carry chain deep, side by side:
+    //   tm_sum     = base + imm8, base = NOW for SETD and DEADLINE otherwise:
+    //                the DEADLINE write data, NOW + k for SETD and the target
+    //                DEADLINE + k for WAITD. Only those two write DEADLINE
+    //                (dl_we), so imm8 is added ungated.
+    //   tm_diff    = NOW - (DEADLINE + K), K = {8'd0, tm_k}, tm_k = imm8 in
+    //                major MISC and 0 otherwise, computed without forming
+    //                DEADLINE + K: NOW - (DEADLINE + K) = NOW + ~DEADLINE + ~K
+    //                + 2 (mod 2^16). A 3:2 carry-save step over (NOW,
+    //                ~DEADLINE, ~K), per bit a full adder's sum (XOR3) and
+    //                carry (majority) and no carry between bits, gives
+    //                tm_cs_s + 2 tm_cs_c = NOW + ~DEADLINE + ~K; one 16-bit
+    //                carry chain then adds tm_cs_s + {tm_cs_c[14:0], 1} + 1
+    //                (tm_cpa: the 1s in bit 0 of both operands make the
+    //                carry-in).
+    //   tm_reached = ~tm_diff[15]: reached(a, b) is bit 15 of a - b being 0
+    //                (section 1).
+    // Consumers: WAITD (major MISC, K = k): tm_reached = reached(NOW,
+    // DEADLINE + k), its completion test. RDT (tm_diff), BDR, RDS bit 4 and
+    // the timeout-form waits (tm_reached) are in majors XFER, BCC and PIN,
+    // so K = 0: NOW - DEADLINE and reached(NOW, DEADLINE). No other
+    // instruction of major MISC reads tm_diff or tm_reached; one that needs
+    // reached(NOW, DEADLINE) must narrow tm_k to WAITD.
+    // The completion test, which feeds done and through it the DEADLINE,
+    // PC, flag and blocked write enables, is thus a 4-bit major decode, one
+    // compressor level and one carry chain. The compressor is written
+    // bitwise, not as a three-operand sum, so that synthesis keeps it a
+    // carry-save step.
     wire        tm_misc    = (maj == `KEYER_MAJ_MISC);
     wire        tm_setd    = tm_misc & (ir[11:8] == `KEYER_SETD);
-    wire        tm_waitd   = tm_misc & (ir[11:8] == `KEYER_WAITD);
     wire [15:0] tm_base    = tm_setd ? tm_now : tm_dl;
-    wire [7:0]  tm_k       = (tm_setd | tm_waitd) ? imm8 : 8'd0;
-    wire [15:0] tm_sum     = tm_base + {8'd0, tm_k};
-    wire [15:0] tm_diff    = tm_now - tm_sum;
+    wire [15:0] tm_sum     = tm_base + {8'd0, imm8};
+    wire [7:0]  tm_k       = tm_misc ? imm8 : 8'd0;
+    wire [15:0] tm_cs_x    = tm_now;
+    wire [15:0] tm_cs_y    = ~tm_dl;
+    wire [15:0] tm_cs_z    = ~{8'd0, tm_k};
+    wire [15:0] tm_cs_s    = tm_cs_x ^ tm_cs_y ^ tm_cs_z;
+    wire [15:0] tm_cs_c    = (tm_cs_x & tm_cs_y) | (tm_cs_x & tm_cs_z) | (tm_cs_y & tm_cs_z);
+    wire [16:0] tm_cpa     = {tm_cs_s, 1'b1} + {tm_cs_c[14:0], 2'b11};
+    wire [15:0] tm_diff    = tm_cpa[16:1];
     wire        tm_reached = ~tm_diff[15];
 
     // ---- RDS status word (section 11) --------------------------------------
@@ -614,6 +638,8 @@ module keyer_core #(
                           (ir[8:5] == `KEYER_PUSH || ir[8:5] == `KEYER_POP);
     wire        f_tform = (f_pwait && ir[`KEYER_PIN_TBIT]) || (f_xwait && ir[`KEYER_XFER_TBIT]);
     wire        f_bform = (f_pwait && !ir[`KEYER_PIN_TBIT]) || (f_xwait && !ir[`KEYER_XFER_TBIT]);
+    wire        f_start = (f_maj == `KEYER_MAJ_MISC) && (ir[11:8] == `KEYER_START);
+    wire        f_stop  = (f_maj == `KEYER_MAJ_MISC) && (ir[11:8] == `KEYER_STOP);
     wire [15:0] f_now   = now[tid];
     wire [15:0] f_dl    = deadline[tid];
     wire [15:0] f_d0    = f_now - f_dl;                         // NOW - DEADLINE
@@ -657,6 +683,17 @@ module keyer_core #(
         //     base effect: no FIFO push or pop and no register write.
         if (f_tform && !f_base) assert(inbox_pop == {NT{1'b0}} && outbox_push == {NT{1'b0}});
         if ($past(f_tform && !f_base))
+            for (fr = 0; fr < 8*NT; fr = fr + 1) assert(regs[fr] == $past(regs[fr]));
+        // T9. A thread that executes and does not complete (2.2, 7.1)
+        //     changes no state but its DELAY count: no register is written,
+        //     its flags and LR keep their values unless the host soft-resets
+        //     it in that cycle, and no pin command, FIFO pop or push or CAPC
+        //     strobe leaves the core. Generally, a thread's flags change
+        //     only when it commits or is soft-reset. (A blocked timeout-form
+        //     wait never writes C.)
+        if (exec && !done)
+            assert(!pin_valid && !cr_ctrl_we && inbox_pop == {NT{1'b0}} && outbox_push == {NT{1'b0}});
+        if ($past(exec && !done))
             for (fr = 0; fr < 8*NT; fr = fr + 1) assert(regs[fr] == $past(regs[fr]));
         for (ft = 0; ft < NT; ft = ft + 1) begin
             // T2. A disabled timer (period 0) never changes NOW, except that
@@ -719,6 +756,26 @@ module keyer_core #(
             // P5. Halted implies not running, unless the host restarted it this cycle.
             if (halted[ft] && !$past(host_run_we))
                 assert(!running[ft]);
+            // T9 (per thread, see above).
+            if ($past(exec && !done && tid == ft) && !$past(host_rst[ft]))
+                assert(fc[ft] == $past(fc[ft]) && fz[ft] == $past(fz[ft]) && lr[ft] == $past(lr[ft]));
+            if (fc[ft] != $past(fc[ft]) || fz[ft] != $past(fz[ft]))
+                assert($past(commit && tid == ft) || $past(host_rst[ft]));
+            // P8. START and STOP act on the other thread, never on the
+            //     executing one (9). After a thread commits START or STOP,
+            //     with no host RUN write in that cycle: the other thread's
+            //     running bit is 1 (START) or 0 (STOP); START clears its
+            //     halted bit, STOP leaves it and clears its DELAY count; every
+            //     other thread, the executing one included, keeps its running
+            //     and halted bits.
+            if ($past(commit && (f_start || f_stop)) && !$past(host_run_we)) begin
+                if (ft == $past(otid)) begin
+                    assert(running[ft] == $past(f_start));
+                    if ($past(f_start)) assert(!halted[ft]);
+                    else assert(halted[ft] == $past(halted[ft]) && delay[ft] == 8'd0);
+                end else
+                    assert(running[ft] == $past(running[ft]) && halted[ft] == $past(halted[ft]));
+            end
         end
         // P6. Thread parity: the executing thread alternates every cycle
         //     (in general, advances by one mod NTHREADS).
