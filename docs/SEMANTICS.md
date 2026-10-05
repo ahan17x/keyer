@@ -819,7 +819,12 @@ the start tick (R23). In NRZI mode the frame is coded
 from J, so the byte `0x80` produces KJKJKJKK. The CRC covers exactly the
 marked bytes, before stuffing, and is sent complemented, bit 0 first, only
 if at least one byte was marked. A stuffed zero follows six ones even when
-they are the last bits before the tail. The NRZI tail is SE0 for two symbol
+they are the last bits before the tail. The coder assumes the pair shows J
+when a frame starts; that holds after reset, after an NRZI tail and on a
+released bus, but not after a `SERCFG` that aborted a frame with K on the
+pair (`SERCFG` does not write the pins): firmware that aborts a frame
+restores the idle level itself before it sends again (found by the formal
+proof of the stuffing property, `formal/ser_stuff_props.sv`). The NRZI tail is SE0 for two symbol
 periods and J for one; the Manchester tail holds P high and N low for six
 symbol periods.
 
