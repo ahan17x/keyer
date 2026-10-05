@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Keyer golden model: a cycle-exact behavioural model of the Keyer core.
 
-Written from docs/SEMANTICS.md (the contract, version 0.4) and
+Written from docs/SEMANTICS.md (the contract, version 0.5) and
 tools/keyer_isa.py (the encoding table) alone, independently of the RTL in
 src/ (DECISIONS D-012). Section numbers in the comments refer to
 SEMANTICS.md.
@@ -31,7 +31,8 @@ One call to Machine.step() is one core clock cycle c (= Machine.cycle):
      prescale sampled in step 1), its transmitter, on its state as it was
      during c; its pin writes come after the replay engine's (5.3). The
      serializer instructions only record their effect during step 2, and it
-     is merged here (a SERCFG overrides the engine, 15.2). The CR_CTRL
+     is merged here (a SERCFG overrides the engine and, if it aborts a
+     frame, writes the idle state of the pair, 15.2). The CR_CTRL
      actions of the cycle (CAPC) are applied last.
   4. Commit. The timers of both threads tick (6.1), the synchroniser history
      shifts and the cycle counter advances to c + 1.
@@ -91,7 +92,7 @@ SER_POLY_M = (0x0000A001, 0xEDB88320)        # indexed by crc32 = cfg[3] (15.1)
 SER_INIT_M = (0x0000FFFF, 0xFFFFFFFF)
 SER_RES_M = (0x0000B001, 0xDEBB20E3)
 SER_W = (16, 32)
-_SER_CFG, _SER_TX, _SER_RXB, _SER_RXE = 1, 2, 3, 4  # the instruction's serializer effect of a cycle
+_SER_CFG, _SER_TX, _SER_RXB, _SER_RXE, _SER_ST = 1, 2, 3, 4, 5   # the instruction's serializer effect of a cycle
 
 
 def reached(a, b):
@@ -305,7 +306,7 @@ class Serializer:
               "tx_n", "tx_half", "tx_bit", "tx_ones", "tx_line", "crc_m", "crc5",
               "rx_state", "rx_sh", "rx_n", "rx_ones", "rx_psym", "rx_last", "rx_cnt",
               "rx_w", "rx_first", "rx_hold", "rx_valid", "rx_end", "rx_ovr", "rx_serr",
-              "rx_ferr", "rx_c5ok", "rx_cok")
+              "rx_ferr", "rx_c5ok", "rx_cok", "rx_drop")
 
     def __init__(self):
         self.reset()
@@ -349,7 +350,8 @@ class Serializer:
                 | self.rx_cok << 6
                 | self.rx_ovr << 7
                 | self.rx_serr << 8
-                | self.rx_ferr << 9)
+                | self.rx_ferr << 9
+                | self.rx_drop << 10)
 
     def __repr__(self):
         return "SER " + " ".join("%s=%X" % (n, getattr(self, n)) for n in self.FIELDS)
@@ -848,14 +850,30 @@ class Machine:
         p = 2 * ((cfg >> 6) & 3)
         lvl_p = (level >> p) & 1
         if cmd is not None and cmd[0] == _SER_CFG:
-            s.configure(cmd[1], cmd[2])            # overrides every engine update, no pin writes
+            abort = s.tx_state != SER_TX_IDLE      # tx_state(c)
+            s.configure(cmd[1], cmd[2])            # overrides every engine update and its pin writes
+            if abort:
+                # 15.2: idle(m, P, N) of the configuration replaced, through write() (od_mask').
+                # tx_state != IDLE implies mode 1 or 2: only a tick in mode 1 or 2 leaves IDLE,
+                # and only SERCFG changes cfg, returning tx_state to IDLE.
+                if (cfg & 3) == 1:
+                    self._ser_write(p, 0, 0)
+                    self._ser_write(p + 1, 1, 0)
+                else:
+                    self._ser_write(p, 0, 1)
+                    self._ser_write(p + 1, 0, 1)
             s.rx_last = lvl_p                      # 15.1: in every cycle
             return
+        kind = cmd[0] if cmd is not None else None
+        if kind == _SER_RXE or kind == _SER_ST:
+            # a read of the status word clears rx_drop (15.2). Applied before the
+            # engine, so a frame start that sets it in this cycle wins.
+            s.rx_drop = 0
         mode = cfg & 3
         if mode == 1 or mode == 2:
-            o = s.snapshot()                       # the state during c
+            o = s.snapshot()                       # the state during c (rx_drop is not read)
             if (cfg >> 4) & 1 and o.tx_state == SER_TX_IDLE:
-                self._ser_rx(o, s, level, tper, mode, cfg, p)       # 15.4-15.6
+                self._ser_rx(o, s, level, tper, mode, cfg, p, kind)  # 15.4-15.6
             else:
                 self._ser_rx_hold(s)
             if tper != 0 and tpre == 0:            # symbol tick (15.1)
@@ -872,7 +890,7 @@ class Machine:
             elif kind == _SER_RXB:
                 s.rx_valid = 0
             elif kind == _SER_RXE:
-                s.rx_end = 0
+                s.rx_end = 0                       # rx_drop: cleared above, before the engine
 
     @staticmethod
     def _ser_rx_hold(s):
@@ -886,9 +904,11 @@ class Machine:
         s.rx_w = 1
         s.rx_first = 0
 
-    def _ser_rx(self, o, s, level, tper, mode, cfg, p):
+    def _ser_rx(self, o, s, level, tper, mode, cfg, p, taken):
         """15.6: clock recovery and decoding; reads o (the state during c),
-        writes s."""
+        writes s. `taken` is the kind of the instruction's serializer
+        effect in c: _SER_RXB if a completing SERRX takes the byte,
+        _SER_RXE if it takes the frame end (15.5, rx_drop)."""
         sym = (level >> p) & 1
         edge = sym != o.rx_last
         if mode == 1:
@@ -903,12 +923,12 @@ class Machine:
                     s.rx_psym = 0
                 else:
                     s.rx_psym = sym
-                    self._ser_bit(o, s, 1 if sym == o.rx_psym else 0, mode, cfg)
+                    self._ser_bit(o, s, 1 if sym == o.rx_psym else 0, mode, cfg, taken)
         else:
             if edge and o.rx_w:                    # mid-bit transition
                 s.rx_w = 0
                 s.rx_cnt = (tper + (tper >> 1) - 2) & M16
-                self._ser_bit(o, s, sym, mode, cfg)
+                self._ser_bit(o, s, sym, mode, cfg, taken)
             elif o.rx_cnt != 0:
                 s.rx_cnt = (o.rx_cnt - 1) & M16
             elif not o.rx_w:
@@ -918,7 +938,7 @@ class Machine:
                 self._ser_end(o, s, cfg)
 
     @staticmethod
-    def _ser_bit(o, s, d, mode, cfg):
+    def _ser_bit(o, s, d, mode, cfg, taken):
         """bit(d), section 15.5."""
         stuff = (cfg >> 2) & 1
         in_data = o.rx_state == SER_RX_DATA
@@ -945,6 +965,11 @@ class Machine:
                 s.rx_ovr = 0
                 s.rx_serr = 0
                 s.rx_ferr = 0
+                # an untaken byte or frame end of an earlier frame is discarded and
+                # recorded (D-039): a completing SERRX takes the byte if rx_valid(c),
+                # else the frame end
+                if (o.rx_valid and taken != _SER_RXB) or (o.rx_end and taken != _SER_RXE):
+                    s.rx_drop = 1
             return
         if not ((cfg >> 5) & 1 and o.rx_first):
             s.crc5 = _crc_step(o.crc5, d, SER_CRC5_POLY)
@@ -1640,7 +1665,8 @@ class Machine:
         return self._ser_rx_cmd(t, o, True)
 
     def _x_SERST(self, t, o):
-        t.regs[o["rd"]] = self.ser.status()
+        t.regs[o["rd"]] = self.ser.status()        # status(c), rx_drop as it was
+        self._ser_cmd = (_SER_ST,)                 # and rx_drop <= 0 (15.2)
         return True
 
     def _x_SERWT(self, t, o):
