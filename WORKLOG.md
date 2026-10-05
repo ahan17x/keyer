@@ -271,3 +271,34 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   its own `gds` run (37181323699) is in progress. Locally the full check
   suite is green on master: 52 Python tests, 20 cocotb tests, lint, Icarus,
   four formal groups. Open for Ahan: merging `decode-onehot`.
+
+## 2026-10-04, Claude Code session 4 (merge of decode-onehot, FPGA build, mutation tool, more protocols)
+
+- D-030 (Ahan): `decode-onehot` merged into master and pushed. Master runs
+  logged in docs/AREA.md: 37181323699 (the `sram-macro` merge, equal to the
+  branch run) and 37228068179 (this merge: +11.85 / +7.41 / -0.13 ns, one
+  slow-corner endpoint, all four jobs green, precheck 9/9).
+- `fpga/alhambra2/`: board wrapper, pin file, `build.sh` (Yosys, nextpnr-ice40,
+  icepack), `sim.sh` (the pads-only cocotb tests on the post-synthesis
+  netlist, 10 of 10). 3,557 of 7,680 logic cells, 5 block RAMs (program
+  memory and the four FIFOs), 40.8 MHz against 12 MHz. Not run on the board.
+- `tools/mutate.py`, first version, with `tools/test_mutate.py`. BUGS 16-18.
+- Checkpoint at 20:15 after the session hit its usage limit with seven
+  subagents running; six of them were cut off. State of their work:
+  - Committed, passing on the model and in lockstep: `jtag_master` (67
+    words), `ws2812` (33 words), `ps2_host` (79 words). The WS2812 and PS/2
+    agents were cut off before reporting, so their bug lists were not
+    delivered; the JTAG agent's is in BUGS.
+  - **Not committed, in the working tree:** `i2c_slave` (firmware 86 words,
+    model, 35 model tests passing, but both lockstep tests fail an
+    assertion: unfinished); `spi_slave` (firmware 54 words and model, no
+    tests); `swd` (firmware 116 words only, no model, no tests).
+  - **Not committed, in the worktree `.claude/worktrees/agent-abc7f6433b0067f3a`
+    (branch `waitd-csa`, no commits yet):** the carry-save `WAITD` change in
+    `src/keyer_core.v`, `formal/equiv_core.sh`, the two formal properties,
+    and edits to `formal/run_core_pdr.sh` and `scripts/check_all.sh`. Its
+    last step was making `run_core_pdr.sh` fail on a counterexample;
+    nothing in it has been verified by the coordinating session.
+  - The first mutation campaign was killed about an hour in, after a
+    simulator process had been killed by hand; its partial results were
+    discarded. Treated as not run.
