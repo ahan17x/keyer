@@ -316,3 +316,36 @@ routing, which took twice as long. Both conditions for the merge hold
 | 37252116397 | the same design as 37228068179 (1c6def3, master with the behavioural-memory change of D-032) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 47 min | 9/9 | pass |
 | 37260270799 | macro + capture + one-hot select + carry-save WAITD (a56aae4, master after D-034; same design as 37247680638) | 13,501 + macro | 24.8% | +12.33 / +8.12 / +0.76 (0) | 45 min | 9/9 | pass |
 | 37266431182 | the above + serializer engine (f0e0b96, `serializer`) | 14,859 + macro | 27.0% | +12.53 / +8.41 / +1.37 (0) | 1 h 33 | 9/9 | pass |
+
+### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
+
+Started by the push of the merge. Jobs: `gds` success (2 h 12 min),
+`gl_test` success, `viewer` success, `precheck` success (37 min, all nine
+checks). Numbers from `python3 scripts/gds_report.py 37286790227`. **Every
+number equals branch run 37266431182**: 14,859 cells (1,600 flops, 3,256
+timing-repair buffers) plus the macro, utilisation 27.0%, setup +12.53 /
++8.41 / +1.37 ns (fast / typical / slow), hold +0.075 / +0.254 / +0.569 ns,
+no violation at any corner, routing DRC 0, LVS 0, antenna 0, 13 max-slew,
+0 max-cap, 140 max-fanout.
+
+**The 13 max-slew entries** (`55-openroad-stapostpnr/nom_slow_1p08V_125C/
+checks.rpt`; none at the typical or the fast corner). They are 13 pins on
+two nets, both in our logic, both driven by a `sg13cmos5l_nor4_1`:
+
+| Net | What it is | Loads | Slew at the slow corner (limit 2.507 ns) |
+|---|---|---|---|
+| `_02862_` (driver `_09913_`) | the `SERCFG` commit strobe: decode of the instruction word with `fetch_ok`, `running` and the thread select, from the core to the serializer's register resets | 7 | 3.618 ns (1.11 ns over) |
+| `_02945_` (driver `_10000_`) | inbox 1's pointer comparison (`wr_ptr` against `rd_ptr`, low four bits) | 4 | 2.571 ns (0.06 ns over) |
+
+Violations or warnings: they are real violations of the cell library's
+`max_transition` at the slow corner (1.08 V, 125 C), which the flow reports
+and does not fail on. The sign-off corner (typical, D-028) has none, and
+setup is met at the slow corner with these slews in the calculation
+(+1.37 ns), but a slew beyond the library's limit is outside the range the
+cell delays were characterised for, so the slow-corner numbers of paths
+through these two nets are extrapolated. Cause: the flow repairs slew once,
+after global placement, at the typical corner, to 80% of the limit
+(`DESIGN_REPAIR_MAX_SLEW_PCT` 20); a net left at up to 2.0 ns there is up
+to about 3.6 ns at the slow corner, where the same cells are 1.7 to 1.8
+times slower. Which nets end up above the limit is then a matter of
+placement: earlier runs of other designs had 33, 14 and 0. Fix: D-041.
