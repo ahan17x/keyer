@@ -62,6 +62,13 @@ def test_manchester_rx(T):
     check(m, got)
 
 
+@pytest.mark.parametrize("T", [4, 8, 32])
+def test_drop_then_abort(T):
+    words, models, cycles, check = S.drop_then_abort(T=T)
+    m, got = run(words, models, cycles)
+    check(m, got)
+
+
 @pytest.mark.parametrize("seed", [1, 2, 4, 6, 7])
 def test_random_runs_and_reaches_the_interesting_states(seed):
     """The random scenario must not hang and must actually exercise the

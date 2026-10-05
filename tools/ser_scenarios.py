@@ -19,7 +19,7 @@ import random
 import keyer_isa as isa
 import keyerasm
 from test_iss_ser import (J, K, SE0, PN, NRZI, MANCH, STUFF, CRC32, RXEN, RXSKIP,
-                          ST_END, ST_C5OK, ST_COK, ST_OVR, ST_SERR, ST_FERR,
+                          ST_END, ST_C5OK, ST_COK, ST_OVR, ST_SERR, ST_FERR, ST_DROP,
                           crc16_usb, crc5_good, crc16_good, crc32_good, lsb_bits, bits_to_bytes,
                           usb_unstuff, nrzi_decode, usb_packet_syms, manchester_halves,
                           with_pair, sym_at, pair)
@@ -265,6 +265,78 @@ def nrzi_rx(T=8, k=0, gap=6):
         for _, st in res:
             assert not st & ST_OVR
     return words, [drv], 30 + len(syms) * T + 200, check, drv
+
+
+def drop_then_abort(T=8, k=0):
+    """DECISIONS D-039 in one program. Two frames arrive while firmware
+    sleeps: the second frame's start discards the first frame's untaken
+    byte and frame end and sets the sticky bit 10, the first SERST returns
+    it and clears it, the second no longer shows it. Then a frame is
+    aborted by SERCFG in mid-byte: the pair is released in the next cycle
+    (the pull-ups show J), and the frame sent afterwards is coded from J
+    and complete."""
+    token = [0x2D, 0x00, 0x10]
+    syms = [J] * 10 + usb_packet_syms(token) + [J] * 6 + usb_packet_syms(token) + [J] * 6
+    cfg = NRZI | STUFF | RXEN | RXSKIP | pair(k)
+    words, _ = asm("""
+        ldi r1, %d
+        sett r1
+        ldi r0, %d
+        sercfg r0
+        ldi r3, %d
+    nap:
+        delay 255
+        djnz r3, nap
+        serst r2            ; bit 10 set, and cleared by this read
+        push r2
+        swap r2
+        push r2
+        serst r2
+        swap r2
+        push r2             ; the high byte again: bit 10 gone
+        seri 0x80
+        seri 0xC3
+        seri 0x00
+        delay 20            ; into the frame
+        sercfg r0           ; abort
+        delay 40
+        seri 0x80
+        seri 0xD2
+        serwt
+        ldi r5, 0xA5
+        push r5
+        halt
+    """ % (T, cfg, (30 + len(syms) * T) // 512 + 1))
+    drv = LineDriver(k, [PN[s] for s in syms], T, 30, PN[J])
+    log = PairLog(k)
+
+    def check(m, got):
+        assert len(got) == 4 and got[3] == 0xA5, got
+        st = got[0] | got[1] << 8
+        assert st & ST_DROP and st & ST_END and st & ST_C5OK, hex(st)
+        assert not got[2] & (ST_DROP >> 8), got
+        driven, cur = [], []
+        for c, n, pad, oe in log.runs():
+            assert oe in (0, 3), "pair half driven at cycle %d" % c
+            if oe == 3:
+                cur.append((c, n, {(0, 1): J, (1, 0): K, (0, 0): SE0}[(pad & 1, pad >> 1)]))
+            else:
+                # once the device has sent, the host is silent: released means J
+                assert not (cur or driven) or (pad & 1, pad >> 1) == PN[J], "released pair not at J at cycle %d" % c
+                if cur:
+                    driven.append(cur)
+                    cur = []
+        assert not cur and len(driven) == 2, driven
+        # the aborted frame: cut off without an end of packet, K or J to the last cycle
+        assert all(sym in (J, K) for _, _, sym in driven[0])
+        assert sum(n for _, n, _ in driven[0]) < 24 * T
+        # the next one: SYNC and ACK coded from J, and its end of packet
+        out = []
+        for c, n, sym in driven[1]:
+            assert n % T == 0, (c, n)
+            out += [sym] * (n // T)
+        assert out == usb_packet_syms([0xD2]), out
+    return words, [drv, log], 30 + len(syms) * T + 2000, check
 
 
 def manchester_rx(T=4, k=3):

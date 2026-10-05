@@ -98,6 +98,17 @@ async def test_lockstep_ser_manchester_rx(dut):
     check(ls.m, got)
 
 
+@cocotb.test(skip=GL)
+async def test_lockstep_ser_drop_then_abort(dut):
+    """DECISIONS D-039: the sticky bit 10 set by a frame start over an
+    untaken byte and frame end and cleared by the status read, then a frame
+    aborted by SERCFG, the pair back at idle in the next cycle and the next
+    frame coded from J; every serializer register compared in every cycle."""
+    words, models, cycles, check = S.drop_then_abort(T=8)
+    ls, got = await _run(dut, words, models, cycles)
+    check(ls.m, got)
+
+
 async def _random(dut, seed):
     words, base, models = S.random_scenario(seed)
     ls, _ = await lockstep_firmware(dut, words, 9000, models=models, run_mask=0b11, pc1=base)

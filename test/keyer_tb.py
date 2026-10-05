@@ -151,7 +151,7 @@ CR_STATE = ("cap_armed", "cap_trig", "cap_done", "cap_ovf", "cap_last", "cap_pre
 SER_STATE = ("cfg", "owner", "tx_hold", "tx_hold_c", "tx_full", "tx_state", "tx_sh", "tx_c", "tx_app",
              "tx_n", "tx_half", "tx_bit", "tx_ones", "tx_line", "crc_m", "crc5", "rx_state", "rx_sh",
              "rx_n", "rx_ones", "rx_psym", "rx_last", "rx_cnt", "rx_w", "rx_first", "rx_hold",
-             "rx_valid", "rx_end", "rx_ovr", "rx_serr", "rx_ferr", "rx_c5ok", "rx_cok")
+             "rx_valid", "rx_end", "rx_ovr", "rx_serr", "rx_ferr", "rx_c5ok", "rx_cok", "rx_drop")
 
 
 class Lockstep:

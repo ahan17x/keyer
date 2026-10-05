@@ -44,7 +44,8 @@ One engine, `src/keyer_ser.v`, with:
   reads the same pair through the pin synchroniser;
 - **framing status**: transmitter busy, byte available, in a frame, frame
   ended, both CRC verdicts, overrun, stuffing error, a frame that did not
-  end on a byte boundary.
+  end on a byte boundary, and a sticky bit for a byte or frame end that
+  was still untaken when the next frame started.
 
 The symbol period is **the owning thread's timer period**: the transmitter
 advances on that timer's ticks and the receiver measures its half and full
@@ -56,7 +57,7 @@ the bits on the wire.
 | | NRZI mode (USB) | Manchester mode (10BASE-T) |
 |---|---|---|
 | Ticks per bit | 1 | 2 (half-bits) |
-| Idle before a frame | whatever the pins hold (released: the bus pull-ups give J) | whatever the pins hold (firmware drives both low) |
+| Idle before a frame | both pins released: the bus pull-ups give J. A tail and an abort leave exactly this | both pins driven low. A tail and an abort leave exactly this; after reset firmware drives the pair low once |
 | First symbol | the first data bit, coded from J | first half of the first bit |
 | End of frame | SE0 for two ticks, J for one, then both pins released | P high, N low for six ticks (3 bit times: the 10BASE-T start of idle), then both driven low |
 | Receive sync | the eight decoded bits `0x80` (KJKJKJKK) | the eight decoded bits `0xD5` (the start frame delimiter) |
@@ -90,7 +91,11 @@ pin pair k. It fits one `LDI`.
 Status word (`SERST`, and `SERRX` at a frame end): bit 0 holding register
 full, 1 transmitter busy, 2 received byte available, 3 receiver in a frame,
 4 frame ended, 5 CRC-5 good, 6 CRC-16/32 good, 7 overrun, 8 stuffing error,
-9 frame did not end on a byte boundary.
+9 frame did not end on a byte boundary, 10 dropped at a frame start
+(sticky: a byte or a frame end of an earlier frame was still untaken when
+a new frame started; cleared by reading the status word, DECISIONS D-039).
+Bits 7 to 9 describe the current frame and are cleared when the next one
+starts; bit 10 survives until firmware has seen it.
 
 A USB low-speed device answering a token, in outline:
 
@@ -128,7 +133,15 @@ Rules that follow from the design:
   pulses, a USB reset check or a pull-up enable are ordinary pin
   instructions.
 - A host soft reset of a thread does not touch the engine; `SERCFG` resets
-  it.
+  it. A `SERCFG` while the transmitter is in a frame is an **abort**: the
+  frame stops there (no CRC, no end of packet) and the pair goes to the
+  idle state of the mode it was in, in the same cycle: released in NRZI
+  mode (the pull-up restores J; the engine does not drive J against a host
+  that has taken the bus), both pins low in Manchester mode. Every frame
+  therefore starts from idle, and the next frame is coded from J again.
+- The engine is half duplex. A frame that is being received when the
+  transmitter starts is abandoned: no frame end, no verdict, no flag.
+  Firmware that queues a byte has decided to send.
 
 ## 4. Shared or per-thread: shared
 

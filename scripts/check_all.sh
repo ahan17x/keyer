@@ -27,7 +27,7 @@ run "Icarus compile" iverilog -g2005 -I src -o /dev/null src/RM_IHPSG13_1P_256x1
 run "Serializer unit bench (test/ser_unit, no golden model)" bash test/ser_unit/run.sh
 
 if [ "${1:-}" != "quick" ]; then
-  run "cocotb (host interface + lockstep)" bash -c 'cd test && rm -f results.xml && make clean >/dev/null 2>&1; make > make.log 2>&1; grep -E "\*\* test|TESTS=" make.log; if [ ! -f results.xml ]; then echo "make did not produce results.xml; last lines of make.log:"; tail -25 make.log; exit 1; fi; grep -q "<failure" results.xml && exit 1; [ "$(grep -o "<testcase " results.xml | wc -l | tr -d " ")" = "73" ]'
+  run "cocotb (host interface + lockstep)" bash -c 'cd test && rm -f results.xml && make clean >/dev/null 2>&1; make > make.log 2>&1; grep -E "\*\* test|TESTS=" make.log; if [ ! -f results.xml ]; then echo "make did not produce results.xml; last lines of make.log:"; tail -25 make.log; exit 1; fi; grep -q "<failure" results.xml && exit 1; [ "$(grep -o "<testcase " results.xml | wc -l | tr -d " ")" = "74" ]'
   if command -v yowasp-sby >/dev/null; then
     # A step passes only on sby's own verdict: grepping for "DONE" alone also
     # matches "DONE (FAIL", and the pipeline's status is grep's.
