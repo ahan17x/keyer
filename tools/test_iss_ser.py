@@ -25,7 +25,7 @@ from keyersim import Machine  # noqa: E402
 SER_NAMES = ("cfg owner tx_hold tx_hold_c tx_full tx_state tx_sh tx_c tx_app tx_n tx_half "
              "tx_bit tx_ones tx_line crc_m crc5 rx_state rx_sh rx_n rx_ones rx_psym rx_last "
              "rx_cnt rx_w rx_first rx_hold rx_valid rx_end rx_ovr rx_serr rx_ferr rx_c5ok "
-             "rx_cok").split()
+             "rx_cok rx_drop").split()
 OFF_VALUES = dict(rx_sh=0xFF, rx_w=1)         # 15.4: the values while the receiver does not run
 
 # configuration bits (15.1)
@@ -39,7 +39,7 @@ def pair(k):
 
 # status bits (15.7)
 ST_TXFULL, ST_TXBUSY, ST_RXVALID, ST_INFRAME, ST_END = 1, 2, 4, 8, 16
-ST_C5OK, ST_COK, ST_OVR, ST_SERR, ST_FERR = 32, 64, 128, 256, 512
+ST_C5OK, ST_COK, ST_OVR, ST_SERR, ST_FERR, ST_DROP = 32, 64, 128, 256, 512, 1024
 
 
 # ---------------------------------------------------------------- protocol helpers (independent)
@@ -315,7 +315,11 @@ def test_sercfg_resets_mid_frame_overrides_tick_and_sets_owner():
     r_before, r_cfg, r_after = recs[c_cfg - 1], recs[c_cfg], recs[c_cfg + 1]
     assert r_cfg.ser["tx_state"] == 1 and r_cfg.tick[0] == 1   # a data bit was due in this tick
     assert r_before.pad & 0x0C != r_cfg.pad & 0x0C            # the line was changing every cycle
-    assert r_after.pad == r_cfg.pad                            # SERCFG: no engine pin write
+    # SERCFG while tx_state != IDLE is an abort (15.2, D-039): no engine pin
+    # write in this tick, but idle(1, 2, 3) of the old configuration: both
+    # pins released with J in the output registers; the pull-ups show J
+    assert (r_after.uio_oe & 0x0C, r_after.uio_out & 0x0C) == (0, 0x08)
+    assert sym_at(r_after.pad, 1) == J and r_after.pad & ~0x0C == r_cfg.pad & ~0x0C
     # rx_last(c + 1) = level(c)[P] with the P of the old configuration; level(c) = pad(c - 2)
     expect = off_state((recs[c_cfg - 2].pad >> 2) & 1)
     expect.update(cfg=0x52, owner=1)
@@ -661,18 +665,21 @@ def test_nrzi_receive_overrun_serrxt_bytes_then_status():
     run(m, c0 + len(syms) * T + 20, ext=drive_syms(syms, k, T, c0))
     s = m.ser
     assert (s.rx_hold, s.rx_valid, s.rx_ovr, s.rx_end) == (0x2D, 1, 1, 1)
-    # a second frame: its start drops the byte still held (rx_valid <= 0), so
+    assert s.rx_drop == 0
+    # a second frame: its start drops the byte and the frame end still held
+    # (rx_valid <= 0, rx_end <= 0) and records it in rx_drop (15.5, D-039), so
     # its own first byte is kept; its second and third bytes are lost again
     syms2 = frames_syms([usb_packet_syms([0x69, 0x00, 0x10])])   # IN, address 0, endpoint 0
     c1 = m.cycle
     run(m, len(syms2) * T + 20, ext=drive_syms(syms2, k, T, c1))
-    assert (s.rx_hold, s.rx_valid, s.rx_ovr, s.rx_end) == (0x69, 1, 1, 1)
+    assert (s.rx_hold, s.rx_valid, s.rx_ovr, s.rx_end, s.rx_drop) == (0x69, 1, 1, 1, 1)
     run(m, 400, ui=lambda c: 1, stop=lambda mm: not mm.threads[0].running)
     t = m.threads[0]
     assert t.regs[7] == 0
     assert t.regs[2] == 0x69
-    assert t.regs[3] == ST_END | ST_OVR | ST_C5OK   # CRC-5 still checks the bits of the lost bytes
-    assert (s.rx_valid, s.rx_end) == (0, 0)
+    # CRC-5 still checks the bits of the lost bytes; the status read returns rx_drop and clears it
+    assert t.regs[3] == ST_END | ST_OVR | ST_C5OK | ST_DROP
+    assert (s.rx_valid, s.rx_end, s.rx_drop) == (0, 0, 0)
 
 
 @pytest.mark.parametrize("T", [4, 6, 2])
@@ -941,3 +948,414 @@ def test_od_instruction_masks_engine_write_in_the_same_cycle():
     assert recs[c].uio_oe & 3 == 3
     assert all(r.uio_oe & 2 == 0 and r.uio_out & 2 == 0 for r in recs[c + 1:])
     assert (recs[c + 1].uio_out ^ recs[c].uio_out) & 1    # P still follows the engine
+
+
+
+# ---------------------------------------------------------------- rx_drop (15.2, 15.5, 15.7; D-039)
+#
+# The receiver's timing depends only on the line and T, so the cycle F at
+# which the last frame starts is found from a reference run of the same
+# program and stimulus whose second gate (ui0) never opens. The real run
+# opens ui0 at pad cycle F - 4: WT1 sees level(F - 2) = 1 and completes at
+# the slot F - 2, and the instruction after it executes in the frame start
+# cycle F itself (thread 0, so F must be even: the stimulus is shifted by
+# one cycle when it is not). The first gate (ui1) opens where `gate_a`
+# says, so that `pre` runs between two frames or inside one.
+
+# no RXSKIP: the CRC-5 runs over the whole one-byte ACK, which does not leave
+# the residual, so rx_c5ok stays 0 in these runs
+DROP_T, DROP_K = 8, 0
+DROP_CFG = NRZI | STUFF | RXEN | pair(DROP_K)
+
+
+def _rise_cycles(recs, field, frm=0, to=1):
+    return [recs[i].cycle for i in range(len(recs) - 1)
+            if recs[i].ser[field] == frm and recs[i + 1].ser[field] == to]
+
+
+def drop_run(frames, pre, at, gate_a):
+    """Returns (machine, records, F). gate_a(ref) gives the pad cycle at which ui1 rises."""
+    src = """
+            ldi r1, %d
+            sett r1
+            ldi r0, %d
+            sercfg r0
+            ldi r2, 0x77            ; sentinel
+            wt1 ui1                 ; gate A
+            %s
+            wt1 ui0                 ; gate B: the next instruction executes in cycle F
+            %s
+            halt
+    """ % (DROP_T, DROP_CFG, pre, at)
+    syms = frames_syms(frames, gap=16)
+    cycles = 60 + len(syms) * DROP_T + 300
+    for c0 in (40, 41):
+        ext = drive_syms(syms, DROP_K, DROP_T, c0)
+        m, _ = boot(src)
+        ref = run(m, cycles, ext=ext, ser=True, ui=lambda c: 0)
+        a = gate_a(ref)
+        m, _ = boot(src)
+        ref = run(m, cycles, ext=ext, ser=True, ui=lambda c: 2 * int(c >= a))
+        f = _rise_cycles(ref, "rx_state")[-1]
+        if f % 2 == 0:
+            break
+    m, _ = boot(src)
+    recs = run(m, cycles, ext=ext, ser=True, ui=lambda c: 2 * int(c >= a) + int(c >= f - 4))
+    assert _rise_cycles(recs, "rx_state")[-1] == f                    # the frame starts in F
+    (r,) = [x for x in m.trace if x.cycle == f]
+    assert r.done and name_of(r.word) == name_of(asm(at)[0][0])         # `at` completes in F
+    return m, recs, f
+
+
+def after_end(n):
+    """Gate A a few cycles after the n-th frame end (rx_state DATA to HUNT)."""
+    return lambda ref: _rise_cycles(ref, "rx_state", 1, 0)[n - 1] + 4
+
+
+def after_first_byte(n):
+    """Gate A just after the first byte of the n-th frame completes (rx_valid rises)."""
+    def g(ref):
+        start = _rise_cycles(ref, "rx_state")[n - 1]
+        return next(c for c in _rise_cycles(ref, "rx_valid") if c > start) + 1
+    return g
+
+
+def after_start(n):
+    """Gate A just after the n-th frame start."""
+    return lambda ref: _rise_cycles(ref, "rx_state")[n - 1] + 2
+
+
+ACK = usb_packet_syms([0xD2])
+TWO = usb_packet_syms([0x5A, 0x3C])
+ABANDON_PRE = "seri 0x80\n serwt"   # queue a byte: the transmitter starts, a receive in progress is abandoned
+
+
+@pytest.mark.parametrize("pre,at,drop,r2", [
+    ("nop", "nop", 1, 0x77),                                # byte and frame end untaken
+    ("serrx r3", "nop", 1, 0x77),                           # frame end untaken
+    ("serrx r3", "serrx r2", 0, ST_END),          # same-cycle SERRX takes the frame end
+    ("nop", "serrx r2", 1, 0xD2),                           # same-cycle SERRX takes the byte, the end is dropped
+    ("serrx r3\n serrx r4", "nop", 0, 0x77),                # both taken before: nothing to drop
+    ("nop", "serst r2", 1, ST_RXVALID | ST_END),  # the set wins over the SERST clear
+])
+def test_rx_drop_set_by_frame_start(pre, at, drop, r2):
+    m, recs, f = drop_run([ACK, TWO], pre, at, after_end(1))
+    assert all(r.ser["rx_drop"] == 0 for r in recs[:f + 1])
+    assert all(r.ser["rx_drop"] == drop for r in recs[f + 1:])
+    t = m.threads[0]
+    assert t.regs[2] == r2
+    # the frame start clears rx_valid and rx_end whatever the instruction did
+    assert (recs[f + 1].ser["rx_valid"], recs[f + 1].ser["rx_end"]) == (0, 0)
+    if at == "serrx r2":
+        assert t.z == (0 if r2 == 0xD2 else 1)          # a byte, or the status word
+
+
+def test_rx_drop_set_wins_over_serst_when_already_set():
+    # frame 2 drops frame 1 (rx_drop = 1); a SERST in the cycle frame 3 starts
+    # over frame 2's untaken items returns the bit set, and it stays set
+    m, recs, f = drop_run([ACK, ACK, ACK], "nop", "serst r2", after_end(2))
+    first = _rise_cycles(recs, "rx_state")[1]
+    assert recs[first].ser["rx_drop"] == 0 and recs[first + 1].ser["rx_drop"] == 1
+    assert m.threads[0].regs[2] == ST_RXVALID | ST_END | ST_DROP
+    assert all(r.ser["rx_drop"] == 1 for r in recs[first + 1:])
+
+
+@pytest.mark.parametrize("at,drop,r2", [("nop", 1, 0x77), ("serrx r2", 0, 0xD2)])
+def test_receive_abandoned_by_transmitter_then_rx_drop(at, drop, r2):
+    # 15.4 (R25, kept by D-039): a frame being received when the transmitter
+    # starts gets no rx_end, no verdict and no flag; its held byte stays. At
+    # the next frame start rx_valid = 1 and rx_end = 0: the byte is dropped
+    # unless a SERRX takes it in that very cycle.
+    long1 = usb_packet_syms([0xD2] + [0x00] * 6)
+    m, recs, f = drop_run([long1, TWO], ABANDON_PRE, at, after_first_byte(1))
+    v1 = _rise_cycles(recs, "rx_valid")[0]
+    busy = [r.cycle for r in recs if r.ser["tx_state"] != 0]
+    assert busy and v1 < busy[0] < busy[-1] < f
+    assert recs[busy[0]].ser["rx_state"] == 1                       # frame 1 was being received
+    assert recs[busy[0] + 1].ser["rx_state"] == 0                   # held in HUNT from the first busy cycle
+    assert len(_rise_cycles(recs, "rx_state")) == 2                 # no false start in the rest of frame 1
+    flags = ("rx_valid", "rx_hold", "rx_end", "rx_c5ok", "rx_cok", "rx_ovr", "rx_serr", "rx_ferr", "rx_drop")
+    want = dict(rx_valid=1, rx_hold=0xD2, rx_end=0, rx_c5ok=0, rx_cok=0, rx_ovr=0, rx_serr=0, rx_ferr=0,
+                rx_drop=0)
+    for r in recs[v1 + 1:f + 1]:
+        assert dict((n, r.ser[n]) for n in flags) == want, r.cycle
+    assert recs[f + 1].ser["rx_drop"] == drop
+    assert m.threads[0].regs[2] == r2
+
+
+@pytest.mark.parametrize("at,drop", [("nop", 1), ("serst r2", 0)])
+def test_rx_drop_kept_while_receiver_held_and_by_a_frame_start(at, drop):
+    # frame 2 drops frame 1 (rx_drop = 1); the transmitter then abandons frame
+    # 2 before its first byte: rx_drop keeps its value while the receiver does
+    # not run; frame 3 starts with nothing pending and does not clear it; a
+    # SERST in that cycle does (and returns it set)
+    long2 = usb_packet_syms([0x00] * 6)
+    m, recs, f = drop_run([ACK, long2, ACK], ABANDON_PRE, at, after_start(2))
+    s2 = _rise_cycles(recs, "rx_state")[1]
+    busy = [r.cycle for r in recs if r.ser["tx_state"] != 0]
+    assert busy and s2 < busy[0] and busy[-1] < f
+    assert all(r.ser["rx_drop"] == 1 for r in recs[s2 + 1:f + 1])
+    assert (recs[f].ser["rx_valid"], recs[f].ser["rx_end"]) == (0, 0)
+    assert recs[f + 1].ser["rx_drop"] == drop
+    if at == "serst r2":
+        assert m.threads[0].regs[2] == ST_DROP
+
+
+
+def _gated(src, frames, gate_a):
+    """Thread 0 runs src with ui1 rising at gate_a(reference run)."""
+    syms = frames_syms(frames, gap=16)
+    ext = drive_syms(syms, DROP_K, DROP_T, 40)
+    cycles = 40 + len(syms) * DROP_T + 200
+    m, _ = boot(src)
+    ref = run(m, cycles, ext=ext, ser=True, ui=lambda c: 0)
+    a = gate_a(ref)
+    m, _ = boot(src)
+    recs = run(m, cycles, ext=ext, ser=True, ui=lambda c: 2 * int(c >= a))
+    return m, recs, a
+
+
+def _drop_after(m, recs, name, i=0):
+    """rx_drop at the end of the cycle of the i-th completion of `name`."""
+    return recs[done_cycles(m, name)[i] + 1].ser["rx_drop"]
+
+
+@pytest.mark.parametrize("ops,checks,reg", [
+    # a SERRX that returns a byte does not clear; one that returns the status does
+    ("serrx r3\n serrx r4", [("SERRX", 0, 1), ("SERRX", 1, 0)], ST_END | ST_DROP),
+    ("serrx r3\n setd 20\n serrxt r4", [("SERRX", 0, 1), ("SERRXT", 0, 0)], ST_END | ST_DROP),
+    ("serst r4", [("SERST", 0, 0)], ST_RXVALID | ST_END | ST_DROP),
+    ("sercfg r0", [("SERCFG", 1, 0)], 0x77),
+])
+def test_rx_drop_cleared_by_status_reads_and_sercfg(ops, checks, reg):
+    src = """
+            ldi r1, %d
+            sett r1
+            ldi r0, %d
+            sercfg r0
+            ldi r4, 0x77
+            wt1 ui1
+            %s
+            halt
+    """ % (DROP_T, DROP_CFG, ops)
+    m, recs, a = _gated(src, [ACK, ACK], after_end(2))
+    assert recs[a].ser["rx_drop"] == 1
+    for name, i, v in checks:
+        assert _drop_after(m, recs, name, i) == v, (name, i)
+    assert m.threads[0].regs[4] == reg
+    assert m.ser.rx_drop == 0
+
+
+def test_rx_drop_not_cleared_by_serrxt_timeout():
+    # during frame 2, after its start dropped frame 1, nothing is pending: a
+    # SERRXT that only times out reads nothing and leaves rx_drop set (15.2)
+    src = """
+            ldi r1, %d
+            sett r1
+            ldi r0, %d
+            sercfg r0
+            ldi r3, 0x77
+            wt1 ui1
+            setd 0
+            serrxt r3
+            serst r4
+            halt
+    """ % (DROP_T, DROP_CFG)
+    m, recs, a = _gated(src, [ACK, usb_packet_syms([0x00] * 4)], after_start(2))
+    (c,) = done_cycles(m, "SERRXT")
+    assert recs[c].ser["rx_valid"] == 0 and recs[c].ser["rx_end"] == 0
+    assert m.threads[0].c == 1 and m.threads[0].regs[3] == 0x77       # timed out, nothing read
+    assert recs[c + 1].ser["rx_drop"] == 1
+    assert _drop_after(m, recs, "SERST") == 0
+    assert m.threads[0].regs[4] == ST_INFRAME | ST_DROP
+
+
+def test_status_word_bit_10_is_rx_drop_and_bits_15_11_are_zero():
+    m, _ = boot("""
+            serst r2
+            serst r3
+            halt
+    """)
+    m.ser.rx_drop = 1                       # as a frame start leaves it (15.5)
+    run(m, 10, stop=lambda mm: not mm.threads[0].running)
+    assert m.threads[0].regs[2] == ST_DROP and m.threads[0].regs[3] == 0
+    assert m.ser.rx_drop == 0
+
+
+
+# ---------------------------------------------------------------- abort (15.2; D-039)
+
+NRZI_ABORT = """
+            ldi r1, %d
+            sett r1
+            %s
+            ldi r0, %d
+            sercfg r0
+            ldi r5, %d
+            seri 0x00
+            seri 0x00
+            seri 0x00
+            wt1 ui0
+            sercfg r5
+            halt
+"""
+
+
+@pytest.mark.parametrize("od", ["", "od uio3", "od uio3\n clr uio3", "od uio2"])
+def test_abort_mode1_releases_pair_with_j(od):
+    # NRZI on pair 1 (P = 2, N = 3), aborted mid-frame by a SERCFG to
+    # Manchester on pair 0: the old pair goes to idle(1, 2, 3) (released, J in
+    # the output registers), an open-drain pin of the pair is not written at
+    # all, and the new pair is not touched
+    T = 4
+    m, _ = boot(NRZI_ABORT % (T, od, NRZI | pair(1), MANCH | pair(0)), ext_uio=0xFB)
+    recs = run(m, 400, ser=True, ui=lambda c: int(c >= 70), stop=lambda mm: not mm.threads[0].running)
+    c = done_cycles(m, "SERCFG")[1]
+    before, after = recs[c], recs[c + 1]
+    assert before.ser["tx_state"] == 1
+    assert before.od_mask == {"": 0, "od uio2": 4}.get(od, 8)
+    for b, out in ((4, 0), (8, 8)):
+        if before.od_mask & b:                  # write() ignores it: unchanged
+            assert (after.uio_out & b, after.uio_oe & b) == (before.uio_out & b, before.uio_oe & b)
+        else:
+            assert (after.uio_out & b, after.uio_oe & b) == (out, 0)
+    assert (after.uio_out & 3, after.uio_oe & 3) == (before.uio_out & 3, before.uio_oe & 3)
+    if od == "":
+        assert before.uio_oe & 0x0C == 0x0C and sym_at(after.pad, 1) == J
+    if od == "od uio3\n clr uio3":
+        assert after.uio_oe & 8                 # still pulled low by firmware
+    assert after.ser["tx_state"] == 0 and after.ser["cfg"] == MANCH | pair(0)
+    # nothing more is written: nothing is queued in the new configuration
+    assert all((r.uio_out, r.uio_oe) == (after.uio_out, after.uio_oe) for r in recs[c + 1:])
+    assert all(r.uio_out & r.od_mask == 0 for r in recs)
+
+
+def test_abort_mode1_in_the_tail_and_next_frame_codes_from_j():
+    # aborted while sending the end of packet (SE0 on the pair, tx_state =
+    # TAIL): the pair returns to J at once; the next frame, on the same pair,
+    # is coded from J (the byte 0x80 gives KJKJKJKK)
+    T, k = 4, 1
+    src = """
+            ldi r1, %d
+            sett r1
+            ldi r0, %d
+            sercfg r0
+            seri 0x00
+            wt1 ui0
+            sercfg r0
+            seri 0x80
+            serwt
+            halt
+    """ % (T, NRZI | pair(k))
+    m, _ = boot(src, ext_uio=0xFB)
+    ref = run(m, 400, ser=True, ui=lambda c: 0)
+    tail = next(r.cycle for r in ref if r.ser["tx_state"] == 3 and sym_at(r.pad, k) == SE0)
+    g = tail - 4 + (tail % 2)                   # the SERCFG executes at the even slot tail + (tail % 2)
+    m, _ = boot(src, ext_uio=0xFB)
+    recs = run(m, 600, ser=True, ui=lambda c: int(c >= g), stop=lambda mm: not mm.threads[0].running)
+    c = done_cycles(m, "SERCFG")[1]
+    assert recs[c].ser["tx_state"] == 3 and sym_at(recs[c].pad, k) == SE0
+    assert (recs[c + 1].uio_out & 0x0C, recs[c + 1].uio_oe & 0x0C) == (8, 0)
+    assert sym_at(recs[c + 1].pad, k) == J
+    f = next(e for e in changes(recs, 0x0C) if e > c + 1)
+    assert [sym_at(recs[f + i * T].pad, k) for i in range(8)] == list("KJKJKJKK")
+
+
+MAN_ABORT = """
+            ldi r1, %d
+            sett r1
+            oen uio0
+            oen uio1
+            %s
+            ldi r0, %d
+            sercfg r0
+            ldi r5, 0
+            seri 0x55
+            seri 0x55
+            seri 0x55
+            wt1 ui0
+            sercfg r5
+            halt
+"""
+
+
+@pytest.mark.parametrize("od", ["", "od uio0", "od uio1"])
+def test_abort_mode2_drives_pair_low(od):
+    # Manchester on pair 0, aborted mid-frame by a SERCFG to off: idle(2, 0,
+    # 1) drives both pins low; an open-drain pin is not written
+    T = 3
+    m, _ = boot(MAN_ABORT % (T, od, MANCH | pair(0)), ext_uio=0xFC)
+    recs = run(m, 400, ser=True, ui=lambda c: int(c >= 81), stop=lambda mm: not mm.threads[0].running)
+    c = done_cycles(m, "SERCFG")[1]
+    before, after = recs[c], recs[c + 1]
+    assert before.ser["tx_state"] == 1
+    assert before.od_mask == {"": 0, "od uio0": 1, "od uio1": 2}[od]
+    if od == "":
+        assert before.uio_out & 3 in (1, 2) and before.uio_oe & 3 == 3   # mid-frame: P = ~N
+    for b in (1, 2):
+        if before.od_mask & b:
+            assert (after.uio_out & b, after.uio_oe & b) == (before.uio_out & b, before.uio_oe & b)
+        else:
+            assert (after.uio_out & b, after.uio_oe & b) == (0, b)
+    assert after.uio_out & 3 == 0
+    assert all((r.uio_out, r.uio_oe) == (after.uio_out, after.uio_oe) for r in recs[c + 1:])
+
+
+
+def test_sercfg_in_the_start_tick_is_not_an_abort():
+    # T = 1. Thread 0 queues a byte in cycle G + 4; cycle G + 5 is the start
+    # tick, during which tx_state is still IDLE (tx_full = 1). A SERCFG by
+    # thread 1 in G + 5 is not an abort (no pin write; the start is
+    # overridden); one in G + 7 (tx_state = DATA, the first symbol written
+    # in G + 6) is, and writes idle(1, 0, 1).
+    g = 30
+
+    def go(extra):
+        m, _ = boot("""
+                ldi r1, 1
+                sett r1
+                ldi r0, %d
+                sercfg r0
+                wt1 ui0
+                seri 0x00
+                halt
+        t1:     ldi r0, %d
+                wt1 ui0
+                %s
+                sercfg r0
+                halt
+        """ % (NRZI | pair(0), MANCH | pair(2), extra), ext_uio=0xFE, t1=True)
+        recs = run(m, 60, ser=True, ui=lambda c: int(c >= g))
+        (c,) = [x for x in done_cycles(m, "SERCFG") if x % 2]
+        return recs, c
+    recs, c = go("")
+    assert c == g + 5 and recs[c].ser["tx_full"] == 1 and recs[c].ser["tx_state"] == 0
+    assert all((r.uio_out, r.uio_oe) == (0, 0) for r in recs)
+    assert recs[c + 1].ser["tx_state"] == 0 and recs[c + 1].ser["tx_full"] == 0
+    recs, c = go("nop")
+    assert c == g + 7 and recs[c].ser["tx_state"] == 1
+    assert recs[c].uio_oe & 3 == 3                                   # the first symbol is driven
+    assert all((r.uio_out & 3, r.uio_oe & 3) == (2, 0) for r in recs[c + 1:])
+
+
+def test_sercfg_with_tx_idle_and_tx_full_writes_no_pin():
+    # the owner's timer is off: the queued byte never starts, tx_state stays
+    # IDLE with tx_full = 1; a SERCFG then is not an abort and leaves the
+    # pins as firmware set them (here the pair shows K, not idle)
+    m, _ = boot("""
+            ldi r0, %d
+            sercfg r0
+            set uio2
+            oen uio2
+            oen uio3
+            seri 0x00
+            sercfg r0
+            halt
+    """ % (NRZI | pair(1)), ext_uio=0xFF)
+    recs = run(m, 40, ser=True, stop=lambda mm: not mm.threads[0].running)
+    c = done_cycles(m, "SERCFG")[1]
+    assert (recs[c].ser["tx_state"], recs[c].ser["tx_full"]) == (0, 1)
+    assert (recs[c].uio_out & 0x0C, recs[c].uio_oe & 0x0C) == (0x04, 0x0C)
+    assert (recs[c + 1].uio_out, recs[c + 1].uio_oe) == (recs[c].uio_out, recs[c].uio_oe)
+    assert recs[c + 1].ser["tx_full"] == 0
+    assert not [e for e in m.pin_events if e[0] > c]
