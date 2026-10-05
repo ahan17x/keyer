@@ -9,6 +9,14 @@
  * model from macro/RM_IHPSG13_1P_256x16_c2_bm_bist/ instead (DECISIONS D-025).
  * With `KEYER_IMEM_FLOPS defined: behavioural flop array, the fallback used
  * by the FPGA build and the area comparison.
+ *
+ * Both branches hold rdata in a write cycle: the macro because A_REN = ~we,
+ * the behavioural memory because its read register loads only when we is
+ * low. The read data of a write cycle is never used: the fetch after any
+ * memory port use is invalid (SEMANTICS 2.1, 10.5, 14.1), and the host and
+ * the replay engine take read data only in the cycle after a read request.
+ * Without read-during-write, Yosys maps the behavioural memory on iCE40 to
+ * one SB_RAM40_4K instead of emulating write-through with flops and LUTs.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
@@ -52,7 +60,7 @@ module keyer_imem (
 `endif
     always @(posedge clk) begin
         if (we) mem[addr] <= wdata;
-        rdata_q <= mem[addr];
+        else    rdata_q <= mem[addr];   // no read in a write cycle: rdata holds
     end
     assign rdata = rdata_q;
 `endif
