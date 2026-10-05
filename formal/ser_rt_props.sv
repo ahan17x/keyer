@@ -88,16 +88,16 @@ module ser_rt_props #(
     wire        tx_c    = (f_sent != 8'd0) && !(skip && f_sent == 8'd1);
     always @(posedge clk) f_sent <= !rst_n ? 8'd0 : f_sent + (tx_we ? 8'd1 : 8'd0);
 
-    wire        a_pv, a_drive, a_p, a_n, a_rv, a_re;
+    wire        a_pv, a_drive, a_wout, a_p, a_n, a_rv, a_re;
     wire [1:0]  a_k, a_state;
     wire [15:0] a_st, a_rx;
     wire [31:0] a_crc;
     wire [4:0]  a_crc5;
     keyer_ser tx (
         .clk(clk), .rst_n(rst_n), .cfg_we(cfg_we), .cfg_val(cfg_val), .cfg_tid(1'b0),
-        .tx_we(tx_we), .tx_val(tx_val), .tx_val_c(tx_c), .rx_ack(1'b0),
+        .tx_we(tx_we), .tx_val(tx_val), .tx_val_c(tx_c), .rx_ack(1'b0), .st_ack(1'b0),
         .period(period), .tm_tick(tm_tick), .level(8'd0),
-        .pin_valid(a_pv), .pin_k(a_k), .pin_drive(a_drive), .pin_p(a_p), .pin_n(a_n),
+        .pin_valid(a_pv), .pin_k(a_k), .pin_drive(a_drive), .pin_wout(a_wout), .pin_p(a_p), .pin_n(a_n),
         .rd_st(a_st), .rd_rx(a_rx), .tx_full(a_full), .tx_idle(a_idle),
         .rx_valid(a_rv), .rx_end(a_re), .crc_m(a_crc), .tx_state(a_state), .crc5(a_crc5));
 
@@ -107,7 +107,7 @@ module ser_rt_props #(
         if (!rst_n) begin f_out_p <= 1'b0; f_out_n <= 1'b0; f_oe_p <= 1'b0; f_oe_n <= 1'b0; end
         else if (a_pv) begin
             f_oe_p <= a_drive; f_oe_n <= a_drive;
-            if (a_drive) begin f_out_p <= a_p; f_out_n <= a_n; end
+            if (a_wout) begin f_out_p <= a_p; f_out_n <= a_n; end
         end
     wire pad_p = f_oe_p ? f_out_p : 1'b0;          // released: the bus pulls give J
     wire pad_n = f_oe_n ? f_out_n : 1'b1;
@@ -121,7 +121,7 @@ module ser_rt_props #(
         else begin f_s1 <= pad; f_s2 <= f_s1; end
 
     // the receiver and its always-ready consumer
-    wire        b_pv, b_drive, b_p, b_n, b_full, b_idle, b_rv, b_re;
+    wire        b_pv, b_drive, b_wout, b_p, b_n, b_full, b_idle, b_rv, b_re;
     wire [1:0]  b_k, b_state;
     wire [15:0] b_st, b_rx;
     wire [31:0] b_crc;
@@ -129,9 +129,9 @@ module ser_rt_props #(
     wire        ack = b_rv || b_re;
     keyer_ser rx (
         .clk(clk), .rst_n(rst_n), .cfg_we(cfg_we), .cfg_val(cfg_val), .cfg_tid(1'b0),
-        .tx_we(1'b0), .tx_val(8'd0), .tx_val_c(1'b0), .rx_ack(ack),
+        .tx_we(1'b0), .tx_val(8'd0), .tx_val_c(1'b0), .rx_ack(ack), .st_ack(1'b0),
         .period(period), .tm_tick(tm_tick), .level(f_s2),
-        .pin_valid(b_pv), .pin_k(b_k), .pin_drive(b_drive), .pin_p(b_p), .pin_n(b_n),
+        .pin_valid(b_pv), .pin_k(b_k), .pin_drive(b_drive), .pin_wout(b_wout), .pin_p(b_p), .pin_n(b_n),
         .rd_st(b_st), .rd_rx(b_rx), .tx_full(b_full), .tx_idle(b_idle),
         .rx_valid(b_rv), .rx_end(b_re), .crc_m(b_crc), .tx_state(b_state), .crc5(b_crc5));
 

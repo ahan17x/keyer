@@ -94,6 +94,7 @@ module keyer_core #(
     output wire                  ser_tx_c,       // SERTXC, SERIC: the byte is in the CRC
     output wire [7:0]            ser_wdata,      // rs[7:0] (SERCFG, SERTX, SERTXC) or n (SERI, SERIC)
     output reg                   ser_rx_ack,     // SERRX takes a byte or a frame end
+    output reg                   ser_st_ack,     // SERST reads the status word (clears rx_drop)
     input  wire                  ser_tx_full,
     input  wire                  ser_tx_idle,
     input  wire                  ser_rx_valid,
@@ -322,7 +323,7 @@ module keyer_core #(
     reg        delay_load, delay_dec;
     reg        is_wait, wait_base, wait_tmo;
     reg        pop_req, push_req;        // the slot owner's inbox pop / outbox push
-    reg        ser_cfg_req, ser_tx_req, ser_rx_req;
+    reg        ser_cfg_req, ser_tx_req, ser_rx_req, ser_st_req;
     reg [16:0] sum;
 
     always @(*) begin
@@ -337,7 +338,7 @@ module keyer_core #(
         pin_valid = 1'b0; pin_op = 3'd0; pin_pin = pin; pin_data = 8'd0;
         pop_req = 1'b0; push_req = 1'b0; outbox_wdata = A[7:0];
         cr_ctrl_we = 1'b0;
-        ser_cfg_req = 1'b0; ser_tx_req = 1'b0; ser_rx_req = 1'b0;
+        ser_cfg_req = 1'b0; ser_tx_req = 1'b0; ser_rx_req = 1'b0; ser_st_req = 1'b0;
         sum = 17'd0;
 
         case (maj)
@@ -469,7 +470,7 @@ module keyer_core #(
                             ser_rx_req = wait_base; wr_en = wait_base;
                             z_we = wait_base; z_val = ~ser_rx_valid;
                         end
-                        `KEYER_SERG_ST: wr_en = 1'b1;
+                        `KEYER_SERG_ST: begin wr_en = 1'b1; ser_st_req = 1'b1; end
                         `KEYER_SERG_WT: begin is_wait = 1'b1; wait_base = ser_tx_idle & ~ser_tx_full; end
                         default: ;
                     endcase
@@ -528,6 +529,7 @@ module keyer_core #(
         ser_cfg_we = exec_io & ser_cfg_req;
         ser_tx_we  = exec_io & ser_tx_req;
         ser_rx_ack = exec_io & ser_rx_req;
+        ser_st_ack = exec_io & ser_st_req;
     end
 
     // FIFO strobes: one per thread, from the io copy
@@ -756,7 +758,7 @@ module keyer_core #(
         //     (A blocked timeout-form wait never writes C.)
         if (exec && !done)
             assert(!pin_valid && !cr_ctrl_we && inbox_pop == {NT{1'b0}} && outbox_push == {NT{1'b0}}
-                   && !ser_cfg_we && !ser_tx_we && !ser_rx_ack);
+                   && !ser_cfg_we && !ser_tx_we && !ser_rx_ack && !ser_st_ack);
         if ($past(exec && !done))
             for (fr = 0; fr < 8*NT; fr = fr + 1) assert(regs[fr] == $past(regs[fr]));
         for (ft = 0; ft < NT; ft = ft + 1) begin

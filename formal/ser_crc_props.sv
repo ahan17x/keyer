@@ -74,15 +74,15 @@ module ser_crc_props #(
     wire [7:0]  tx_val  = msg_pad[8 * f_sent[3:0] +: 8];
     always @(posedge clk) f_sent <= !rst_n ? 8'd0 : f_sent + (tx_we ? 8'd1 : 8'd0);
 
-    wire        pin_valid, pin_drive, pin_p, pin_n, rx_valid, rx_end;
+    wire        pin_valid, pin_drive, pin_wout, pin_p, pin_n, rx_valid, rx_end;
     wire [1:0]  pin_k, tx_state;
     wire [15:0] rd_st, rd_rx;
     wire [31:0] crc_m;
     keyer_ser dut (
         .clk(clk), .rst_n(rst_n), .cfg_we(cfg_we), .cfg_val(cfg_val), .cfg_tid(1'b0),
-        .tx_we(tx_we), .tx_val(tx_val), .tx_val_c(1'b1), .rx_ack(1'b0),
+        .tx_we(tx_we), .tx_val(tx_val), .tx_val_c(1'b1), .rx_ack(1'b0), .st_ack(1'b0),
         .period(32'h00000001), .tm_tick(2'b01), .level(8'd0),
-        .pin_valid(pin_valid), .pin_k(pin_k), .pin_drive(pin_drive), .pin_p(pin_p), .pin_n(pin_n),
+        .pin_valid(pin_valid), .pin_k(pin_k), .pin_drive(pin_drive), .pin_wout(pin_wout), .pin_p(pin_p), .pin_n(pin_n),
         .rd_st(rd_st), .rd_rx(rd_rx), .tx_full(tx_full), .tx_idle(tx_idle),
         .rx_valid(rx_valid), .rx_end(rx_end),
         // SEMANTICS 15.1 registers, made ports by `expose` in ser.sby
@@ -93,7 +93,7 @@ module ser_crc_props #(
     wire [2:0] ones;
     ser_txmon mon (
         .clk(clk), .rst_n(rst_n), .cfg_we(cfg_we), .cfg_val(cfg_val), .cfg_tid(1'b0),
-        .pin_valid(pin_valid), .pin_drive(pin_drive), .pin_p(pin_p), .pin_n(pin_n), .tx_idle(tx_idle),
+        .pin_valid(pin_valid), .pin_drive(pin_drive), .pin_wout(pin_wout), .pin_p(pin_p), .pin_n(pin_n), .tx_idle(tx_idle),
         .cfg(cfg), .owner(owner), .act(act), .ev_bit(ev_bit), .bit_b(bit_b), .ones(ones),
         .ev_second(ev_second), .second_ok(second_ok), .ev_end(ev_end), .ev_bad(ev_bad), .fresh(fresh));
 

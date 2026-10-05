@@ -20,10 +20,12 @@
  * A third port carries the serializer's write to its pair uio[2k],
  * uio[2k+1] (SEMANTICS 15.1, 15.3), applied after the replay and before
  * the host PINMODE write (5.3), and only to pins that are push-pull in
- * od_mask' (the mask after the core's command): with ser_drive = 1,
- * uio_out <= ser_p / ser_n and uio_oe <= 1; with ser_drive = 0 (the NRZI
- * release), uio_oe <= 0 and uio_out unchanged. It never writes an
- * open-drain pin, so the invariant uio_out & od_mask = 0 is kept.
+ * od_mask' (the mask after the core's command): uio_oe <= ser_drive, and
+ * with ser_wout = 1 also uio_out <= ser_p / ser_n. line(s) / se0() are
+ * drive 1, wout 1; the NRZI tail's release is drive 0, wout 0 (uio_out
+ * unchanged); the NRZI abort's idle() is drive 0, wout 1 (J in the output
+ * registers, DECISIONS D-039). It never writes an open-drain pin, so the
+ * invariant uio_out & od_mask = 0 is kept.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
@@ -50,7 +52,8 @@ module keyer_pins (
     // serializer: write of the pair uio[2k] (P), uio[2k+1] (N)
     input  wire        ser_valid,
     input  wire [1:0]  ser_k,
-    input  wire        ser_drive,       // 1: drive ser_p / ser_n; 0: release (oe <= 0)
+    input  wire        ser_drive,       // uio_oe value written to the pair
+    input  wire        ser_wout,        // 1: uio_out <= ser_p / ser_n as well
     input  wire        ser_p,
     input  wire        ser_n,
     // host
@@ -161,7 +164,7 @@ module keyer_pins (
         n_uo      = (n_uo & ~rep_uo) | (rep_d8 & rep_uo);
         // serializer write(p, v, e) on the push-pull pins of its pair (15.1)
         n_uio_oe  = ser_drive ? (n_uio_oe | ser_w) : (n_uio_oe & ~ser_w);
-        n_uio_out = (n_uio_out & ~(ser_w & {8{ser_drive}})) | (ser_v8 & ser_w & {8{ser_drive}});
+        n_uio_out = (n_uio_out & ~(ser_w & {8{ser_wout}})) | (ser_v8 & ser_w & {8{ser_wout}});
         if (host_mode_we) begin                      // host PINMODE: applied last
             n_od      = host_mode_val;
             n_uio_oe  = n_uio_oe & ~host_mode_val;

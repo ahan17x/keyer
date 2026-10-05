@@ -17,6 +17,11 @@
 // Continuous checks, every cycle of every phase: rx_last(c + 1) =
 // level(c)[P] (15.1); a cycle in which the receiver does not run is
 // followed by its hunt values (15.4); the open-drain invariant.
+// Phases 7, 9 and 10: a SERCFG that aborts a frame returns the old pair to
+// idle (15.1, 15.2, DECISIONS D-039); one with the transmitter IDLE writes
+// no pin. Phases 11 and 12: rx_drop (15.5, 15.7), through the core and on a
+// second engine (u_eng) whose strobes the bench drives directly, so that a
+// SERRX or SERST can be placed in the very cycle of a frame start.
 // Prints "SER_UNIT PASS" or "SER_UNIT FAIL (n errors)".
 `default_nettype none
 `timescale 1ns / 1ps
@@ -61,6 +66,9 @@ module tb_ser_unit;
     reg [7:0]  oeh   [0:NC-1];
     reg [7:0]  outh  [0:NC-1];
     reg        blk0h [0:NC-1];           // u_core.blocked[0]
+    reg        cfgh  [0:NC-1];           // u_ser.cfg_we (a SERCFG commits)
+    reg        droph [0:NC-1];           // u_ser.rx_drop
+    reg        rxsth [0:NC-1];           // u_ser.rx_state
     // commits: cycle and word, in order
     integer    ncm;
     integer    cm_cyc [0:NC-1];
@@ -102,6 +110,9 @@ module tb_ser_unit;
             oeh[cyc]   = uio_oe;
             outh[cyc]  = uio_out;
             blk0h[cyc] = dut.u_core.blocked[0];
+            cfgh[cyc]  = dut.u_ser.cfg_we;
+            droph[cyc] = dut.u_ser.rx_drop;
+            rxsth[cyc] = dut.u_ser.rx_state;
             if (dut.u_core.commit && ncm < NC) begin
                 cm_cyc[ncm] = cyc; cm_ir[ncm] = dut.u_core.ir; ncm = ncm + 1;
             end
@@ -250,6 +261,32 @@ module tb_ser_unit;
                 end
         end
     endfunction
+    // the cycle of the k-th SERCFG commit (k = 0 first), or -1
+    function integer cfg_of;
+        input integer k;
+        integer j, n;
+        begin
+            cfg_of = -1; n = 0;
+            for (j = 0; j < cyc && j < NC; j = j + 1)
+                if (cfgh[j]) begin
+                    if (n == k && cfg_of < 0) cfg_of = j;
+                    n = n + 1;
+                end
+        end
+    endfunction
+    // the cycle in which rx_state shows the k-th frame start (k = 0 first), or -1
+    function integer rise_of;
+        input integer k;
+        integer j, n;
+        begin
+            rise_of = -1; n = 0;
+            for (j = 1; j < cyc && j < NC; j = j + 1)
+                if (rxsth[j] && !rxsth[j-1]) begin
+                    if (n == k && rise_of < 0) rise_of = j;
+                    n = n + 1;
+                end
+        end
+    endfunction
     function integer first_even_at_or_after;
         input integer c;
         begin
@@ -285,6 +322,115 @@ module tb_ser_unit;
                 uio_ext[2*k+1] = (c == "J");
                 repeat (T) @(negedge clk);
             end
+        end
+    endtask
+
+    // NRZI frames (no stuffing): sync, one byte, end of packet, four idle J
+    localparam [8*23-1:0]  FRAME_00 = "KJKJKJKKJKJKJKJKSSJJJJJ";
+    localparam [8*23-1:0]  FRAME_5A = "KJKJKJKKJJKKKJJKSSJJJJJ";
+    localparam [8*23-1:0]  FRAME_3C = "KJKJKJKKJKKKKKJKSSJJJJJ";
+    localparam [8*16-1:0]  FRAME_PART = "KJKJKJKKJKJKJKJK";     // sync and one byte, no end
+
+    // ---- a second engine, driven directly (phase 12) --------------------------
+    // Receiver on pair 0, T = 8 from thread 0's period; e_tick drives the
+    // transmitter's symbol ticks. e_fs_ack / e_fs_st arm a SERRX / SERST
+    // strobe for the next cycle in which a frame starts (the engine's own
+    // frame-start term r_fs, which depends only on its state and the level,
+    // not on the strobes); the strobe is made in that cycle only and the arm
+    // clears itself.
+    reg        e_cfg_we = 1'b0, e_tx_we = 1'b0, e_m_ack = 1'b0, e_m_st = 1'b0;
+    reg        e_fs_ack = 1'b0, e_fs_st = 1'b0, e_tick = 1'b0;
+    reg  [7:0] e_cfg_val = 8'd0, e_lvl = 8'hFE;
+    wire       e_rx_ack = e_m_ack | (e_fs_ack & u_eng.r_fs);
+    wire       e_st_ack = e_m_st  | (e_fs_st  & u_eng.r_fs);
+    wire       e_pv, e_pd, e_pw, e_pp, e_pn, e_full, e_idle, e_rv, e_re;
+    wire [1:0] e_pk;
+    wire [15:0] e_st, e_rx;
+    keyer_ser u_eng (
+        .clk (clk), .rst_n (rst_n), .cfg_we (e_cfg_we), .cfg_val (e_cfg_val), .cfg_tid (1'b0),
+        .tx_we (e_tx_we), .tx_val (8'h00), .tx_val_c (1'b0), .rx_ack (e_rx_ack), .st_ack (e_st_ack),
+        .period (32'h0000_0008), .tm_tick ({1'b0, e_tick}), .level (e_lvl),
+        .pin_valid (e_pv), .pin_k (e_pk), .pin_drive (e_pd), .pin_wout (e_pw), .pin_p (e_pp), .pin_n (e_pn),
+        .rd_st (e_st), .rd_rx (e_rx), .tx_full (e_full), .tx_idle (e_idle),
+        .rx_valid (e_rv), .rx_end (e_re)
+    );
+    integer e_nfs = 0;                   // frame starts seen
+    always @(posedge clk) begin
+        if (!rst_n) e_nfs = 0;
+        else if (u_eng.r_fs) begin
+            e_nfs = e_nfs + 1;
+            e_fs_ack <= 1'b0; e_fs_st <= 1'b0;
+        end
+    end
+    task e_cfg;
+        input [7:0] v;
+        begin
+            @(negedge clk); e_cfg_val = v; e_cfg_we = 1'b1;
+            @(negedge clk); e_cfg_we = 1'b0;
+        end
+    endtask
+    task e_ack;                          // a SERRX completing (rx_valid or rx_end must be 1)
+        begin
+            if (!(e_rv || e_re)) fail_msg("u_eng: SERRX with nothing to take (bench)", 0, 0);
+            @(negedge clk); e_m_ack = 1'b1;
+            @(negedge clk); e_m_ack = 1'b0;
+        end
+    endtask
+    task e_st_pulse;                     // a SERST
+        begin
+            @(negedge clk); e_m_st = 1'b1;
+            @(negedge clk); e_m_st = 1'b0;
+        end
+    endtask
+    task e_drive;
+        input [8*400-1:0] s;
+        input integer len;
+        integer j;
+        reg [7:0] c;
+        begin
+            for (j = 0; j < len; j = j + 1) begin
+                c = ch(s, len, j);
+                e_lvl[0] = (c == "K");
+                e_lvl[1] = (c == "J");
+                repeat (8) @(negedge clk);
+            end
+        end
+    endtask
+    task e_check;
+        input integer nfs;
+        input drop, valid, rend;
+        input integer id;
+        begin
+            if (e_nfs != nfs || u_eng.rx_drop !== drop || e_rv !== valid || e_re !== rend) begin
+                $display("  u_eng check %0d: frame starts %0d (exp %0d), rx_drop %b (exp %b), rx_valid %b (exp %b), rx_end %b (exp %b)",
+                         id, e_nfs, nfs, u_eng.rx_drop, drop, e_rv, valid, e_re, rend);
+                fail_msg("u_eng rx_drop check", id, 0);
+            end
+        end
+    endtask
+    // a receive in DATA with one byte held, abandoned by a transmitter start
+    // (15.4, D-039): no frame end, no verdict, no flag; then back to idle J
+    task e_abandon;
+        integer n;
+        begin
+            e_drive(FRAME_PART, 16);
+            if (u_eng.rx_state !== 1'b1 || e_rv !== 1'b1 || e_re !== 1'b0) fail_msg("u_eng: partial frame", e_rv, e_re);
+            @(negedge clk); e_tx_we = 1'b1;
+            @(negedge clk); e_tx_we = 1'b0; e_tick = 1'b1;   // the start tick is this cycle
+            @(negedge clk);
+            if (e_idle !== 1'b0) fail_msg("u_eng: transmitter did not start", 0, 0);
+            @(negedge clk);
+            if (u_eng.rx_state !== 1'b0 || e_rv !== 1'b1 || e_re !== 1'b0 || u_eng.rx_ferr !== 1'b0 ||
+                u_eng.rx_ovr !== 1'b0 || u_eng.rx_serr !== 1'b0 || u_eng.rx_c5ok !== 1'b0 || u_eng.rx_cok !== 1'b0)
+                fail_msg("u_eng: receive not abandoned cleanly at the transmitter start", e_rv, e_re);
+            n = 0;
+            while (!e_idle && n < 200) begin
+                @(negedge clk); n = n + 1;
+                if (e_re !== 1'b0) fail_msg("u_eng: rx_end during the transmission", n, 0);
+            end
+            e_tick = 1'b0;
+            if (!e_idle) fail_msg("u_eng: transmitter did not finish", 0, 0);
+            e_drive("JJJJ", 4);
         end
     endtask
 
@@ -431,8 +577,15 @@ module tb_ser_unit;
             if (txsh[cmt] !== 2'd1) fail_msg("not mid-frame", cmt, txsh[cmt]);
             if (!is_tick(0, cmt)) fail_msg("SERCFG not in a tick", cmt, 0);
             if (padc[cmt] == padc[cmt - 2]) fail_msg("the line was not toggling", cmt, 0);
+            if (padc[cmt] != "J" && padc[cmt] != "K") fail_msg("pair not driven before the abort", cmt, padc[cmt]);
+            // the abort writes idle(1, P, N) of the old configuration
+            // (D-039): both pins released, J (P 0, N 1) in the output
+            // registers, from the cycle after the SERCFG on
             for (i = cmt + 1; i < cyc; i = i + 1)
-                if (padc[i] != padc[cmt]) fail_msg("pins changed at or after SERCFG", i, cmt);
+                if (padc[i] != "R" || outh[i][1:0] !== 2'b10)
+                    fail_msg("NRZI abort: pair not idle (released, J in uio_out)", i, cmt);
+            for (i = 0; i < cyc; i = i + 1)
+                if (oeh[i][7:2] !== 6'd0 || outh[i][7:2] !== 6'd0) fail_msg("pins outside the pair written", i, 0);
             if (txsh[cmt + 1] !== 2'd0 || txfh[cmt + 1] !== 1'b0) fail_msg("engine not reset by SERCFG", cmt, 0);
         end
         if (dut.u_ser.tx_sh !== 8'd0 || dut.u_ser.tx_n !== 5'd0 || dut.u_ser.tx_line !== 1'b0 ||
@@ -456,6 +609,142 @@ module tb_ser_unit;
         // (P low) and the release: P driven for 11 symbols of 4 cycles
         if (cA != 11 * 4 || cB != 7) fail_msg("P driven cycles / transitions", cA, cB);
         if (oeh[cyc - 1][0] !== 1'b0) fail_msg("P not released at the end", 0, 0);
+
+        // ======== phase 9: Manchester abort, then SERCFG with the transmitter IDLE ===========
+        $display("phase 9: SERCFG aborts a Manchester frame (pair 1 driven low); SERCFG when IDLE writes no pin");
+        start_phase("p9_abort_manch.hex", 2'd1);
+        host_write(8'h00, 8'h01, 8'h00, 1);
+        wait_marker(1000);
+        repeat (10) @(negedge clk);
+        cA = cfg_of(1); cB = cfg_of(2);
+        if (cA < 0 || cB < 0 || cfg_of(3) >= 0) fail_msg("SERCFG commits", cA, cB);
+        else begin
+            if (txsh[cA] === 2'd0) fail_msg("first SERCFG not mid-frame", cA, 0);
+            if (padc[cA] != "J" && padc[cA] != "K") fail_msg("pair not driven before the abort", cA, padc[cA]);
+            if (outh[cA][2] !== 1'b1) fail_msg("P not high at the abort (test does not discriminate)", cA, outh[cA]);
+            for (i = cA + 1; i < cyc; i = i + 1)
+                if (padc[i] != "S" || oeh[i][3:2] !== 2'b11 || outh[i][3:2] !== 2'b00)
+                    fail_msg("Manchester abort: pair not idle (both driven low)", i, cA);
+            if (txsh[cB] !== 2'd0) fail_msg("second SERCFG not with the transmitter IDLE", cB, txsh[cB]);
+            for (i = cB + 1; i < cyc; i = i + 1)
+                if (oeh[i] !== oeh[cB] || outh[i] !== outh[cB]) fail_msg("SERCFG with tx IDLE wrote a pin", i, cB);
+        end
+        for (i = 0; i < cyc; i = i + 1)
+            if (oeh[i][1:0] !== 2'd0 || oeh[i][7:4] !== 4'd0) fail_msg("pins outside the pair driven", i, oeh[i]);
+        if (dut.u_ser.cfg !== 8'h41) fail_msg("final cfg", dut.u_ser.cfg, 8'h41);
+
+        // ======== phase 10: aborts with an open-drain pin in the pair ======================
+        $display("phase 10: NRZI and Manchester aborts with N open-drain");
+        start_phase("p10_abort_od.hex", 2'd0);
+        host_write(8'h0B, 8'h02, 8'h00, 1);           // PINMODE: uio1 open-drain
+        host_write(8'h00, 8'h01, 8'h00, 1);
+        wait_marker(1000);
+        repeat (10) @(negedge clk);
+        cA = cfg_of(1); cB = cfg_of(2);
+        if (cA < 0 || cB < 0) fail_msg("SERCFG commits", cA, cB);
+        else begin
+            if (txsh[cA] === 2'd0 || txsh[cB] === 2'd0) fail_msg("aborts not mid-frame", cA, cB);
+            if (oeh[cA][0] !== 1'b1 || oeh[cB][0] !== 1'b1) fail_msg("P not driven before an abort", cA, cB);
+            if (outh[cA][0] !== 1'b1 || outh[cB][0] !== 1'b1) fail_msg("P not high at an abort (test does not discriminate)", cA, cB);
+            // NRZI abort: P released with uio_out[P] = 0 (J's P)
+            if (oeh[cA + 1][0] !== 1'b0 || outh[cA + 1][0] !== 1'b0) fail_msg("NRZI abort: P not idle", cA, outh[cA + 1]);
+            // Manchester abort: P driven low, to the end
+            for (i = cB + 1; i < cyc; i = i + 1)
+                if (oeh[i][0] !== 1'b1 || outh[i][0] !== 1'b0) fail_msg("Manchester abort: P not driven low", i, cB);
+        end
+        for (i = 0; i < cyc; i = i + 1)
+            if (oeh[i][1] !== 1'b0 || outh[i][1] !== 1'b0) fail_msg("open-drain N written", i, 0);
+
+        // ======== phase 11: rx_drop through the core =======================================
+        $display("phase 11: rx_drop set by a frame start, cleared by SERST and by SERRX returning the status");
+        uio_ext = 8'hFE;                               // J on pair 0
+        start_phase("p11_drop.hex", 2'd0);
+        host_write(8'h00, 8'h01, 8'h00, 1);
+        repeat (100) @(negedge clk);
+        drive_line(FRAME_00, 23, 8, 2'd0);             // A
+        repeat (50) @(negedge clk);
+        drive_line(FRAME_5A, 23, 8, 2'd0);             // B: drops A's byte and frame end
+        repeat (50) @(negedge clk);
+        ui_in[4] = 1'b1;
+        for (i = 0; i < 400 && npush < 4; i = i + 1) @(negedge clk);
+        ui_in[4] = 1'b0;
+        repeat (50) @(negedge clk);
+        drive_line(FRAME_00, 23, 8, 2'd0);             // C: drops B's
+        repeat (50) @(negedge clk);
+        drive_line(FRAME_3C, 23, 8, 2'd0);             // D: drops C's
+        repeat (50) @(negedge clk);
+        ui_in[4] = 1'b1;
+        wait_marker(1000);
+        if (npush != 9) fail_msg("push count", npush, 9);
+        else begin
+            // status bits: 2 rx_valid, 4 rx_end, 10 rx_drop (5, 6: CRC verdicts, not checked)
+            if ((push_v[0] & 8'h9F) !== 8'h14 || push_v[1] !== 8'h04) fail_msg("first SERST: drop set", push_v[0], push_v[1]);
+            if ((push_v[2] & 8'h9F) !== 8'h14 || push_v[3] !== 8'h00) fail_msg("second SERST: drop cleared", push_v[2], push_v[3]);
+            if (push_v[4] !== 8'h3C) fail_msg("D's byte", push_v[4], 8'h3C);
+            if ((push_v[5] & 8'h9F) !== 8'h10 || push_v[6] !== 8'h04) fail_msg("SERRX status: drop as it was", push_v[5], push_v[6]);
+            if ((push_v[7] & 8'h9F) !== 8'h00 || push_v[8] !== 8'h00) fail_msg("SERST after SERRX status: cleared", push_v[7], push_v[8]);
+        end
+        // the bit rises in the cycle that shows B's (C's) frame start, not at A's
+        q = rise_of(0); t1 = rise_of(1); t2 = rise_of(2);
+        if (q < 0 || t1 < 0 || t2 < 0 || rise_of(3) < 0 || rise_of(4) >= 0) fail_msg("frame starts", q, t1);
+        else begin
+            if (droph[q] !== 1'b0) fail_msg("rx_drop set at A's start", q, 0);
+            if (droph[t1 - 1] !== 1'b0 || droph[t1] !== 1'b1) fail_msg("rx_drop not set at B's start", t1, 0);
+            if (droph[t2 - 1] !== 1'b0 || droph[t2] !== 1'b1) fail_msg("rx_drop not set at C's start", t2, 0);
+        end
+        if (dut.u_ser.rx_drop !== 1'b0) fail_msg("rx_drop at the end", 0, 0);
+
+        // ======== phase 12: rx_drop rules on a directly driven engine ======================
+        $display("phase 12: rx_drop same-cycle rules (u_eng); a transmitter start abandons a receive");
+        start_phase("p7_sercfg.hex", 2'd0);            // threads not started
+        e_lvl = 8'hFE;
+        e_cfg(8'h11);                                  // NRZI, receiver on, pair 0
+        repeat (40) @(negedge clk);
+        e_drive(FRAME_00, 23);                         // A
+        e_check(1, 1'b0, 1'b1, 1'b1, 1);
+        e_ack;                                         // takes A's byte; its frame end stays
+        e_check(1, 1'b0, 1'b0, 1'b1, 2);
+        e_drive(FRAME_00, 23);                         // B: A's frame end untaken: set
+        e_check(2, 1'b1, 1'b1, 1'b1, 3);
+        e_ack;                                         // a SERRX returning a byte keeps it
+        e_check(2, 1'b1, 1'b0, 1'b1, 4);
+        e_fs_ack = 1'b1;
+        e_drive(FRAME_00, 23);                         // C: a SERRX at the start takes B's end:
+        e_check(3, 1'b0, 1'b1, 1'b1, 5);               //    not set, and the status read clears
+        if (e_fs_ack !== 1'b0) fail_msg("u_eng: SERRX at C's start not made", 0, 0);
+        e_fs_ack = 1'b1;
+        e_drive(FRAME_00, 23);                         // D: SERRX takes C's byte, C's end dropped: set
+        e_check(4, 1'b1, 1'b1, 1'b1, 6);
+        if (e_st[10] !== 1'b1 || e_rx[10] !== 1'b0) fail_msg("u_eng: status bit 10 / byte read", e_st, e_rx);
+        e_st_pulse;                                    // SERST clears
+        e_check(4, 1'b0, 1'b1, 1'b1, 7);
+        if (e_st[10] !== 1'b0) fail_msg("u_eng: status bit 10 after SERST", e_st, 0);
+        e_fs_st = 1'b1;
+        e_drive(FRAME_00, 23);                         // E: SERST at the start, D's byte and end dropped:
+        e_check(5, 1'b1, 1'b1, 1'b1, 8);               //    the set wins
+        if (e_fs_st !== 1'b0) fail_msg("u_eng: SERST at E's start not made", 0, 0);
+        e_ack;                                         // E's byte: kept
+        e_check(5, 1'b1, 1'b0, 1'b1, 9);
+        if (e_rx[10] !== 1'b1 || e_rx[4] !== 1'b1 || e_rx[2] !== 1'b0) fail_msg("u_eng: SERRX status word", e_rx, 0);
+        e_ack;                                         // E's end: the status (bit as it was), cleared
+        e_check(5, 1'b0, 1'b0, 1'b0, 10);
+        e_drive(FRAME_00, 23);                         // F: nothing untaken: not set
+        e_check(6, 1'b0, 1'b1, 1'b1, 11);
+        e_drive(FRAME_00, 23);                         // G: F's byte and end dropped: set
+        e_check(7, 1'b1, 1'b1, 1'b1, 12);
+        e_cfg(8'h11);                                  // SERCFG clears (and everything else)
+        e_check(7, 1'b0, 1'b0, 1'b0, 13);
+        repeat (40) @(negedge clk);
+        e_abandon;                                     // H: abandoned, its byte held, no frame end
+        e_drive(FRAME_00, 23);                         // I: H's byte alone untaken: set
+        e_check(9, 1'b1, 1'b1, 1'b1, 14);
+        e_st_pulse; e_ack; e_ack;                      // clear; take I's byte and end
+        e_check(9, 1'b0, 1'b0, 1'b0, 15);
+        e_abandon;                                     // J: abandoned with its byte held
+        e_fs_ack = 1'b1;
+        e_drive(FRAME_00, 23);                         // K: SERRX at the start takes J's byte: not set
+        e_check(11, 1'b0, 1'b1, 1'b1, 16);
+        if (e_fs_ack !== 1'b0) fail_msg("u_eng: SERRX at K's start not made", 0, 0);
 
         if (errors == 0) $display("SER_UNIT PASS");
         else $display("SER_UNIT FAIL (%0d errors)", errors);

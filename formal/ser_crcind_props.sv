@@ -40,15 +40,15 @@ module ser_crcind_props (
     always @(posedge clk) f_init <= 1'b0;
     always @(*) if (f_init) assume(!rst_n);
 
-    wire        pin_valid, pin_drive, pin_p, pin_n, tx_full, tx_idle, rx_valid, rx_end;
+    wire        pin_valid, pin_drive, pin_wout, pin_p, pin_n, tx_full, tx_idle, rx_valid, rx_end;
     wire [1:0]  pin_k, tx_state;
     wire [15:0] rd_st, rd_rx;
     wire [31:0] crc_m;
     keyer_ser dut (
         .clk(clk), .rst_n(rst_n), .cfg_we(cfg_we), .cfg_val(cfg_val), .cfg_tid(cfg_tid),
-        .tx_we(tx_we), .tx_val(tx_val), .tx_val_c(1'b1), .rx_ack(rx_ack),
+        .tx_we(tx_we), .tx_val(tx_val), .tx_val_c(1'b1), .rx_ack(rx_ack), .st_ack(1'b0),
         .period(period), .tm_tick(tm_tick), .level(level),
-        .pin_valid(pin_valid), .pin_k(pin_k), .pin_drive(pin_drive), .pin_p(pin_p), .pin_n(pin_n),
+        .pin_valid(pin_valid), .pin_k(pin_k), .pin_drive(pin_drive), .pin_wout(pin_wout), .pin_p(pin_p), .pin_n(pin_n),
         .rd_st(rd_st), .rd_rx(rd_rx), .tx_full(tx_full), .tx_idle(tx_idle),
         .rx_valid(rx_valid), .rx_end(rx_end),
         .crc_m(crc_m), .tx_state(tx_state));
@@ -58,7 +58,7 @@ module ser_crcind_props (
     wire [2:0] ones;
     ser_txmon mon (
         .clk(clk), .rst_n(rst_n), .cfg_we(cfg_we), .cfg_val(cfg_val), .cfg_tid(cfg_tid),
-        .pin_valid(pin_valid), .pin_drive(pin_drive), .pin_p(pin_p), .pin_n(pin_n), .tx_idle(tx_idle),
+        .pin_valid(pin_valid), .pin_drive(pin_drive), .pin_wout(pin_wout), .pin_p(pin_p), .pin_n(pin_n), .tx_idle(tx_idle),
         .cfg(cfg), .owner(owner), .act(act), .ev_bit(ev_bit), .bit_b(bit_b), .ones(ones),
         .ev_second(ev_second), .second_ok(second_ok), .ev_end(ev_end), .ev_bad(ev_bad), .fresh(fresh));
 
