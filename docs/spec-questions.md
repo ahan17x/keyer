@@ -396,3 +396,39 @@ completeness; no change proposed.
     cycle's `cap_last`/`cap_dt` update and a free-cycle write still happen.
 20. Noted: a replay on group 4 cannot touch pins 16 and 17 (5.3).
 
+
+## 2026-10-04 (golden model, SEMANTICS v0.4 section 15: the serializer)
+
+### Q21. Are `rx_c5ok` and `rx_cok` cleared when a frame starts?
+
+Section 15.5 lists what a frame start writes: `rx_state rx_n rx_first
+rx_ones crc5 crc_m rx_valid rx_end rx_ovr rx_serr rx_ferr`. The two CRC
+verdicts are not in the list, so they keep the value of the last frame's
+`end()`. Section 15.7 says "the verdict and error bits describe the last
+frame that ended and stand until the next frame starts (15.5) or
+`SERCFG`", which can be read as "are cleared when the next frame starts".
+(The same sentence does not fit `rx_ovr` and `rx_serr` either: they are set
+while a frame is in progress, so mid-frame they describe the current frame.)
+
+**Chosen in `tools/keyersim.py`:** the register list of 15.5 as written. A
+frame start does not touch `rx_c5ok` or `rx_cok`; only `end()` from DATA
+and `SERCFG` write them. This is the simplest hardware (two flops written
+from one place) and is invisible to firmware that reads the verdicts only
+in the status `SERRX` returns at a frame end, where `end()` has just
+written both. The lockstep harness does see the difference mid-frame, so
+the RTL must make the same choice. Proposed wording for 15.7: "`rx_c5ok`
+and `rx_cok` are written by every frame end and by `SERCFG` only; `rx_ovr`,
+`rx_serr` and `rx_ferr` are cleared when a frame starts, and `rx_ovr` and
+`rx_serr` are set during the frame."
+
+### Q22. `SERRX` in the cycle the next byte completes (noted, no change proposed)
+
+Section 15.5 decides overrun on `rx_valid(c)`. If a `SERRX` takes the held
+byte in the same cycle c in which the next byte completes, `rx_valid(c)` is
+1, so the new byte is lost and `rx_ovr` is set, although the holding
+register is emptied in that cycle. The precedence paragraph of 15.2 relies
+on this, because it keeps the two writers of `rx_valid` disjoint.
+
+**Chosen in `tools/keyersim.py`:** the rule as written (overrun). It is
+recorded here because it is easy to "fix" on one side only. Firmware has a
+full byte time (8 T cycles) to read a byte, so the case is rare in practice.
