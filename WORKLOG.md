@@ -345,4 +345,8 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   was pushed only after it finished (a newer master push cancels a running
   one); that push started run 37260270799 and the `mutation` workflow was
   started on the merged master (run 37260274984).
+- Master run 37260270799 (the `waitd-csa` merge, commit a56aae4) finished
+  green and is logged in docs/AREA.md: +12.33 / +8.12 / +0.76 ns, no
+  violation at any corner, 24.8%, precheck 9/9, gl_test passing; equal to
+  the branch run.
 
