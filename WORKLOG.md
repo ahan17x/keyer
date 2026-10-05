@@ -302,3 +302,31 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   - The first mutation campaign was killed about an hour in, after a
     simulator process had been killed by hand; its partial results were
     discarded. Treated as not run.
+- After the checkpoint (same day, evening):
+  - `waitd-csa`: the rtl subagent's uncommitted work was checked by the
+    coordinating session (equivalence 533 of 533 against master, a seeded
+    off-by-one caught; T9 and P8 each fail on their seeded fault; lint;
+    full suite) and committed as faaeee1, pushed; `gds` run 37247680638.
+    It also made the check scripts fail on a failed proof (BUGS 19).
+  - The three unfinished protocol sets were finished by hand: I2C slave (a
+    stale assertion in its lockstep test), SPI slave (tests written; a late
+    MISO release fixed, BUGS 24, 25), SWD (model and tests written; three
+    firmware faults found by the model and fixed, BUGS 21 to 23). All six
+    are in the cocotb suite.
+  - `tools/mutate.py` reworked to D-031 (JSONL with `--resume`, verdicts
+    from `results.xml`, fastest check first, `--sample`, `--shard`,
+    timeout) and `.github/workflows/mutation.yaml` added. A 150-mutant
+    sample (seed 1, four workers, 35 minutes): 128 killed at first; the 22
+    others became 13 kills (nine through seven new tests in
+    `test/test_corners.py`) and 9 equivalents (4 by Yosys, 5 documented).
+    One survivor exposed a silent spot in the spec (MISO idle level,
+    D-033 OPEN).
+  - D-032: the behavioural memory holds its read data in a write cycle
+    (rtl subagent, branch `imem-bram`, merged): one block RAM and one LUT
+    instead of 42 flops and 29 LUTs around it. FPGA build now 3,501 logic
+    cells, 45.5 MHz; post-synthesis simulation 10 of 10.
+  - `docs/VERIFICATION.md` written; datasheet, README and HANDOFF updated.
+  - End of session: `bash scripts/check_all.sh` green on master (278
+    pytest, 39 cocotb, lint, Icarus, four formal groups). The full
+    mutation campaign has not run (workflow, by hand). Open for Ahan:
+    merging `waitd-csa`, D-033.
