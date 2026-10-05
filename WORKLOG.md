@@ -339,4 +339,10 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   hardware bring-up; README, VERIFICATION and the FPGA README say the FPGA
   build is a synthesis and post-synthesis-simulation result only; the task
   is gone from HANDOFF).
+- Master run 37252116397 (commit 1c6def3, the one-hot master with D-032's
+  behavioural-memory change) finished green and is logged in docs/AREA.md:
+  identical to 37228068179 (+11.85 / +7.41 / -0.13 ns, 24.7%). The merge
+  was pushed only after it finished (a newer master push cancels a running
+  one); that push started run 37260270799 and the `mutation` workflow was
+  started on the merged master (run 37260274984).
 
