@@ -2,8 +2,8 @@
 
 What is checked, by which layer, what each layer has found so far (rows of
 `docs/BUGS.md`), what each would miss on its own, and the command that
-reproduces every number. Companion to `docs/AREA.md`. State: 2026-10-04,
-after session 4.
+reproduces every number. Companion to `docs/AREA.md`. State: 2026-10-05,
+after session 6.
 
 The reference is `docs/SEMANTICS.md`, the cycle-exact contract. The golden
 model (`tools/keyersim.py`) and the RTL (`src/`) are written from it by
@@ -11,21 +11,22 @@ sessions that cannot read each other's side (CLAUDE.md, "Independence");
 everything below compares one of them, or both, with the contract or with
 each other.
 
-`bash scripts/check_all.sh` runs layers 1 to 6 (about seven minutes).
-Layers 7 and 8 run on GitHub.
+`bash scripts/check_all.sh` runs layers 1 to 6 and, through pytest, layer 9
+(about twelve minutes). Layers 7 and 8 run on GitHub.
 
 ## The layers
 
 | # | Layer | What it compares | Size | Command |
 |---|---|---|---|---|
 | 1 | Lint and compile | the RTL against the language rules | Verilator `-Wall`, Icarus `-g2005`, header freshness | `bash scripts/check_all.sh quick` |
-| 2 | Model tests | the golden model, the assembler and the encoding table against SEMANTICS and isa.md | 406 pytest cases (87 on the model, the serializer scenarios and the host driver, 6 on the mutation tool, 313 firmware cases counted in layer 3) | `python3 -m pytest tools/ -q` |
-| 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 313 pytest cases | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py -q` |
-| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 71 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
+| 2 | Model tests | the golden model, the assembler and the encoding table against SEMANTICS and isa.md | 472 pytest cases (119 on the model, the serializer scenarios and the host driver, 6 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
+| 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 313 pytest cases; 10 cases of published and hand-built vectors against the USB and Ethernet models | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py tools/test_protomodels.py -q` |
+| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 74 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
 | 5 | Formal | the RTL against properties stated from SEMANTICS, for all inputs | FIFO, pin unit, core (timer, control, thread select), capture and replay, serializer (stuffing, CRC, round trip) | `cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh && yowasp-sby -f capture.sby && yowasp-sby --yosys yowasp-yosys -f ser.sby` |
 | 6 | Equivalence | a restructured core against the core it replaces | every flop input and output bit | `bash formal/equiv_core.sh GIT_REF` |
 | 7 | Gate level | the hardened netlist (and the FPGA netlist) against the pads-only tests | the 13 pads-only tests (10 in the runs logged so far, which predate three of them) | `gl_test` job of the `gds` workflow; `bash fpga/alhambra2/sim.sh` |
 | 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 1,542 mutants on GitHub (2026-10-05, before the serializer); every survivor processed | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4` |
+| 9 | Static firmware timing | every `WAITD` of every program against the slots the program can spend before it, on all paths | 38 `WAITD` sites in 12 programs | `python3 tools/keyerasm.py fw/NAME.s --check-timing` |
 
 ### 1. Lint and compile
 
