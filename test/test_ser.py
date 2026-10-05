@@ -84,7 +84,7 @@ async def test_lockstep_ser_nrzi_rx(dut):
     """Six packets from a line driver: a token (CRC-5 good), a data packet
     with stuffed bits (CRC-16 good), a bad CRC, seven ones in a row, a frame
     that ends off a byte boundary, and a good token again."""
-    words, models, cycles, check, _ = S.nrzi_rx(T=8)
+    words, models, cycles, check, _ = S.nrzi_rx(T=8, gap=250)
     ls, got = await _run(dut, words, models, cycles)
     check(ls.m, got)
 

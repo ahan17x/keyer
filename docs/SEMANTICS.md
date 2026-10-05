@@ -813,8 +813,9 @@ half follows at the next tick by rule 1, before anything else).
 `count(b)`: if `stuff = 1`: `tx_ones <= b ? tx_ones + 1 : 0`.
 
 Consequences. A frame is the bytes queued without a gap; bits leave least
-significant first; the first symbol is on the pads in the cycle after the
-second tick at which `tx_full` was seen. In NRZI mode the frame is coded
+significant first; the start tick (rule 2) writes no pin and the first
+symbol is written by the next tick, so it is on the pads T + 1 cycles after
+the start tick (R23). In NRZI mode the frame is coded
 from J, so the byte `0x80` produces KJKJKJKK. The CRC covers exactly the
 marked bytes, before stuffing, and is sent complemented, bit 0 first, only
 if at least one byte was marked. A stuffed zero follows six ones even when
@@ -829,7 +830,10 @@ The receiver **runs** in cycle c iff mode is 1 or 2, `rxen = 1` and
 HUNT`, `rx_sh <= 0xFF`, `rx_n <= 0`, `rx_ones <= 0`, `rx_psym <= 0`,
 `rx_cnt <= 0`, `rx_w <= 1`, `rx_first <= 0`; the other receive registers
 (`rx_hold`, `rx_valid`, `rx_end`, the error and CRC verdict flags) keep
-their values. (So from the end of cycle 0 on, `rx_sh` reads `0xFF` and
+their values, and so do `crc5` and `crc_m` (only the transmitter's start
+writes `crc_m` then; spec-questions R22). A frame that was being received
+when the transmitter starts is abandoned without `rx_end` and without a
+verdict (R25). (So from the end of cycle 0 on, `rx_sh` reads `0xFF` and
 `rx_w` 1 while the engine is off.) When it runs, 15.5 and 15.6 apply, with
 `sym = level(c)[P]`, `edge = (sym != rx_last(c))` and `T = T(c)`; counter
 arithmetic is mod 65536.
@@ -848,7 +852,8 @@ arithmetic is mod 65536.
     `rx_ones <=` (if `stuff`: 1 in mode 1, 2 in mode 2, the trailing ones
     of the sync byte; else 0); `crc5 <= 0x1F`; `crc_m <= INIT_M`;
     `rx_valid <= 0`; `rx_end <= 0`; `rx_ovr <= 0`; `rx_serr <= 0`;
-    `rx_ferr <= 0`.
+    `rx_ferr <= 0`. A byte or a frame end of the previous frame that
+    firmware has not taken by then is discarded without a flag (R24).
   - `rx_state = DATA`: unless `rxskip = 1` and `rx_first = 1`:
     `crc5 <= step(crc5, d)` and `crc_m <= step(crc_m, d)`. If `rx_n = 7`
     the byte v is complete: `rx_n <= 0`; `rx_first <= 0`; if

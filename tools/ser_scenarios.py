@@ -70,6 +70,8 @@ class PairLog:
 
     def on_cycle(self, m):
         if self.c0 is None:
+            if not m.threads[0].running:        # the program is still being loaded
+                return
             self.c0 = m.cycle
         self.pads.append((m.pad() >> (2 * self.k)) & 3)
         self.oe.append((m.uio_oe >> (2 * self.k)) & 3)
@@ -87,17 +89,16 @@ class PairLog:
 
 class LineDriver:
     """Drives the pair from outside with a list of (P, N) levels, T cycles
-    each, starting at cycle c0 (counted from the first on_cycle call plus
-    `delay`); `idle` before and after. Other uio pins stay pulled up."""
+    each, starting `delay` cycles after thread 0 starts; `idle` before and after. Other uio pins stay pulled up."""
 
     def __init__(self, k, levels, T, delay, idle):
         self.k, self.levels, self.T, self.delay, self.idle = k, levels, T, delay, idle
         self.c0 = None
 
     def on_cycle(self, m):
-        if self.c0 is None:
-            self.c0 = m.cycle + self.delay
-        i = (m.cycle - self.c0) // self.T
+        if self.c0 is None and m.threads[0].running:
+            self.c0 = m.cycle + self.delay      # counted from the start of thread 0
+        i = -1 if self.c0 is None else (m.cycle - self.c0) // self.T
         pv, nv = self.levels[i] if 0 <= i < len(self.levels) else self.idle
         m.ext_uio = with_pair(0xFF, self.k, pv, nv)
 
@@ -204,7 +205,7 @@ pay:    sertxc r3
     def check(m, got):
         assert got == [0x5A], got
         runs = [r for r in log.runs() if r[3] == 3]
-        assert all(r[3] == 3 or r[0] < 20 for r in log.runs()[1:]), "pair released after start-up"
+        assert all(r[3] == 3 or r[0] < log.c0 + 20 for r in log.runs()[1:]), "pair released after start-up"
         # the frame is everything between the first rise of P and the final both-low
         first = next(i for i, r in enumerate(runs) if r[2] == 1)
         body = runs[first:]
@@ -226,7 +227,10 @@ pay:    sertxc r3
 
 # ------------------------------------------------------------------- receive
 
-def nrzi_rx(T=8, k=0):
+def nrzi_rx(T=8, k=0, gap=6):
+    """`gap` is the idle time between packets in bit times: a host that drains
+    the outbox over SPI needs a long one, or the 16-byte outbox fills, the
+    thread blocks in PUSH and the receiver overruns."""
     token = [0x2D, 0x00, 0x10]
     data = [0xC3, 0xFF, 0xFF, 0x01, 0x80, 0x7E, 0xFF, 0xFF, 0xFF]
     crc = crc16_usb(data[1:])
@@ -239,7 +243,7 @@ def nrzi_rx(T=8, k=0):
               usb_packet_syms(token)]
     syms = [J] * 10
     for f in frames:
-        syms += f + [J] * 6
+        syms += f + [J] * gap
     words, _ = asm("""
         ldi r1, %d
         sett r1

@@ -72,9 +72,9 @@ WORK = os.path.join(ROOT, "test", "sim_build", "mutation")
 EQUIV_DOC = os.path.join(ROOT, "tools", "mutate_equivalents.md")
 STUB = "RM_IHPSG13_1P_256x16_c2_bm_bist.v"
 DEFAULT_FILES = ["keyer_isa.vh", "keyer_fifo.v", "keyer_imem.v", "keyer_pins.v", "keyer_core.v",
-                 "keyer_host.v", "keyer_capture.v", "tt_um_ahan17x_keyer.v"]
+                 "keyer_host.v", "keyer_capture.v", "keyer_ser.v", "tt_um_ahan17x_keyer.v"]
 DESIGN = ["keyer_fifo.v", "keyer_imem.v", "keyer_pins.v", "keyer_core.v", "keyer_host.v",
-          "keyer_capture.v", "tt_um_ahan17x_keyer.v"]
+          "keyer_capture.v", "keyer_ser.v", "tt_um_ahan17x_keyer.v"]
 TOP = "tt_um_ahan17x_keyer"
 
 # The proofs that read each file (a header mutant reaches the core's proof).
