@@ -500,3 +500,55 @@ the J precondition of 15.3): an unread byte or frame end is dropped at the
 next frame start without a flag, a transmitter start abandons a frame being
 received without a flag, and a frame after an aborted one may start from K.
 
+## D-038 (resolved) 2026-10-05 Ahan: the four host-interface questions
+
+1. **MISO is 0 at all times except while a read data byte is being shifted
+   out** (SEMANTICS 10.1): after reset, while CS_n is high, during every
+   command byte and during the whole of a write. Rejected: leaving the
+   level undefined and listing the four mutants as equivalent.
+2. **No transaction is in progress when reset is released**: CS_n must be
+   high from two cycles before `rst_n` rises (SEMANTICS 10.1), and
+   `tools/keyerhost.py` enforces it in every transport. Rejected: defining
+   the behaviour of a transaction that straddles the release.
+3. **The fourth byte of a PINS read is 0**, then the pattern repeats
+   (SEMANTICS 10.4).
+4. **IMEM_DATA read while a thread runs stays unspecified**; the three
+   mutants are listed as equivalent. Rejected: stating that the read-data
+   register resets to 0.
+
+Also decided: the lockstep harness is fixed (BUGS 45) and the workaround
+leaves `test/test_mut_core.py`. The three serializer points are D-039.
+
+## D-039 2026-10-05 Ahan: serializer: a sticky overrun bit, abort returns the pair to idle, a transmitter start abandons a receive
+
+Ahan's decisions, and the cycle-exact form Claude gave them in SEMANTICS
+0.5 section 15:
+
+- **A sticky receive-overrun bit in the status word.** New register
+  `rx_drop`, status bit 10. Set when a frame start discards a byte or a
+  frame end of an earlier frame that firmware has not taken (a `SERRX`
+  completing in that very cycle takes its item, which is then not
+  dropped); cleared when the status word is read (`SERST`, or `SERRX` /
+  `SERRXT` returning the status word) and by `SERCFG`; if set and read
+  coincide the set wins, so no event is lost. It replaces "discarded
+  without a flag" (spec-questions R24). `rx_ovr` keeps its meaning (a byte
+  lost inside a frame, cleared by the next frame start).
+- **Abort returns the line to idle within one bit period, and every frame
+  starts from idle.** A `SERCFG` that commits while the transmitter is not
+  IDLE is an abort and writes the idle state of the old configuration's
+  pair in that cycle: NRZI, both pins released with J in the output
+  registers; Manchester, both pins driven low. That is exactly what each
+  mode's tail leaves, so the coder's assumption (a frame is coded from J)
+  now holds after reset, after a tail and after an abort. Why released
+  rather than J driven in NRZI mode: a USB device aborts when the host
+  takes the bus (a reset is SE0 driven by the host), and a driven J would
+  fight it; the pull-up restores J. Rejected: the start tick driving J for
+  one symbol (changes every frame on the wire and the 10BASE-T preamble
+  timing); the abort running the whole tail (an aborted frame would end in
+  a valid end of packet, and it takes four symbol periods).
+- **A receive in progress is abandoned when the transmitter starts**, with
+  no `rx_end`, verdict or flag (kept from R25; SEMANTICS 15.4 says so).
+
+The encoding does not change, so the ISA version stays 3. The model and
+the RTL are updated independently from SEMANTICS (subagents).
+

@@ -1,6 +1,6 @@
 # Keyer semantics: the cycle-exact contract
 
-Version 0.4, 2026-10-04 (section 15 added: the serializer; ISA version 3. 0.3.1: 10.1 states the idle level of MISO. 0.3: section 14, capture and replay). This document is the reference for the golden model
+Version 0.5, 2026-10-05 (0.5: DECISIONS D-038 and D-039: MISO is 0 except while a read data byte is shifted out, CS_n is high across the release of reset, the fourth byte of a PINS read is 0; the serializer gains `rx_drop` (status bit 10) and a `SERCFG` that aborts a frame returns the pair to idle. 0.4: section 15 added: the serializer; ISA version 3. 0.3.1: 10.1 states the idle level of MISO. 0.3: section 14, capture and replay). This document is the reference for the golden model
 (`tools/keyersim.py`) and the RTL (`src/`). Where it disagrees with
 `docs/isa.md`, this document wins; `docs/isa.md` is the programmer's
 reference and is kept consistent with it. The encodings are in
@@ -363,13 +363,21 @@ bits 6:0 = register. Multi-byte values are little-endian. Register map:
 
 Constraints: each SCK half-period must be at least 4 core cycles (SCK <=
 clk / 8); SCK must be low when CS_n falls; CS_n must stay high for at least 4
-core cycles between transactions. The interface samples SCK, MOSI and CS_n
-through two flops; an edge on the pad during cycle e is acted on in cycle
-e + 2. Outside these constraints the behaviour is undefined.
+core cycles between transactions; no transaction is in progress when reset
+is released: CS_n must be high from two cycles before `rst_n` rises
+(DECISIONS D-038; `tools/keyerhost.py` enforces it in every transport). The
+interface samples SCK, MOSI and CS_n through two flops; an edge on the pad
+during cycle e is acted on in cycle e + 2. Outside these constraints the
+behaviour is undefined.
 
-MISO (`uo[0]`) is 0 while CS_n is high, as seen through the synchroniser,
-and after reset (DECISIONS D-033): a read that ended with ones on the wire
-does not leave the line high between transactions.
+MISO (`uo[0]`) is 0 at all times except while a read data byte is being
+shifted out (DECISIONS D-033, D-038). Precisely: MISO is 0 after reset,
+while CS_n is high as seen through the synchroniser, during the command
+byte of every transaction and during the whole of a write transaction; in a
+read it carries data from the cycle after data byte 0 is sampled (10.2)
+until the interface acts on CS_n high. A read that ended with ones on the
+wire does not leave the line high between transactions, and a write never
+moves the line.
 
 ### 10.2 Byte timing
 
@@ -415,12 +423,12 @@ the next byte is sampled after that pop.
 | STAT | bit 0-1 `running`, 2-3 `halted`, 4-5 `blocked`, rest 0 |
 | PC0 / PC1 | `PC[t]`, then 0 |
 | IMEM_ADDR | address, then 0 |
-| IMEM_DATA | `IMEM[address]` low byte, high byte, then the next word, and so on; the address advances by one per word read; valid only while both threads are stopped (otherwise stale data) |
+| IMEM_DATA | `IMEM[address]` low byte, high byte, then the next word, and so on; the address advances by one per word read; valid only while both threads are stopped (otherwise the bytes returned are unspecified, DECISIONS D-038: a host must not read the memory while a thread runs) |
 | OUTBOX0 / OUTBOX1 | head of the outbox, popped after each byte (stale head and no pop when empty) |
 | LEVELS | occupancy of inbox 0, outbox 0, inbox 1, outbox 1 |
 | PINMODE | `od_mask` |
 | IRQEN | mask |
-| PINS | `level[7:0]` (uio), `level[15:8]` (ui), firmware `uo_out` (bits 1:0 read 0) |
+| PINS | `level[7:0]` (uio), `level[15:8]` (ui), firmware `uo_out` (bits 1:0 read 0), then a fourth byte of 0 (DECISIONS D-038); the four-byte pattern then repeats, sampled anew |
 | ID | 0x4B ('K'), then the ISA version |
 | PINOUT | `uio_out`, then `uio_oe` |
 | CR_CTRL | capture/replay status byte (section 14.8) |
@@ -533,7 +541,7 @@ exposes the matching attributes.
 | `u_cr.cap_armed .cap_trig .cap_done .cap_ovf .cap_last .cap_prev .cap_dt .cap_n .cap_w .q_count` | `cr.cap_armed` and so on, same names | capture engine state (14) |
 | `u_cr.rep_active .rep_done .rep_under .rep_k .rep_f .rep_dt .pf_count` | `cr.rep_active` and so on | replay engine state (14) |
 | `u_cr.cap_group .cap_mask .cap_tpat .cap_tmask .cap_base .cap_len .rep_group .rep_mask .rep_base .rep_len` | `cr.cap_group` and so on | configuration (14) |
-| `u_ser.cfg .owner .tx_hold .tx_hold_c .tx_full .tx_state .tx_sh .tx_c .tx_app .tx_n .tx_half .tx_bit .tx_ones .tx_line .crc_m .crc5 .rx_state .rx_sh .rx_n .rx_ones .rx_psym .rx_last .rx_cnt .rx_w .rx_first .rx_hold .rx_valid .rx_end .rx_ovr .rx_serr .rx_ferr .rx_c5ok .rx_cok` | `ser.cfg` and so on, same names | serializer state (15.1) |
+| `u_ser.cfg .owner .tx_hold .tx_hold_c .tx_full .tx_state .tx_sh .tx_c .tx_app .tx_n .tx_half .tx_bit .tx_ones .tx_line .crc_m .crc5 .rx_state .rx_sh .rx_n .rx_ones .rx_psym .rx_last .rx_cnt .rx_w .rx_first .rx_hold .rx_valid .rx_end .rx_ovr .rx_serr .rx_ferr .rx_c5ok .rx_cok .rx_drop` | `ser.cfg` and so on, same names | serializer state (15.1) |
 
 Golden model API (`tools/keyersim.py`), used by `tools/test_*.py` and
 `test/`: `Machine(trace=False)` with attributes `imem` (256 ints),
@@ -723,7 +731,8 @@ thread that committed the last `SERCFG`.
 - **Receiver:** `rx_state` (0 HUNT, 1 DATA); `rx_sh[7:0]`; `rx_n[2:0]`;
   `rx_ones[2:0]`; `rx_psym`; `rx_last`; `rx_cnt[15:0]`; `rx_w`; `rx_first`;
   `rx_hold[7:0]`, `rx_valid`; `rx_end`, `rx_ovr`, `rx_serr`, `rx_ferr`,
-  `rx_c5ok`, `rx_cok`.
+  `rx_c5ok`, `rx_cok`; `rx_drop` (sticky: something of an earlier frame
+  was discarded at a frame start, 15.5).
 - **CRC registers:** `crc_m[31:0]` and `crc5[4:0]`. One step with bit b:
   `step(r, b, POLY)`: `fb = r[0] ^ b`; `r' = r >> 1` (zero fill); if `fb`:
   `r' = r' ^ POLY`. `crc5` uses `POLY = 0x14` (USB CRC-5, x^5 + x^2 + 1,
@@ -741,6 +750,14 @@ thread that committed the last `SERCFG`.
   (P low, N high), with s = 1 K (P high, N low). `se0()` is
   `write(P, 0, 1)` and `write(N, 0, 1)`. Like every pin write, these are
   registered at the end of the cycle and on the pads during the next.
+- **Idle state of the pair** (DECISIONS D-039). Mode 1: both pins
+  released (`uio_oe[P] = uio_oe[N] = 0`), so that the bus's pull-up shows
+  J; a tail and an abort also leave J in the output registers
+  (`uio_out[P] = 0`, `uio_out[N] = 1`). Mode 2: both pins driven low. It
+  is the state the tail of 15.3 leaves.
+  `idle(m, p, n)` writes it for mode m on the pins p and n: m = 1:
+  `write(p, 0, 0)` and `write(n, 1, 0)`; m = 2: `write(p, 0, 1)` and
+  `write(n, 0, 1)`.
 - `rx_last(c + 1) = level(c)[P]` in every cycle, whatever the mode, with P
   from `cfg(c)`; `SERCFG` and the rule of 15.4 do not alter it.
 
@@ -751,12 +768,12 @@ and their effects are registered at its end.
 
 | Instruction | Completes iff | Effect on completion |
 |---|---|---|
-| `SERCFG rs` | always | `cfg <= rs[7:0]`; `owner <= ` the executing thread; every other register of 15.1 `<= 0`, except `rx_sh <= 0xFF`, `rx_w <= 1`, and `rx_last` (15.1). The pin registers are not changed. |
+| `SERCFG rs` | always | `cfg <= rs[7:0]`; `owner <= ` the executing thread; every other register of 15.1 `<= 0`, except `rx_sh <= 0xFF`, `rx_w <= 1`, and `rx_last` (15.1). If `tx_state(c) != IDLE` the `SERCFG` is an **abort** and also writes `idle(m, P, N)` with m, P and N from `cfg(c)`, the configuration it replaces; otherwise the pin registers are not changed. |
 | `SERTX rs` | `tx_full(c) = 0` | `tx_hold <= rs[7:0]`; `tx_hold_c <= 0`; `tx_full <= 1` |
 | `SERTXC rs` | `tx_full(c) = 0` | the same with `tx_hold_c <= 1` |
 | `SERI n`, `SERIC n` | `tx_full(c) = 0` | `SERTX`, `SERTXC` with the byte n of the instruction word |
-| `SERRX rd` | `rx_valid(c) = 1` or `rx_end(c) = 1` | if `rx_valid(c)`: `rd <= zext(rx_hold)`, `rx_valid <= 0`, `Z <= 0`. Otherwise: `rd <= status(c)` (15.7), `rx_end <= 0`, `Z <= 1`. C unchanged. |
-| `SERST rd` | always | `rd <= status(c)` (15.7); flags unchanged |
+| `SERRX rd` | `rx_valid(c) = 1` or `rx_end(c) = 1` | if `rx_valid(c)`: `rd <= zext(rx_hold)`, `rx_valid <= 0`, `Z <= 0`. Otherwise: `rd <= status(c)` (15.7), `rx_end <= 0`, `rx_drop <= 0`, `Z <= 1`. C unchanged. |
+| `SERST rd` | always | `rd <= status(c)` (15.7); `rx_drop <= 0`; flags unchanged |
 | `SERWT` | `tx_state(c) = 0` and `tx_full(c) = 0` | none |
 
 `SERTXT SERTXCT SERRXT SERWTT` are the timeout forms (section 7.4): they
@@ -769,7 +786,14 @@ table does not name completes with no effect. The timeout bit is ignored by
 
 Precedence within one cycle: a committing `SERCFG` overrides every engine
 update of 15.3 to 15.6 in that cycle (and the engine's pin writes of that
-cycle are not made). Otherwise an instruction and the engine never write
+cycle are not made; the only serializer pin write of that cycle is the
+`idle()` of an abort, which goes through the serializer's place in the
+order of 5.3 and respects `od_mask'` like any other). A read of the status
+word clears `rx_drop` (a committing `SERST`, or a committing `SERRX` or
+`SERRXT` that returns the status word; a `SERRXT` that only times out
+reads nothing); the value returned is `status(c)`, with the bit as it was.
+If a frame start sets `rx_drop` in the cycle of such a read, the set wins.
+Otherwise an instruction and the engine never write
 different values to one register in one cycle, except `tx_full` and
 `rx_valid`/`rx_end`, where the rules above and below cannot both apply (a
 `SERTX` completes only when `tx_full(c) = 0`, the engine takes the holding
@@ -819,12 +843,18 @@ the start tick (R23). In NRZI mode the frame is coded
 from J, so the byte `0x80` produces KJKJKJKK. The CRC covers exactly the
 marked bytes, before stuffing, and is sent complemented, bit 0 first, only
 if at least one byte was marked. A stuffed zero follows six ones even when
-they are the last bits before the tail. The coder assumes the pair shows J
-when a frame starts; that holds after reset, after an NRZI tail and on a
-released bus, but not after a `SERCFG` that aborted a frame with K on the
-pair (`SERCFG` does not write the pins): firmware that aborts a frame
-restores the idle level itself before it sends again (found by the formal
-proof of the stuffing property, `formal/ser_stuff_props.sv`). The NRZI tail is SE0 for two symbol
+they are the last bits before the tail. **Every frame starts from idle**
+(DECISIONS D-039): the coder assumes the pair is in the idle state of 15.1
+when a frame starts, and the engine keeps it so: the state every tail
+leaves and the state an abort writes (15.2) are idle, so an aborted frame
+returns the pair to idle at the end of the cycle of the `SERCFG`, well
+within one symbol period, and the next frame is coded from J again. After
+reset the pins are released, which is idle in mode 1; in mode 2 firmware
+drives the pair low once before the first frame. (Before version 0.5 an
+abort left the last symbol on the pair; found by the formal proof of the
+stuffing property, `formal/ser_stuff_props.sv`.) Only firmware that writes
+the pair's pins itself between frames can break the precondition, and then
+restores it itself. The NRZI tail is SE0 for two symbol
 periods and J for one; the Manchester tail holds P high and N low for six
 symbol periods.
 
@@ -836,9 +866,10 @@ HUNT`, `rx_sh <= 0xFF`, `rx_n <= 0`, `rx_ones <= 0`, `rx_psym <= 0`,
 `rx_cnt <= 0`, `rx_w <= 1`, `rx_first <= 0`; the other receive registers
 (`rx_hold`, `rx_valid`, `rx_end`, the error and CRC verdict flags) keep
 their values, and so do `crc5` and `crc_m` (only the transmitter's start
-writes `crc_m` then; spec-questions R22). A frame that was being received
-when the transmitter starts is abandoned without `rx_end` and without a
-verdict (R25). (So from the end of cycle 0 on, `rx_sh` reads `0xFF` and
+writes `crc_m` then; spec-questions R22). **A receive in progress is
+abandoned when the transmitter starts** (DECISIONS D-039, kept from R25):
+the frame gets no `rx_end`, no verdict and no flag; the engine is half
+duplex and firmware that queues a byte decides to send. (So from the end of cycle 0 on, `rx_sh` reads `0xFF` and
 `rx_w` 1 while the engine is off.) When it runs, 15.5 and 15.6 apply, with
 `sym = level(c)[P]`, `edge = (sym != rx_last(c))` and `T = T(c)`; counter
 arithmetic is mod 65536.
@@ -857,8 +888,13 @@ arithmetic is mod 65536.
     `rx_ones <=` (if `stuff`: 1 in mode 1, 2 in mode 2, the trailing ones
     of the sync byte; else 0); `crc5 <= 0x1F`; `crc_m <= INIT_M`;
     `rx_valid <= 0`; `rx_end <= 0`; `rx_ovr <= 0`; `rx_serr <= 0`;
-    `rx_ferr <= 0`. A byte or a frame end of the previous frame that
-    firmware has not taken by then is discarded without a flag (R24).
+    `rx_ferr <= 0`. A byte or a frame end of an earlier frame that
+    firmware has not taken by then is discarded, and `rx_drop` records it
+    (DECISIONS D-039, replacing R24): `rx_drop <= 1` if
+    `rx_valid(c) = 1` and no `SERRX` completing in c takes the byte, or if
+    `rx_end(c) = 1` and no `SERRX` completing in c takes the frame end (a
+    completing `SERRX` takes the byte when `rx_valid(c) = 1` and the frame
+    end otherwise, 15.2). Nothing else sets `rx_drop`.
   - `rx_state = DATA`: unless `rxskip = 1` and `rx_first = 1`:
     `crc5 <= step(crc5, d)` and `crc_m <= step(crc_m, d)`. If `rx_n = 7`
     the byte v is complete: `rx_n <= 0`; `rx_first <= 0`; if
@@ -922,10 +958,15 @@ smaller values follow the rules above literally.
 | 7 | `rx_ovr` |
 | 8 | `rx_serr` |
 | 9 | `rx_ferr` |
-| 15:10 | 0 |
+| 10 | `rx_drop` |
+| 15:11 | 0 |
 
 `rx_c5ok` and `rx_cok` are written only by `end()` from DATA and by
 `SERCFG`: they describe the last frame that ended and a frame start does
 not clear them. `rx_ovr`, `rx_serr` and `rx_ferr` are cleared by a frame
-start and accumulate until the next one (spec-questions Q21).
+start and accumulate until the next one (spec-questions Q21). `rx_drop`
+is the receive overrun across frames: set only by a frame start that
+discards an untaken byte or frame end (15.5), cleared only by a read of the
+status word (15.2) and by `SERCFG`; a frame start does not clear it, and it
+keeps its value while the receiver does not run.
 
