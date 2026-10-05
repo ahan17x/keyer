@@ -78,6 +78,31 @@ here (layer 4 would not see it either; layers 2 and 5 are the guard), and a
 protocol rule the model's author misread. Not checked against real devices
 yet.
 
+**Vectors from outside the project** (`tools/test_protomodels.py`, 10
+cases). The models judge the firmware, and until 2026-10-05 only the
+firmware exercised them, so a coding error shared by a model and its
+firmware (both were written in this project) had nothing to catch it. The
+USB host model and the 10BASE-T receiver model are now checked against
+published values and against packets worked out by hand:
+
+| What | Source | Checked in the model |
+|---|---|---|
+| CRC-5: three token fields with their CRC as sent (`10101000111` -> `10111`, `01011100101` -> `11100`, `00001110010` -> `01110`); residual `01100` | USB-IF white paper "Cyclic Redundancy Checks in USB"; USB 2.0 8.3.5.1 (polynomial and residual) | `crc5`, `token_bytes` |
+| CRC-16: data `00 01 02 03` -> `1111011101011110`, `23 45 67 89` -> `0111000000111000`; residual `1000000000001101`; check value 0xB4C8 | the same white paper; USB 2.0 8.3.5.2; the CRC catalogue | `crc16`, `data_bytes` |
+| PID check fields | USB 2.0 Table 8-1 | `PID` |
+| CRC-32("123456789") = 0xCBF43926; residual 0xDEBB20E3 | IEEE 802.3 3.2.9, the CRC catalogue | `crc32` |
+| A 60-byte UDP frame with FCS `B3 31 88 1B` | fpga4fun.com, "10BASE-T FPGA interface" | `crc32`, `frame_bytes`, and the receiver model on the frame as a Manchester waveform (accepted; rejected with one bit flipped) |
+| SETUP token to address 0, endpoint 0 (`2D 00 10`) as J/K states; DATA0 with payload `FF` (two stuffed bits) and with payload `F9` (a stuffed bit as the last bit before the end of packet) | built by hand from USB 2.0 7.1.8, 7.1.9 and chapter 8, bit by bit in the test's comments | `encode` (stuffing, NRZI, EOP), and the host model's decoder `_analyse` on the same packets (accepted; rejected with a CRC bit wrong) |
+
+The reference CRC in that file is written in the white paper's form (a
+shift-left register over the bits in the order sent), not in the reflected
+form the models and the serializer use. USB 2.0 section 8.3.5 itself gives
+the polynomials and residuals but no worked numbers; the worked examples
+are the white paper's. Found: nothing; the models agreed with every
+vector. Would miss: a rule the vectors do not exercise (timing windows,
+the handshake state machine): those remain the models' own reading of the
+standards.
+
 ### 4. Lockstep and host tests
 
 `test/keyer_tb.py` steps the golden model once per RTL clock from reset and
@@ -252,6 +277,22 @@ survivors: 1,445 of 1,454 non-equivalent mutants, 99.4%.** The nine
 survivors are listed in D-038 with what the RTL does; each becomes a kill
 or an equivalent once Ahan decides the four questions.
 
+**After D-038 (2026-10-05):** Ahan's answers settled the nine. Five are
+kills: `host-931f4e64`, `host-2b5da9fb`, `host-160d459e` and
+`host-4bbc0a41` by `test_miso_is_low_except_while_read_data_is_shifted_out`
+(MISO sampled in every cycle of writes and of a read's command byte), and
+`host-b6056c12` by the fourth byte of the PINS read in
+`test_reads_of_ctrl_pins_pinout_and_unmapped_registers`. Four are
+equivalent under the contract as it now reads: `host-6c196bbf` (CS_n is
+high across the release of reset) and `host-07c66559`, `host-5fe456e3`,
+`host-38125bb3` (an IMEM_DATA read while a thread runs is unspecified).
+All ten mutants concerned (the nine and `host-c6659575`) were run again
+against the full suite: the five kills and five survivors above.
+`host-c6659575` stays equivalent; its row now gives the reason for the
+case the contract still allows. **1,450 killed, 92 equivalent, 0
+survivors: 1,450 of 1,450 non-equivalent mutants** of the design before
+the serializer.
+
 The 19 new tests (`test/test_mut_host.py`, 9, eight of them pads-only so
 they also run on the gate-level netlist; `test/test_mut_core.py`, 10):
 
@@ -277,8 +318,8 @@ equivalents are reset values overwritten before anything reads them (the
 host's strobes and shift registers, `level2` and the capture queue words
 in the first cycles), and seven BIST inputs of the macro that are cut off
 by `A_BIST_EN = 0` in the macro's own netlist. One documented equivalent
-from the sample, `host-c6659575`, holds only if CS_n is high when reset is
-released (question 2 of D-038).
+from the sample, `host-c6659575`, held only if CS_n is high when reset is
+released; SEMANTICS 10.1 now requires that (D-038, BUGS 48).
 
 Not yet mutated: `src/keyer_ser.v` and the lines the serializer changed in
 the core, the pin unit and the top (the campaign ran on the design before
@@ -320,6 +361,60 @@ anything inside the macro); code under `KEYER_IMEM_FLOPS` is tested with
 that define only; a mutant is judged against the checks of layers 4 and 5,
 not against lint or the model tests.
 
+### 9. Static firmware timing
+
+`python3 tools/keyerasm.py fw/NAME.s --check-timing [-v]`
+(`tools/keytiming.py`, 24 pytest cases in `tools/test_keytiming.py`). The
+other layers run a program and look at what happened on the paths the
+stimulus took. This one reads the assembled words and, for every `WAITD`,
+bounds the slots the program can spend since the instruction that last set
+or advanced the deadline (`SETT`, `SETD` or a `WAITD`) along **any** path,
+and compares that with the deadline distance (ticks times the period a
+`SETT` loaded, when that is a constant): a `WAITD` that can be reached
+late completes at once, and the edge it was to time comes late, on a path
+a test may never have taken.
+
+How it bounds a path: register constants and the Z and C flags are tracked
+where they are known, so a `DJNZ` on a constant runs exactly that many
+times and a branch on a known flag goes one way; `CALL`/`RET` follow the
+link register; `JMPR` goes to the labels the program loads into that
+register; `DELAY n` costs 1 + n slots. A loop it cannot bound needs
+`; bound N` on the branch that closes it. A blocking instruction between
+the anchor and the `WAITD` is counted as one slot and named in the report
+(the time then depends on an outside event); it is a fault until the
+`WAITD` line says why it is intended (`; timing: reason`).
+
+Statuses: `ok`; `LATE` (more slots than the distance); `MARGIN` (after a
+`SETD`, on time or not depending on the tick phase); `UNBOUNDED`; `WAITS`;
+`period?` (the period is not a visible constant: the report gives the
+smallest period for which the path is on time). Exit status 1 on `LATE`,
+`UNBOUNDED` or an unwaived `WAITS`.
+
+Result on the twelve programs (default parameters), 2026-10-05: 38 `WAITD`
+sites, none late, none unbounded, no annotation needed for a loop. Three
+sites wait on a blocking instruction and carry a waiver with the reason:
+`ps2_host.s` (a `POP` after `BFE` has seen a byte: cannot block),
+`ws2812.s` (a `POPT` whose deadline has passed: cannot block), and
+`spi_master.s` (a `PUSH` that blocks only while the host leaves the outbox
+full; SCK is low then and CS_n rises later, which is the intended
+behaviour). The tightest paths: `spi_master.s` 6 slots of 7 at its default
+divider, `ws2812.s` 8 of 11, `usb_ls_device.s` 15 slots of the 48 it has
+at worst between the end of the host's packet and its response (the count
+its header derived by hand).
+
+Checked against the golden model: for `uart.s`, `spi_master.s` and
+`ws2812.s` the test runs the program and measures the slots between
+deadline instructions; the static figure is never exceeded and is reached
+exactly in the bit loops.
+
+Found: nothing in the firmware. Would miss: lateness caused by the value
+of a register it cannot see (it then follows both branches, which is
+safe, or reports `period?`), a slot lost to the capture engine when a
+thread is started (SEMANTICS 2.1), the other thread (it has its own
+slots), and timing that does not go through `WAITD` (a `DELAY` loop, a
+serializer frame's byte pacing). It checks programs at the parameters they
+are assembled with: a smaller divider needs its own run (`-D NAME=VALUE`).
+
 ## What no layer covers yet
 
 - Real devices: no firmware has run against hardware and no hardware
@@ -338,5 +433,3 @@ not against lint or the model tests.
   layer (levels, edge rates, the transformer) is outside the simulation.
 - The serializer and the lines it changed elsewhere have not been through
   mutation testing yet.
-- Nine mutants of the host interface survive on behaviour SEMANTICS does
-  not define (D-038).

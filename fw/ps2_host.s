@@ -108,7 +108,7 @@ tx:
         ldi   r4, EV_TX_TMO     ; what a timeout means on this path
         ldi   r3, 1             ; 1 + the number of ones sent: bit 0 is the odd parity bit
         ldi   r2, 8
-        waitd PS2_INH_TICKS
+        waitd PS2_INH_TICKS     ; timing: the POP above cannot block, BFE has just seen a byte in the inbox
         clr   DATA              ; request to send; this is the start bit
         set   CLK               ; release CLK: the device clocks from here
         setd  PS2_RTS_TICKS

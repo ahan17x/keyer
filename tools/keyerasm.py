@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Keyer assembler.
 
-Usage: keyerasm.py input.s [-o out.hex] [-l out.lst]
+Usage: keyerasm.py input.s [-o out.hex] [-l out.lst] [--check-timing [-v]]
 
 Syntax
   label:            labels end with a colon; may share a line with an instruction
@@ -175,6 +175,12 @@ def assemble(source, origin=0, symbols=None):
 
     `symbols` pre-defines names (like -D on a C compiler); a .equ in the source
     of the same name is ignored so tests can override firmware defaults."""
+    return assemble_lines(source, origin, symbols)[:3]
+
+
+def assemble_lines(source, origin=0, symbols=None):
+    """assemble(), and as a fourth value the parsed source lines with their
+    addresses and words (for tools/keytiming.py)."""
     lines = parse(source)
     predefined = dict(symbols or {})
     symbols = dict(predefined)
@@ -213,7 +219,7 @@ def assemble(source, origin=0, symbols=None):
         hexpart = " ".join("%04X" % w for w in ln.words)
         listing.append("%04X  %-10s %s" % (ln.addr, hexpart, ln.text) if ln.words
                        else "      %-10s %s" % ("", ln.text))
-    return words, symbols, listing
+    return words, symbols, listing, lines
 
 
 def _pin(text, symbols):
@@ -307,6 +313,9 @@ def main(argv=None):
     ap.add_argument("-l", "--listing", help="listing file")
     ap.add_argument("--size", type=int, default=256, help="words in output image")
     ap.add_argument("-D", action="append", default=[], metavar="NAME=VALUE", help="predefine a symbol")
+    ap.add_argument("--check-timing", action="store_true",
+                    help="static timing check of every WAITD (tools/keytiming.py); exit status 1 on a fault")
+    ap.add_argument("-v", "--verbose", action="store_true", help="with --check-timing: print the worst path")
     a = ap.parse_args(argv)
     with open(a.input) as f:
         src = f.read()
@@ -315,10 +324,16 @@ def main(argv=None):
         k, _, v = d.partition("=")
         predefs[k.strip()] = int(v, 0)
     try:
-        words, symbols, listing = assemble(src, symbols=predefs)
+        words, symbols, listing, lines = assemble_lines(src, symbols=predefs)
     except AsmError as e:
         sys.stderr.write("error: %s\n" % e)
         return 1
+    if a.check_timing:
+        import keytiming
+        prog, results = keytiming.analyse(words, lines)
+        text, faults = keytiming.report(prog, results, verbose=a.verbose, name=os.path.basename(a.input))
+        print(text)
+        return 1 if faults else 0
     if a.output:
         with open(a.output, "w") as f:
             f.write(to_hex(words, a.size))

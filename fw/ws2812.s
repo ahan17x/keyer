@@ -90,7 +90,7 @@ ws_load:
         swap  r0                ; byte into bits 15:8 so SHL delivers the MSB first
         ldi   r2, 8
 ws_bit:
-        waitd WS_K2             ; end of the low phase
+        waitd WS_K2             ; end of the low phase. timing: the POPT at ws_byte cannot block, its deadline has passed
         set   DOUT              ; rise
         shl   r0                ; C = this bit; WAITD and DJNZ leave it alone
         waitd WS_K0

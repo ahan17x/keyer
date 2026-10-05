@@ -42,6 +42,6 @@ spi_bit:                        ; high phase is a full half period
         push  r4
         dec   r3
         bne   spi_byte
-        waitd 1
+        waitd 1                   ; timing: PUSH blocks only while the host leaves the outbox full; SCK is low then and CSN just rises later
         set   CSN
         bra   spi_frame
