@@ -210,6 +210,29 @@ checks). Numbers from `python3 scripts/gds_report.py 37228068179`.
 
 Every number equals branch run 37176010222. This is the master design.
 
+### Run 37247680638, 2026-10-04, commit faaeee1 (`waitd-csa`: carry-save `WAITD` completion test)
+
+Started by the push of the branch. Jobs: `gds` success (1 h 25 min),
+`gl_test` success, `viewer` success, `precheck` success (29 min, all nine
+checks). Numbers from `python3 scripts/gds_report.py 37247680638`.
+
+| Item | Value |
+|---|---|
+| Standard cells | 13,501 instances (1,470 flops, 3,012 timing-repair buffers) plus the macro; 72,445 with fill |
+| Cell area / utilisation | 195,781 um^2 + 28,127 um^2 macro; 24.8% (standard cells 22.4%) |
+| Setup slack, 20 ns | fast **+12.33 ns**; typical **+8.12 ns**; slow **+0.76 ns, no violating endpoint** |
+| Hold slack | fast +0.110 ns, typical +0.295 ns, slow +0.625 ns; no violations |
+| Routing | detailed routing 42 min 55 s; DRC 0; wire length 547,368 um |
+| DRC / LVS / antenna | Magic DRC 29,294 and 10 illegal overlaps (macro-internal and stripe-over-OBS, as before); LVS 0; antenna 0 |
+| Slew / cap / fanout | 0 max-slew, 1 max-cap, 131 max-fanout |
+| gl_test | success |
+
+Against master (37228068179) the carry-save step gains 0.7 ns at the
+typical corner and 0.9 ns at the slow corner for 184 cells and 1,442 um^2
+more, and **setup is met at all three corners for the first time**. The
+core is proven equivalent to master's (533 of 533 points). Not merged:
+Ahan decides (docs/HANDOFF.md).
+
 ### Summary of the runs
 
 | Run | Design | Cells | Utilisation | Setup fast / typical / slow (ns) | Routing | Precheck | gl_test |
@@ -220,3 +243,4 @@ Every number equals branch run 37176010222. This is the master design.
 | 37176010222 | macro + capture + one-hot select (23eb0dc, `decode-onehot`) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 49 min | 9/9 | pass |
 | 37181323699 | macro + capture (8dab03a, master after D-029; same design as 37169889955) | 13,203 + macro | 24.7% | +11.20 / +6.40 / -1.94 (277) | 32 min | 9/9 | pass |
 | 37228068179 | macro + capture + one-hot select (043091d, master after D-030; same design as 37176010222) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 32 min | 9/9 | pass |
+| 37247680638 | macro + capture + one-hot select + carry-save WAITD (faaeee1, `waitd-csa`) | 13,501 + macro | 24.8% | +12.33 / +8.12 / +0.76 (0) | 43 min | 9/9 | pass |

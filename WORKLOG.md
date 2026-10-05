@@ -306,7 +306,7 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   - `waitd-csa`: the rtl subagent's uncommitted work was checked by the
     coordinating session (equivalence 533 of 533 against master, a seeded
     off-by-one caught; T9 and P8 each fail on their seeded fault; lint;
-    full suite) and committed as faaeee1, pushed; `gds` run 37247680638.
+    full suite) and committed as faaeee1, pushed; `gds` run 37247680638: setup +12.33 / +8.12 / +0.76 ns, no violation at any corner, all four jobs green.
     It also made the check scripts fail on a failed proof (BUGS 19).
   - The three unfinished protocol sets were finished by hand: I2C slave (a
     stale assertion in its lockstep test), SPI slave (tests written; a late

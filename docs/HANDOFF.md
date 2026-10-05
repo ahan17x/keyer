@@ -22,8 +22,9 @@ what to do next.
   completion test (one compressor level and one carry chain instead of two
   chains), formal properties T9 and P8, `formal/equiv_core.sh` (533 of 533
   points against master; a seeded fault fails it), and check scripts that
-  fail on a failed proof (BUGS 19). Full suite green on the branch. Its
-  hardening run is 37247680638: see docs/AREA.md for the result.
+  fail on a failed proof (BUGS 19). Full suite green on the branch.
+  Hardened (run 37247680638, all four jobs green, precheck 9/9): setup
+  +12.33 / +8.12 / +0.76 ns, **no violation at any corner**.
 - `docs/SEMANTICS.md` v0.3 is the contract; `docs/VERIFICATION.md` (new)
   describes the eight verification layers, what each found and the
   commands.
@@ -50,10 +51,10 @@ what to do next.
 
 Closed up to D-032. **Open for Ahan:**
 
-1. **Merge `waitd-csa`?** Recommended if its run shows the slow corner
-   closed and the typical corner not worse: it is equivalence-proven and
-   carries the two new properties and the script fixes. Merging starts one
-   more master `gds` run.
+1. **Merge `waitd-csa`?** Recommended: its run closes the slow corner
+   (+0.76 ns) and improves the typical one (+8.12 ns), it is
+   equivalence-proven, and it carries the two new properties and the
+   script fixes. Merging starts one more master `gds` run.
 2. **D-033:** say in SEMANTICS 10.1 that MISO is 0 while CS_n is high
    (recommended; the RTL does it and a test now checks it), or declare the
    idle level undefined and drop the test.
