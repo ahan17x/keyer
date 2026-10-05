@@ -18,16 +18,16 @@ for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 | `src/` | Verilog RTL. `tt_um_ahan17x_keyer.v` is the top. `keyer_isa.vh` is generated. |
 | `docs/` | Datasheet source (`info.md`), the ISA reference (`isa.md`), the cycle-exact contract (`SEMANTICS.md`), the serializer guide (`SERIALIZER.md`), decisions and bug ledger. |
 | `tools/keyer_isa.py` | Encoding table, the single source of truth for opcodes. |
-| `tools/keyerasm.py` | Assembler. |
+| `tools/keyerasm.py` | Assembler. `--check-timing` (`tools/keytiming.py`) bounds the slots before every `WAITD` on all paths and compares them with the deadline distance. |
 | `tools/keyersim.py` | Cycle-exact instruction-set simulator (the golden model). |
 | `tools/protomodels.py`, `tools/protomodels_*.py` | Protocol models used by the tests: each knows only its protocol (UART, SPI slave and master, I2C slave and master, JTAG TAP, SW-DP target, PS/2 device, WS2812 decoder, USB low-speed host, 10BASE-T receiver). `tools/ser_scenarios.py` holds the serializer scenarios shared by the model and lockstep tests. |
 | `tools/mutate.py` | Mutation testing of the RTL (`tools/mutate_equivalents.md` lists the equivalent mutants). |
 | `tools/keyerhost.py` | Host driver: library and command line, on the demo board (MicroPython) and on the simulation. |
-| `tools/test_*.py` | pytest suites for the assembler, ISS and firmware. |
+| `tools/test_*.py` | pytest suites for the assembler, ISS and firmware; `test_protomodels.py` checks the USB and Ethernet models against published CRC values, a published Ethernet frame and hand-built USB packets. |
 | `fw/` | Firmware: `uart.s`, `spi_master.s`, `i2c_master.s`, `capture_demo.s`, `spi_slave.s`, `i2c_slave.s`, `jtag_master.s`, `swd.s`, `ps2_host.s`, `ws2812.s`, and on the serializer `usb_ls_device.s` (clock 48 MHz) and `eth_10bt_tx.s` (clock 40 MHz). |
 | `test/` | cocotb tests, including the ISS-vs-RTL lockstep harness. |
 | `synth/` | Yosys area-estimate scripts against the CMOS5L liberty. |
-| `formal/` | SymbiYosys proofs (FIFO, pin unit, core, capture and replay) and `equiv_core.sh`, the Yosys equivalence check of the core against a git reference. |
+| `formal/` | SymbiYosys proofs (FIFO, pin unit, core, capture and replay, serializer) and `equiv_core.sh`, the Yosys equivalence check of the core against a git reference. |
 | `fpga/alhambra2/` | Build for the Alhambra II (iCE40 HX4K): wrapper, pins, build and post-synthesis simulation scripts. A synthesis and post-synthesis-simulation result only: it has not been run on a board and no hardware bring-up is planned (D-035). |
 
 ## Running the tests
@@ -52,8 +52,10 @@ sessions that cannot read each other's side; `test/keyer_tb.py` then runs the
 model in lockstep with the RTL from reset, with every host action (program
 load, run/stop, FIFO traffic, pin modes) mirrored from the RTL into the model.
 Protocol correctness is checked by independent models that know only the
-protocol, not the firmware. Constrained-random instruction streams run on both
-threads with random pin activity.
+protocol, not the firmware; the USB and Ethernet models are themselves checked
+against published vectors. Constrained-random instruction streams run on both
+threads with random pin activity. A static check in the assembler bounds, for
+every `WAITD` of every program, the time the program can take to reach it.
 
 The layers, what each one found, what each would miss and the commands
 that reproduce every number are in [docs/VERIFICATION.md](docs/VERIFICATION.md).

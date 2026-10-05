@@ -136,7 +136,11 @@ from reset in simulation, every cycle compared, with all host traffic
 mirrored; every firmware program is checked against a model of its peer
 that knows only the protocol (UART, SPI master and slave, I2C master and
 slave, a JTAG TAP, an SW-DP target, a PS/2 device, a WS2812 decoder, a USB
-host, a 10BASE-T receiver); the FIFO, the pin unit, the core's timer and
+host, a 10BASE-T receiver), and the USB and Ethernet models are checked
+against published CRC values, a published Ethernet frame and USB packets
+built by hand; the assembler bounds, for every timed wait of every program,
+the instruction slots that can precede it on any path and compares them
+with the deadline (`keyerasm.py --check-timing`); the FIFO, the pin unit, the core's timer and
 control rules, the capture and replay engines and the serializer carry
 formal proofs; the host-interface and pads-only
 firmware tests also run on the gate-level netlist; and the test suite
