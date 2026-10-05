@@ -4,9 +4,17 @@
 # reset, and a due tick is never lost; T4 DEADLINE changes only through SETD,
 # a completed WAITD, SETT or soft reset; T5 a completed WAITD k adds exactly k
 # to DEADLINE, SETD k sets NOW + k; T6 timeout forms report C = !base, base
-# forms leave C alone. Control: P3 PC moves only on commit or host write; P4
-# threads start only via host or START; P5 halted implies stopped; P6 thread
-# parity; P7 blocked threads hold their PC. Thread select (D-028): S1 each
+# forms leave C alone; T7 period and prescale follow SETT, the soft reset
+# and the tick rule; T8 a timed-out wait pops, pushes and writes nothing;
+# T9 a thread that executes and does not complete writes no register, keeps
+# its flags and LR (soft reset aside) and sends no pin, FIFO or CAPC strobe,
+# and flags change only when their thread commits or is soft-reset.
+# Control: P3 PC moves only on commit or host write; P4 threads start only
+# via host or START; P5 halted implies stopped; P6 thread parity; P7 blocked
+# threads hold their PC; P8 START and STOP act only on the other thread
+# (its running bit 1 / 0, START clears its halted, STOP its DELAY count; the
+# executing thread's running and halted unchanged) unless the host writes
+# RUN in the same cycle. Thread select (D-028): S1 each
 # registered one-hot thread-select copy (sel_rf, sel_tm, sel_pc, sel_io) is
 # one-hot and equals the decode of tid (bit t set iff tid == t) in every
 # cycle; D1 the fields whose write enables use "executes" rather than
