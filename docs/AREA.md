@@ -191,6 +191,25 @@ Every number equals the branch run's (the flow is deterministic for the same
 sources); only the wall-clock times differ with the runner. Master carried
 this design until the merge of `decode-onehot` (D-030).
 
+### Run 37228068179, 2026-10-04, commit 043091d (master: the merge of `decode-onehot`, D-030)
+
+Started by the push of the merge. Jobs: `gds` success (1 h 05 min),
+`gl_test` success, `viewer` success, `precheck` success (30 min, all nine
+checks). Numbers from `python3 scripts/gds_report.py 37228068179`.
+
+| Item | Value |
+|---|---|
+| Standard cells | 13,317 instances (1,470 flops, 2,989 timing-repair buffers) plus the macro; 72,309 with fill |
+| Cell area / utilisation | 194,339 um^2 + 28,127 um^2 macro; 24.7% (standard cells 22.2%) |
+| Setup slack, 20 ns | fast +11.85 ns; typical +7.41 ns; slow -0.13 ns, 1 violating endpoint (`A_DOUT[8]` to `deadline[0][15]`) |
+| Hold slack | fast +0.123 ns, typical +0.317 ns, slow +0.657 ns; no violations |
+| Routing | detailed routing 31 min 56 s; DRC 0; wire length 547,268 um |
+| DRC / LVS / antenna | Magic DRC 29,294 and 10 illegal overlaps (macro-internal and stripe-over-OBS, as before); LVS 0; antenna 0 |
+| Slew / cap / fanout | 0 max-slew, 5 max-cap, 129 max-fanout |
+| gl_test | success |
+
+Every number equals branch run 37176010222. This is the master design.
+
 ### Summary of the runs
 
 | Run | Design | Cells | Utilisation | Setup fast / typical / slow (ns) | Routing | Precheck | gl_test |
@@ -200,3 +219,4 @@ this design until the merge of `decode-onehot` (D-030).
 | 37169889955 | macro + capture (de17304, `sram-macro`) | 13,203 + macro | 24.7% | +11.20 / +6.40 / -1.94 (277) | 49 min | 9/9 | pass |
 | 37176010222 | macro + capture + one-hot select (23eb0dc, `decode-onehot`) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 49 min | 9/9 | pass |
 | 37181323699 | macro + capture (8dab03a, master after D-029; same design as 37169889955) | 13,203 + macro | 24.7% | +11.20 / +6.40 / -1.94 (277) | 32 min | 9/9 | pass |
+| 37228068179 | macro + capture + one-hot select (043091d, master after D-030; same design as 37176010222) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 32 min | 9/9 | pass |
