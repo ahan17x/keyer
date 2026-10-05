@@ -16,6 +16,14 @@
  * pinwrite(4 * rep_group + i, rep_data[i]) for every i with rep_mask[i]
  * set, applied after the core's command of the same cycle (so it sees the
  * pin modes that command leaves) and before the host PINMODE write.
+ *
+ * A third port carries the serializer's write to its pair uio[2k],
+ * uio[2k+1] (SEMANTICS 15.1, 15.3), applied after the replay and before
+ * the host PINMODE write (5.3), and only to pins that are push-pull in
+ * od_mask' (the mask after the core's command): with ser_drive = 1,
+ * uio_out <= ser_p / ser_n and uio_oe <= 1; with ser_drive = 0 (the NRZI
+ * release), uio_oe <= 0 and uio_out unchanged. It never writes an
+ * open-drain pin, so the invariant uio_out & od_mask = 0 is kept.
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
@@ -39,6 +47,12 @@ module keyer_pins (
     input  wire [2:0]  rep_group,       // pins 4g..4g+3; 2, 3 (ui) and 6, 7 (24-31) do nothing
     input  wire [3:0]  rep_mask,
     input  wire [3:0]  rep_data,
+    // serializer: write of the pair uio[2k] (P), uio[2k+1] (N)
+    input  wire        ser_valid,
+    input  wire [1:0]  ser_k,
+    input  wire        ser_drive,       // 1: drive ser_p / ser_n; 0: release (oe <= 0)
+    input  wire        ser_p,
+    input  wire        ser_n,
     // host
     input  wire        host_mode_we,
     input  wire [7:0]  host_mode_val,
@@ -90,6 +104,11 @@ module keyer_pins (
                           (rep_group == 3'd4) ? {4'd0, rep_mask & 4'b1100} :
                           (rep_group == 3'd5) ? {rep_mask, 4'd0} : 8'd0;
 
+    // serializer: the pair's bits, and its values repeated over the four pairs
+    wire [7:0] ser_pair = !ser_valid ? 8'd0 : (8'd3 << {ser_k, 1'b0});
+    wire [7:0] ser_v8   = {4{ser_n, ser_p}};
+    reg  [7:0] ser_w;                    // the pair's push-pull pins in od_mask'
+
     // next-state computed in a procedural block to keep OD rules in one place
     reg [7:0] n_uio_out, n_uio_oe, n_od, n_uo;
     integer i;
@@ -134,11 +153,15 @@ module keyer_pins (
                 default: ;
             endcase
         end
+        ser_w = ser_pair & ~n_od;
         // replay pinwrite, on the state the core's command left (5.3 rules):
         // push-pull uio_out <= v; open-drain uio_out <= 0, uio_oe <= ~v; uo <= v
         n_uio_oe  = (n_uio_oe & ~(rep_uio & n_od)) | (~rep_d8 & rep_uio & n_od);
         n_uio_out = (n_uio_out & ~rep_uio) | (rep_d8 & rep_uio & ~n_od);
         n_uo      = (n_uo & ~rep_uo) | (rep_d8 & rep_uo);
+        // serializer write(p, v, e) on the push-pull pins of its pair (15.1)
+        n_uio_oe  = ser_drive ? (n_uio_oe | ser_w) : (n_uio_oe & ~ser_w);
+        n_uio_out = (n_uio_out & ~(ser_w & {8{ser_drive}})) | (ser_v8 & ser_w & {8{ser_drive}});
         if (host_mode_we) begin                      // host PINMODE: applied last
             n_od      = host_mode_val;
             n_uio_oe  = n_uio_oe & ~host_mode_val;

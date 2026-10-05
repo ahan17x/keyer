@@ -396,3 +396,109 @@ completeness; no change proposed.
     cycle's `cap_last`/`cap_dt` update and a free-cycle write still happen.
 20. Noted: a replay on group 4 cannot touch pins 16 and 17 (5.3).
 
+
+## 2026-10-04 (golden model, SEMANTICS v0.4 section 15: the serializer)
+
+### Q21. Are `rx_c5ok` and `rx_cok` cleared when a frame starts?
+
+Section 15.5 lists what a frame start writes: `rx_state rx_n rx_first
+rx_ones crc5 crc_m rx_valid rx_end rx_ovr rx_serr rx_ferr`. The two CRC
+verdicts are not in the list, so they keep the value of the last frame's
+`end()`. Section 15.7 says "the verdict and error bits describe the last
+frame that ended and stand until the next frame starts (15.5) or
+`SERCFG`", which can be read as "are cleared when the next frame starts".
+(The same sentence does not fit `rx_ovr` and `rx_serr` either: they are set
+while a frame is in progress, so mid-frame they describe the current frame.)
+
+**Chosen in `tools/keyersim.py`:** the register list of 15.5 as written. A
+frame start does not touch `rx_c5ok` or `rx_cok`; only `end()` from DATA
+and `SERCFG` write them. This is the simplest hardware (two flops written
+from one place) and is invisible to firmware that reads the verdicts only
+in the status `SERRX` returns at a frame end, where `end()` has just
+written both. The lockstep harness does see the difference mid-frame, so
+the RTL must make the same choice. Proposed wording for 15.7: "`rx_c5ok`
+and `rx_cok` are written by every frame end and by `SERCFG` only; `rx_ovr`,
+`rx_serr` and `rx_ferr` are cleared when a frame starts, and `rx_ovr` and
+`rx_serr` are set during the frame."
+
+### Q22. `SERRX` in the cycle the next byte completes (noted, no change proposed)
+
+Section 15.5 decides overrun on `rx_valid(c)`. If a `SERRX` takes the held
+byte in the same cycle c in which the next byte completes, `rx_valid(c)` is
+1, so the new byte is lost and `rx_ovr` is set, although the holding
+register is emptied in that cycle. The precedence paragraph of 15.2 relies
+on this, because it keeps the two writers of `rx_valid` disjoint.
+
+**Chosen in `tools/keyersim.py`:** the rule as written (overrun). It is
+recorded here because it is easy to "fix" on one side only. Firmware has a
+full byte time (8 T cycles) to read a byte, so the case is rare in practice.
+
+(The RTL session numbered its questions independently; they are R21 to R25 below.)
+
+## 2026-10-04 (RTL, SEMANTICS v0.4 section 15: `src/keyer_ser.v`)
+
+Written by the rtl subagent from SEMANTICS 15 alone (the golden model was
+not opened). Each question gives the reading the RTL implements; where
+there was a choice it is the cheaper one in gates.
+
+### R21. Are `rx_c5ok` and `rx_cok` cleared when a frame starts?
+
+15.5 lists what a frame start clears: `rx_valid`, `rx_end`, `rx_ovr`,
+`rx_serr`, `rx_ferr` (and it loads `crc5`, `crc_m`). The two CRC verdicts
+are not in the list. 15.7 says "the verdict and error bits describe the
+last frame that ended and stand until the next frame starts (15.5) or
+`SERCFG`", which can be read as "the next frame start clears them".
+
+**Chosen in the RTL:** the list of 15.5, literally: a frame start does not
+touch `rx_c5ok` or `rx_cok`; they are rewritten by the next `end()` in
+DATA and cleared by `SERCFG`. During a frame, `SERST` therefore shows the
+previous frame's verdicts with bit 3 (in a frame) set. Clearing them
+would cost two gates; no firmware pattern needs it, because a verdict is
+only meaningful with `rx_end`, which the start does clear. Proposed
+wording for 15.7: "The error bits (7 to 9) are cleared when a frame
+starts; the verdict bits (5, 6) are written when a frame ends; all stand
+until `SERCFG`."
+
+### R22. The CRC registers while the receiver does not run
+
+15.4 lists what a non-running receiver resets and what it keeps
+(`rx_hold`, `rx_valid`, `rx_end`, the error and verdict flags); `crc5` and
+`crc_m` are in neither list. **Chosen in the RTL:** they keep their values
+(the transmitter still writes `crc_m` by 15.3). This is the default "a
+register no rule names does not change"; stated so the model agrees.
+Proposed wording for 15.4: add "`crc5` and `crc_m` are not changed by the
+receiver".
+
+### R23. "The first symbol is on the pads in the cycle after the second tick at which `tx_full` was seen" (15.3)
+
+At the start tick `tx_full` is 1 and the start clears it; at the next tick
+(the first data bit) `tx_full` is 1 only if firmware has already queued
+the second byte. Read literally, "the second tick at which `tx_full` was
+seen" would be later than the first data bit for a one-byte frame.
+**Chosen in the RTL (rules 2 and 4 decide it anyway):** the first symbol
+is on the pads in the cycle after the tick that follows the start tick,
+that is T + 1 cycles after the start tick (`test/ser_unit` checks this
+for every frame). Proposed wording: "the first symbol is on the pads in
+the cycle after the first tick that follows the tick at which the
+transmitter started (rule 2)".
+
+### R24. An unread byte or frame end discarded by the next frame start
+
+A frame start clears `rx_valid`, `rx_end` and `rx_ovr` (15.5). If
+firmware has not taken the last byte of a frame, or its frame end, when
+the next sync arrives, both disappear and no flag records it (the overrun
+flag is cleared in the same step). **Chosen in the RTL:** as written. A
+"lost" bit would cost one flop. Question for Ahan: is a silent loss
+acceptable here (firmware that keeps up never sees it), or should a
+frame start set `rx_ovr` when it clears a set `rx_valid` or `rx_end`?
+
+### R25. A transmitter start abandons a frame being received
+
+The receiver runs only while `tx_state = IDLE` (15.4). If firmware queues
+a byte while a frame is arriving, the next tick starts the transmitter and
+from the following cycle the receiver is held in hunt: the frame in
+progress ends with no `end()`, so `rx_end` is not set and no verdict or
+error is written. **Chosen in the RTL:** as written (half duplex). Noted
+because firmware cannot tell from the status that a frame was cut off;
+proposed wording for 15.4: "a frame being received when the transmitter
+starts is dropped without a frame end".

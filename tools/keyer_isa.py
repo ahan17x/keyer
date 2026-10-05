@@ -11,7 +11,9 @@ positions per major (msb:lsb):
   B JMP    c[11]    abs11[10:0]
   C PIN    f[11:8]  t[7] x[6:5] pin[4:0]     (t = timeout bit for the waits)
   D PINR   r[11:9]  f[8:6]  x[5]  pin[4:0]
-  E XFER   r[11:9]  f[8:5]  t[4] x[3:0]      (t = timeout bit for PUSH/POP)
+  E XFER   r[11:9]  f[8:5]  t[4] g[3:0]      (t = timeout bit for PUSH/POP and
+                                             the serializer waits; g = serializer
+                                             function when f = 15, else unused)
   F MISC   f[11:8]  imm8[7:0]
 
 The assembler (keyerasm.py), the simulator (keyersim.py) and the generated
@@ -20,7 +22,7 @@ Verilog header (src/keyer_isa.vh) all derive from the tables below.
 
 from collections import namedtuple
 
-ISA_VERSION = 0x02
+ISA_VERSION = 0x03
 
 # Operand kinds and the field they live in, per major.
 #   name -> (lsb, width, signed)
@@ -39,7 +41,7 @@ FIELDS = {
     0xB: {"c": (11, 1, False), "abs11": (0, 11, False)},
     0xC: {"f": (8, 4, False), "pin": (0, 5, False), "t": (7, 1, False)},
     0xD: {"r": (9, 3, False), "f": (6, 3, False), "pin": (0, 5, False)},
-    0xE: {"r": (9, 3, False), "f": (5, 4, False), "t": (4, 1, False)},
+    0xE: {"r": (9, 3, False), "f": (5, 4, False), "t": (4, 1, False), "g": (0, 4, False)},
     0xF: {"f": (8, 4, False), "n8": (0, 8, False)},
 }
 
@@ -160,6 +162,29 @@ _add("CAPC", 0xE, 14, (("rs", "r"),), desc="capture/replay control: rs[0] arm, r
 _add("PUSHT", 0xE, 0, (("rs", "r"),), "C", True, "outbox <- rs[7:0], or deadline (C = 1 on timeout)", fixed={"t": 1})
 _add("POPT", 0xE, 1, (("rd", "r"),), "C", True, "rd = inbox byte, or deadline (C = 1 on timeout)", fixed={"t": 1})
 
+# --- serializer (SEMANTICS section 15): XFER sub-opcode 15, function in g ---
+SER_SUB = 15
+SER_G = {"SERCFG": 0, "SERTX": 1, "SERTXC": 2, "SERRX": 3, "SERST": 4, "SERWT": 5}
+_add("SERCFG", 0xE, SER_SUB, (("rs", "r"),), desc="serializer configuration = rs[7:0]; engine reset; this thread owns it",
+     fixed={"g": SER_G["SERCFG"]})
+_add("SERTX", 0xE, SER_SUB, (("rs", "r"),), "", True, "serializer <- rs[7:0], not in the CRC",
+     fixed={"g": SER_G["SERTX"], "t": 0})
+_add("SERTXC", 0xE, SER_SUB, (("rs", "r"),), "", True, "serializer <- rs[7:0], in the CRC",
+     fixed={"g": SER_G["SERTXC"], "t": 0})
+_add("SERRX", 0xE, SER_SUB, (("rd", "r"),), "Z", True, "rd = received byte (Z = 0), or the status at a frame end (Z = 1)",
+     fixed={"g": SER_G["SERRX"], "t": 0})
+_add("SERST", 0xE, SER_SUB, (("rd", "r"),), desc="rd = serializer status", fixed={"g": SER_G["SERST"]})
+_add("SERWT", 0xE, SER_SUB, (), "", True, "wait until the transmitter is idle and empty",
+     fixed={"g": SER_G["SERWT"], "t": 0})
+_add("SERTXT", 0xE, SER_SUB, (("rs", "r"),), "C", True, "SERTX, or deadline (C = 1 on timeout)",
+     fixed={"g": SER_G["SERTX"], "t": 1})
+_add("SERTXCT", 0xE, SER_SUB, (("rs", "r"),), "C", True, "SERTXC, or deadline (C = 1 on timeout)",
+     fixed={"g": SER_G["SERTXC"], "t": 1})
+_add("SERRXT", 0xE, SER_SUB, (("rd", "r"),), "ZC", True, "SERRX, or deadline (C = 1 on timeout)",
+     fixed={"g": SER_G["SERRX"], "t": 1})
+_add("SERWTT", 0xE, SER_SUB, (), "C", True, "SERWT, or deadline (C = 1 on timeout)",
+     fixed={"g": SER_G["SERWT"], "t": 1})
+
 # --- misc ------------------------------------------------------------------
 _add("NOP", 0xF, 0, (), desc="nothing")
 _add("HALT", 0xF, 1, (), desc="stop this thread")
@@ -171,6 +196,8 @@ _add("CLC", 0xF, 6, (), "C", desc="C = 0")
 _add("START", 0xF, 7, (), desc="start other thread")
 _add("STOP", 0xF, 8, (), desc="stop other thread")
 _add("SETD", 0xF, 9, (("k", "n8"),), desc="DEADLINE = NOW + k")
+_add("SERI", 0xF, 10, (("n", "n8"),), blocking=True, desc="serializer <- n, not in the CRC")
+_add("SERIC", 0xF, 11, (("n", "n8"),), blocking=True, desc="serializer <- n, in the CRC")
 
 INSTRUCTIONS = tuple(_I)
 BY_NAME = {i.name: i for i in INSTRUCTIONS}
@@ -282,11 +309,21 @@ def gen_verilog_header():
             continue                      # timeout forms share the base sub-opcode
         seen.add((ins.major, ins.sub))
         lsb, width, _ = FIELDS[ins.major][SUB_FIELD[ins.major]]
+        if ins.major == 0xE and ins.sub == SER_SUB:
+            out.append("`define KEYER_%-7s %d'd%d  // major E: serializer; function in the g field" % ("SER", width, ins.sub))
+            continue
         out.append("`define KEYER_%-7s %d'd%d  // major %X: %s" % (ins.name, width, ins.sub, ins.major, ins.desc))
     out.append("")
     out.append("// timeout bit: set in WT0 WT1 WTR WTF (major C) and PUSH POP (major E)")
     out.append("`define KEYER_PIN_TBIT  %d" % FIELDS[0xC]["t"][0])
     out.append("`define KEYER_XFER_TBIT %d" % FIELDS[0xE]["t"][0])
+    out.append("")
+    out.append("// serializer function field of major E, sub-opcode KEYER_SER")
+    glsb, gw, _ = FIELDS[0xE]["g"]
+    out.append("`define KEYER_SER_G_MSB %d" % (glsb + gw - 1))
+    out.append("`define KEYER_SER_G_LSB %d" % glsb)
+    for n, v in SER_G.items():
+        out.append("`define KEYER_SERG_%-4s %d'd%d" % (n[3:], gw, v))
     out.append("")
     for cn, cv in COND.items():
         out.append("`define KEYER_COND_%-4s 3'd%d" % (cn, cv))

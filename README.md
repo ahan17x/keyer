@@ -8,7 +8,7 @@ IHP 130 nm CMOS5L through Tiny Tapeout, 6x4 tiles.
 Keyer is a two-thread, 16-bit, pin-oriented CPU, named after the telegraph
 keyer: a program becomes precisely timed marks and spaces on a wire. A host
 loads a program over SPI; the threads bit-bang UART, SPI, I2C, JTAG, SWD,
-PS/2, WS2812 (and whatever else fits the timing) on the chip's 24 pins with cycle-exact timing. See [docs/info.md](docs/info.md)
+PS/2, WS2812, and with the serializer engine low-speed USB and 10BASE-T transmit (and whatever else fits the timing) on the chip's 24 pins with cycle-exact timing. See [docs/info.md](docs/info.md)
 for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 
 ## Layout
@@ -16,15 +16,15 @@ for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 | Path | What |
 |---|---|
 | `src/` | Verilog RTL. `tt_um_ahan17x_keyer.v` is the top. `keyer_isa.vh` is generated. |
-| `docs/` | Datasheet source (`info.md`), the ISA reference (`isa.md`), the cycle-exact contract (`SEMANTICS.md`), decisions and bug ledger. |
+| `docs/` | Datasheet source (`info.md`), the ISA reference (`isa.md`), the cycle-exact contract (`SEMANTICS.md`), the serializer guide (`SERIALIZER.md`), decisions and bug ledger. |
 | `tools/keyer_isa.py` | Encoding table, the single source of truth for opcodes. |
 | `tools/keyerasm.py` | Assembler. |
 | `tools/keyersim.py` | Cycle-exact instruction-set simulator (the golden model). |
-| `tools/protomodels.py`, `tools/protomodels_*.py` | Protocol models used by the tests: each knows only its protocol (UART, SPI slave and master, I2C slave and master, JTAG TAP, SW-DP target, PS/2 device, WS2812 decoder). |
+| `tools/protomodels.py`, `tools/protomodels_*.py` | Protocol models used by the tests: each knows only its protocol (UART, SPI slave and master, I2C slave and master, JTAG TAP, SW-DP target, PS/2 device, WS2812 decoder, USB low-speed host, 10BASE-T receiver). `tools/ser_scenarios.py` holds the serializer scenarios shared by the model and lockstep tests. |
 | `tools/mutate.py` | Mutation testing of the RTL (`tools/mutate_equivalents.md` lists the equivalent mutants). |
 | `tools/keyerhost.py` | Host driver: library and command line, on the demo board (MicroPython) and on the simulation. |
 | `tools/test_*.py` | pytest suites for the assembler, ISS and firmware. |
-| `fw/` | Firmware: `uart.s`, `spi_master.s`, `i2c_master.s`, `capture_demo.s`, `spi_slave.s`, `i2c_slave.s`, `jtag_master.s`, `swd.s`, `ps2_host.s`, `ws2812.s`. |
+| `fw/` | Firmware: `uart.s`, `spi_master.s`, `i2c_master.s`, `capture_demo.s`, `spi_slave.s`, `i2c_slave.s`, `jtag_master.s`, `swd.s`, `ps2_host.s`, `ws2812.s`, and on the serializer `usb_ls_device.s` (clock 48 MHz) and `eth_10bt_tx.s` (clock 40 MHz). |
 | `test/` | cocotb tests, including the ISS-vs-RTL lockstep harness. |
 | `synth/` | Yosys area-estimate scripts against the CMOS5L liberty. |
 | `formal/` | SymbiYosys proofs (FIFO, pin unit, core, capture and replay) and `equiv_core.sh`, the Yosys equivalence check of the core against a git reference. |

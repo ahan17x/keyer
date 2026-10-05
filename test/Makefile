@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = keyer_fifo.v keyer_imem.v keyer_pins.v keyer_core.v keyer_host.v keyer_capture.v tt_um_ahan17x_keyer.v
+PROJECT_SOURCES = keyer_fifo.v keyer_imem.v keyer_pins.v keyer_core.v keyer_host.v keyer_capture.v keyer_ser.v tt_um_ahan17x_keyer.v
 # The vendored simulation model of the SRAM program memory (D-025), needed for
 # both the RTL and the gate-level case: keyer_imem instantiates the macro by
 # default and the gate-level netlist does too. The behavioural core comes
@@ -62,7 +62,7 @@ VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
 
 # List test modules to run, separated by commas and without the .py suffix:
-COCOTB_TEST_MODULES = test,test_host,test_corners,test_jtag_master,test_ws2812,test_ps2_host,test_i2c_slave,test_spi_slave,test_swd
+COCOTB_TEST_MODULES = test,test_host,test_corners,test_jtag_master,test_ws2812,test_ps2_host,test_i2c_slave,test_spi_slave,test_swd,test_ser,test_usb_ls_device,test_eth_10bt_tx
 
 # include cocotb's make rules to take care of the simulator setup
 # cocotb-config is taken from the repo's virtualenv when it exists

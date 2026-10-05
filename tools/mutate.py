@@ -72,16 +72,20 @@ WORK = os.path.join(ROOT, "test", "sim_build", "mutation")
 EQUIV_DOC = os.path.join(ROOT, "tools", "mutate_equivalents.md")
 STUB = "RM_IHPSG13_1P_256x16_c2_bm_bist.v"
 DEFAULT_FILES = ["keyer_isa.vh", "keyer_fifo.v", "keyer_imem.v", "keyer_pins.v", "keyer_core.v",
-                 "keyer_host.v", "keyer_capture.v", "tt_um_ahan17x_keyer.v"]
+                 "keyer_host.v", "keyer_capture.v", "keyer_ser.v", "tt_um_ahan17x_keyer.v"]
 DESIGN = ["keyer_fifo.v", "keyer_imem.v", "keyer_pins.v", "keyer_core.v", "keyer_host.v",
-          "keyer_capture.v", "tt_um_ahan17x_keyer.v"]
+          "keyer_capture.v", "keyer_ser.v", "tt_um_ahan17x_keyer.v"]
 TOP = "tt_um_ahan17x_keyer"
 
 # The proofs that read each file (a header mutant reaches the core's proof).
 FORMAL = {
     "keyer_fifo.v": "fifo", "keyer_pins.v": "pins", "keyer_core.v": "core",
-    "keyer_capture.v": "capture", "keyer_isa.vh": "core",
+    "keyer_capture.v": "capture", "keyer_isa.vh": "core", "keyer_ser.v": "ser",
 }
+# The sby tasks a mutant runs, when not all of the file's tasks (None: all).
+# formal/ser.sby's cover tasks only show the proofs are not vacuous; a
+# mutant needs only the proofs.
+FORMAL_TASKS = {"ser": ["stuff", "crc_any", "crc16", "crc32", "rt_nrzi", "rt_manch"]}
 
 # Signals wider than one bit that are still enables, strobes, selects or
 # resets (one-bit signals all get the stuck-at mutants).
@@ -467,7 +471,7 @@ def prepare(work, mt):
     os.makedirs(os.path.join(work, "formal"))
     fdir = os.path.join(ROOT, "formal")
     for f in os.listdir(fdir):
-        if f.endswith((".sby", ".sv", ".sh")):
+        if f.endswith((".sby", ".sv", ".vh", ".sh")):
             shutil.copy(os.path.join(fdir, f), os.path.join(work, "formal", f))
 
 
@@ -540,11 +544,12 @@ def formal(work, group, timeout):
         if re.search(r"Output \d+ of miter .* was asserted|Property failed|was asserted in frame", out):
             return "fail", "formal:core"
         return "error", "proof did not run: " + out.strip()[-120:]
-    status, out = run_cmd(["yowasp-sby", "-f", group + ".sby"], fdir, timeout)
+    tasks = FORMAL_TASKS.get(group)
+    status, out = run_cmd(["yowasp-sby", "--yosys", "yowasp-yosys", "-f", group + ".sby"] + (tasks or []), fdir, timeout)
     if status in ("timeout", "signal"):
         return "error", status
     done = re.findall(r"DONE \((\w+)", out)
-    want = {"fifo": 2, "pins": 1, "capture": 2}[group]
+    want = len(tasks) if tasks else {"fifo": 2, "pins": 1, "capture": 2}[group]
     if len(done) == want and all(d == "PASS" for d in done):
         return "pass", ""
     if "FAIL" in done:

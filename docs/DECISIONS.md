@@ -411,3 +411,51 @@ Consequence for verification: no firmware runs against a real device, so
 every protocol claim rests on the protocol models (docs/VERIFICATION.md).
 Rejected: keeping bring-up as an open task nobody will do.
 
+## D-036 2026-10-04 Claude (within Ahan's instruction for the serializer step): one shared serializer engine, clocked by the owner's timer; ISA version 3
+
+SEMANTICS was silent on bit-level hardware; section 15 (version 0.4) and
+`docs/SERIALIZER.md` now define it. The choices:
+
+- **One engine shared by both threads**, half duplex: about 130 flops,
+  estimated 12,000 to 13,000 um^2 (utilisation about 26.5%; two engines
+  about 28.5%, so area would allow either). Shared because each engine adds
+  a source to the register write-data selection, the path with +0.76 ns at
+  the slow corner, and because neither USB nor 10BASE-T transmit uses two
+  coded lines. Rejected: per-thread engines; full duplex.
+- **The symbol period is the owning thread's timer period** (`SERCFG`
+  names the owner): the transmitter advances on that timer's ticks, the
+  receiver's counter reloads from the same `period`. Rejected: a private
+  divider register.
+- **Clocks: 48 MHz for USB low speed** (`period` 32) **and 40 MHz for
+  10BASE-T** (`period` 2 per half-bit). Manchester half-bits are 2.5 cycles
+  at 50 MHz and USB bits 33.3; 60 MHz divides both but is not signed off
+  (20 ns stays the constraint, clean at the slow corner). Both clocks are
+  below 50 MHz, so the hardened design covers them; the demo board's clock
+  is programmable.
+- **Encoding** (`tools/keyer_isa.py`, ISA version 3, the ID register's
+  second byte): XFER sub-opcode 15 with a 4-bit function field in the
+  formerly unused low bits (`SERCFG SERTX SERTXC SERRX SERST SERWT`, timeout
+  forms through the existing T bit), and MISC sub-opcodes 10 and 11
+  (`SERI n`, `SERIC n`: a byte from the instruction word, so constant
+  tables cost one word per byte in a 256-word memory).
+- **A frame ends by underrun** (holding register empty at a byte boundary);
+  the engine appends the CRC of the marked bytes and the end of packet.
+  **CRC-5 is receive-only.** The engine writes the pin registers through
+  the pin unit after the replay engine and before a host PINMODE write, and
+  respects open-drain mode.
+- No host register: the engine is firmware's; the lockstep harness reads
+  its registers by name (SEMANTICS 13).
+
+## D-037 2026-10-05 Claude, applying Ahan's rule for step 4: `serializer` is merged into master
+
+Ahan's condition was: merge if timing is clean at all corners and
+utilisation is under 40%. Run 37266431182 on the branch: setup +12.53 /
++8.41 / +1.37 ns (fast / typical / slow), no violating endpoint, hold clean,
+utilisation 27.0%, routing DRC, LVS and antenna 0, precheck 9 of 9,
+`gl_test` passing. The branch's full check suite is green (406 pytest, 52
+cocotb with every serializer register compared in lockstep, the unit bench,
+five formal groups). Master now carries the serializer engine (D-036), ISA
+version 3, `fw/usb_ls_device.s` and `fw/eth_10bt_tx.s`. The estimate of
+D-036 was low: the engine costs 20,113 um^2 in layout, not 12,000 to
+13,000. Rejected: nothing; the rule was met.
+

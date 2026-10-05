@@ -22,7 +22,7 @@ async def test_host_selftests(dut):
     capture and replay on the uo pins: the driver's self-tests, pads only."""
     pads = await start(dut)
     host = kh.KeyerHost(kh.SimTransport(dut, pads))
-    assert await kh.selftest_all(host) == 2
+    assert await kh.selftest_all(host) == 3
 
 
 @cocotb.test()
@@ -72,7 +72,7 @@ async def test_lockstep_host_selftests(dut):
     task = cocotb.start_soon(kh.selftest_all(host))
     while not task.done():
         await ls.run(500)
-    assert await task == 2
+    assert await task == 3
     await ls.run(50)
     assert ls.retired > 0
 

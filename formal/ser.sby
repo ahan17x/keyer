@@ -1,0 +1,106 @@
+# keyer_ser (SEMANTICS 15). Properties in ser_*_props.sv; the transmit-side
+# observer ser_txmon.sv decodes the emitted bit stream from the pin writes;
+# the reference CRCs are in ser_crc_ref.vh. The RTL is read unchanged; the
+# few SEMANTICS 15.1 registers a property names (crc_m, tx_state, crc5) are
+# made ports with Yosys `expose` (Yosys has no hierarchical references).
+#
+#   stuff        S1 no seven consecutive ones with stuff = 1 (both modes), S2 the
+#                NRZI line keeps its value through at most six symbol ticks of a
+#                frame, S3 framing sanity. All inputs free. Unbounded (abc pdr).
+#   crc_any      Q1 crc_m equals an independent bit-serial reference throughout
+#                DATA and CRC, Q2 the appended bits are its complement, exactly W
+#                of them. Any frame length, any configuration. Unbounded (abc pdr).
+#   crc16/crc32  R1-R4: a symbolic 2-byte message, all marked; crc_m at the end of
+#                the data and the decoded frame equal the whole-message reference;
+#                known answers. BMC (abc bmc3).
+#   rt_nrzi/rt_manch  T1-T3: transmitter -> pads -> synchroniser -> receiver
+#                delivers the bytes, then the CRC bytes, then a good verdict.
+#                BMC (abc bmc3).
+#   *_cover      non-vacuity traces (smtbmc z3).
+[tasks]
+stuff
+crc_any
+crc16
+crc32
+rt_nrzi
+rt_manch
+stuff_cover
+crc_cover
+crc_any_cover
+rt_cover
+
+[options]
+stuff: mode prove
+crc_any: mode prove
+crc16: mode bmc
+crc32: mode bmc
+rt_nrzi: mode bmc
+rt_manch: mode bmc
+stuff_cover: mode cover
+crc_cover: mode cover
+crc_any_cover: mode cover
+rt_cover: mode cover
+stuff: aigsmt z3
+crc_any: aigsmt z3
+crc16: aigsmt z3
+crc32: aigsmt z3
+rt_nrzi: aigsmt z3
+rt_manch: aigsmt z3
+# BMC depths: each task asserts that its frame has ended by a fixed cycle
+# (DL in the properties file), so the depth must exceed that cycle.
+crc16: depth 88
+crc32: depth 126
+rt_nrzi: depth 200
+rt_manch: depth 190
+stuff_cover: depth 40
+crc_cover: depth 88
+crc_any_cover: depth 40
+rt_cover: depth 100
+
+[engines]
+stuff: abc pdr
+crc_any: abc pdr
+crc16: abc bmc3
+crc32: abc bmc3
+rt_nrzi: abc bmc3
+rt_manch: abc bmc3
+stuff_cover: smtbmc z3
+crc_cover: smtbmc z3
+crc_any_cover: smtbmc z3
+rt_cover: smtbmc z3
+
+[script]
+read_verilog -formal keyer_ser.v
+expose keyer_ser/crc_m keyer_ser/tx_state keyer_ser/crc5
+read_verilog -formal -sv ser_txmon.sv
+read_verilog -formal -sv ser_stuff_props.sv
+read_verilog -formal -sv ser_crcind_props.sv
+read_verilog -formal -sv ser_crc_props.sv
+read_verilog -formal -sv ser_rt_props.sv
+# CRC-16 (USB): NRZI or Manchester, stuffing on or off; CRC-32 (Ethernet):
+# either mode, no stuffing (crc_any covers CRC-32 with stuffing)
+crc16: chparam -set N 2 -set C32 0 -set MODE 0 -set STUFF 2 ser_crc_props
+crc32: chparam -set N 2 -set C32 1 -set MODE 0 -set STUFF 0 ser_crc_props
+crc_cover: chparam -set N 2 -set C32 0 -set MODE 0 -set STUFF 2 -set FIX 1 ser_crc_props
+rt_nrzi: chparam -set MODE 1 -set T 4 -set N 1 -set C32 0 ser_rt_props
+rt_manch: chparam -set MODE 2 -set T 2 -set N 1 -set C32 0 ser_rt_props
+rt_cover: chparam -set MODE 1 -set T 4 -set N 1 -set C32 0 -set FIX 1 ser_rt_props
+stuff: prep -top ser_stuff_props
+stuff_cover: prep -top ser_stuff_props
+crc_any: prep -top ser_crcind_props
+crc_any_cover: prep -top ser_crcind_props
+crc16: prep -top ser_crc_props
+crc32: prep -top ser_crc_props
+crc_cover: prep -top ser_crc_props
+rt_nrzi: prep -top ser_rt_props
+rt_manch: prep -top ser_rt_props
+rt_cover: prep -top ser_rt_props
+
+[files]
+../src/keyer_ser.v
+ser_txmon.sv
+ser_stuff_props.sv
+ser_crcind_props.sv
+ser_crc_props.sv
+ser_rt_props.sv
+ser_crc_ref.vh

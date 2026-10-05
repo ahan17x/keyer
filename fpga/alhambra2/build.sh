@@ -27,7 +27,7 @@ mkdir -p build
 yosys -q -l build/synth.log -p "
   read_verilog -DKEYER_IMEM_FLOPS -I$SRC \
     $SRC/keyer_fifo.v $SRC/keyer_imem.v $SRC/keyer_pins.v $SRC/keyer_core.v \
-    $SRC/keyer_host.v $SRC/keyer_capture.v $SRC/tt_um_ahan17x_keyer.v keyer_alhambra2.v
+    $SRC/keyer_host.v $SRC/keyer_capture.v $SRC/keyer_ser.v $SRC/tt_um_ahan17x_keyer.v keyer_alhambra2.v
   synth_ice40 -top keyer_alhambra2 -json build/keyer.json
   tee -o build/stat.txt stat"
 

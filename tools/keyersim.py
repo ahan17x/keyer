@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Keyer golden model: a cycle-exact behavioural model of the Keyer core.
 
-Written from docs/SEMANTICS.md (the contract, version 0.3) and
+Written from docs/SEMANTICS.md (the contract, version 0.4) and
 tools/keyer_isa.py (the encoding table) alone, independently of the RTL in
 src/ (DECISIONS D-012). Section numbers in the comments refer to
 SEMANTICS.md.
@@ -26,8 +26,13 @@ One call to Machine.step() is one core clock cycle c (= Machine.cycle):
      triggers or records on the group nibble of level(c) and, in a free
      cycle, writes its oldest queued entry to IMEM; otherwise the replay
      engine may fetch. The replay engine applies its head entry with
-     pinwrite after the core's pin command (14.7). The CR_CTRL actions of the
-     cycle (CAPC) are applied last.
+     pinwrite after the core's pin command (14.7). The serializer (15) then
+     runs its receiver and, in a symbol tick of the owner's timer (period and
+     prescale sampled in step 1), its transmitter, on its state as it was
+     during c; its pin writes come after the replay engine's (5.3). The
+     serializer instructions only record their effect during step 2, and it
+     is merged here (a SERCFG overrides the engine, 15.2). The CR_CTRL
+     actions of the cycle (CAPC) are applied last.
   4. Commit. The timers of both threads tick (6.1), the synchroniser history
      shifts and the cycle counter advances to c + 1.
 
@@ -77,6 +82,17 @@ QUEUE_DEPTH = 2              # capture write queue (14.4)
 PREFETCH_DEPTH = 2           # replay prefetch buffer (14.6)
 CR_ARM, CR_DISARM, CR_START, CR_STOP = 1, 2, 4, 8     # CR_CTRL / CAPC action bits (14.2, 14.5)
 
+# Serializer (15)
+SER_TX_IDLE, SER_TX_DATA, SER_TX_CRC, SER_TX_TAIL = 0, 1, 2, 3    # tx_state
+SER_RX_HUNT, SER_RX_DATA = 0, 1                                   # rx_state
+SER_SYNC_NRZI, SER_SYNC_MAN = 0x80, 0xD5     # receive sync byte, mode 1 / mode 2 (15.5)
+SER_CRC5_POLY, SER_CRC5_INIT, SER_CRC5_RES = 0x14, 0x1F, 0x06
+SER_POLY_M = (0x0000A001, 0xEDB88320)        # indexed by crc32 = cfg[3] (15.1)
+SER_INIT_M = (0x0000FFFF, 0xFFFFFFFF)
+SER_RES_M = (0x0000B001, 0xDEBB20E3)
+SER_W = (16, 32)
+_SER_CFG, _SER_TX, _SER_RXB, _SER_RXE = 1, 2, 3, 4  # the instruction's serializer effect of a cycle
+
 
 def reached(a, b):
     """SEMANTICS 1: the signed 16-bit difference a - b is zero or positive."""
@@ -86,6 +102,13 @@ def reached(a, b):
 def _zf(v):
     """Z flag value for a result (1 when the 16-bit result is zero)."""
     return 0 if v & M16 else 1
+
+
+def _crc_step(r, b, poly):
+    """step(r, b, POLY) of 15.1: reflected CRC, one bit."""
+    fb = (r ^ b) & 1
+    r >>= 1
+    return r ^ poly if fb else r
 
 
 def _rev8(v):
@@ -270,6 +293,68 @@ class CaptureReplay:
             [("%04X" % e) for e in self.pf], self.pf_inflight)
 
 
+class Serializer:
+    """The serializer engine (SEMANTICS 15). Attribute names match the RTL's
+    u_ser signals (13); every value is an int. All of it is reset to 0 by
+    rst_n (Machine.reset()); a thread's soft reset, RUN, HALT and STOP do not
+    touch it. The per-cycle behaviour is in Machine._ser_cycle(), because it
+    uses the pins, the levels and the owner's timer."""
+
+    FIELDS = ("cfg", "owner",
+              "tx_hold", "tx_hold_c", "tx_full", "tx_state", "tx_sh", "tx_c", "tx_app",
+              "tx_n", "tx_half", "tx_bit", "tx_ones", "tx_line", "crc_m", "crc5",
+              "rx_state", "rx_sh", "rx_n", "rx_ones", "rx_psym", "rx_last", "rx_cnt",
+              "rx_w", "rx_first", "rx_hold", "rx_valid", "rx_end", "rx_ovr", "rx_serr",
+              "rx_ferr", "rx_c5ok", "rx_cok")
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        """rst_n (3.1, 15): every register 0."""
+        for name in self.FIELDS:
+            setattr(self, name, 0)
+
+    def configure(self, cfg, owner):
+        """A committing SERCFG (15.2): cfg and owner written, every other
+        register 0 except rx_sh = 0xFF and rx_w = 1; rx_last is not touched
+        here (it follows 15.1 in every cycle)."""
+        rx_last = self.rx_last
+        self.reset()
+        self.cfg = cfg & M8
+        self.owner = owner & 1
+        self.rx_sh = M8
+        self.rx_w = 1
+        self.rx_last = rx_last
+
+    def snapshot(self):
+        """A copy of the state, read as the state during the cycle."""
+        o = Serializer.__new__(Serializer)
+        o.__dict__.update(self.__dict__)
+        return o
+
+    # configuration fields (15.1)
+    @property
+    def mode(self):
+        return self.cfg & 3
+
+    def status(self):
+        """status(c), section 15.7."""
+        return (self.tx_full
+                | int(self.tx_state != SER_TX_IDLE) << 1
+                | self.rx_valid << 2
+                | int(self.rx_state == SER_RX_DATA) << 3
+                | self.rx_end << 4
+                | self.rx_c5ok << 5
+                | self.rx_cok << 6
+                | self.rx_ovr << 7
+                | self.rx_serr << 8
+                | self.rx_ferr << 9)
+
+    def __repr__(self):
+        return "SER " + " ".join("%s=%X" % (n, getattr(self, n)) for n in self.FIELDS)
+
+
 class Machine:
     """The whole chip as seen by firmware and by the host interface."""
 
@@ -282,6 +367,7 @@ class Machine:
         self.ext_uio = 0xFF          # external level on released uio pins (pull-ups)
         self.ext_ui = 0              # external level on the ui pins
         self.cr = CaptureReplay()    # capture and replay engines (14)
+        self.ser = Serializer()      # serializer engine (15)
         self.reset()
 
     def reset(self):
@@ -295,6 +381,8 @@ class Machine:
         for t in self.threads:
             t.reset()
         self.cr.reset()
+        self.ser.reset()
+        self._ser_cmd = None         # the serializer effect of the instruction of this cycle (15.2)
         self.host_port_busy = False  # set by the caller before a step in whose cycle the host uses the port
         self.executed = False        # whether the slot's thread executed in the last step (2.1)
         self._port_used_prev = False # port used in the previous cycle: the fetch for this one is invalid
@@ -508,6 +596,9 @@ class Machine:
         fetch_valid = not self._port_used_prev                          # 2.1
         self._cr_ctl = 0
         self._cap_w_seen = self.cr.cap_w
+        self._ser_cmd = None
+        ser_t = th[self.ser.owner]
+        ser_per, ser_pre = ser_t.period, ser_t.prescale              # T(c), prescale[owner](c) (15.1)
 
         # 2. execute (2.1: running and the fetch was valid)
         done = True
@@ -540,6 +631,8 @@ class Machine:
         # 3. capture and replay engines (14), after the core's pin command
         free = not host_busy and not run_seen[(c + 1) & 1]              # 14.1
         engine_used = self._cr_cycle(level, free)
+        # serializer (15): its pin writes come after the core's and the replay engine's (5.3)
+        self._ser_cycle(level, ser_per, ser_pre)
         self._cr_control()                                             # CAPC actions of this cycle
         self._port_used_prev = host_busy or engine_used                # 2.1, for cycle c + 1
         self.host_port_busy = False
@@ -712,6 +805,275 @@ class Machine:
             cr.pf_inflight = 0
         # done after any cycle that leaves the engine disarmed, drained and once armed; ARM clears it
         cr.cap_done = 1 if (not cr.cap_armed and not cr.queue and cr.cap_was_armed) else 0
+
+    # ------------------------------------------------------------ serializer (15)
+
+    def _ser_write(self, p, v, e):
+        """write(p, v, e) of 15.1: ignored when od_mask'[p] is set. Called
+        after the core's pin command and the replay engine (5.3), so
+        self.od_mask is od_mask'."""
+        bit = 1 << p
+        if self.od_mask & bit:
+            return
+        if v:
+            self.uio_out |= bit
+        else:
+            self.uio_out &= ~bit & M8
+        if e:
+            self.uio_oe |= bit
+        else:
+            self.uio_oe &= ~bit & M8
+
+    def _ser_line(self, p, sv):
+        """line(s): P <= s, N <= ~s, both driven (s = 0: J, s = 1: K)."""
+        self._ser_write(p, sv, 1)
+        self._ser_write(p + 1, 1 - sv, 1)
+
+    def _ser_se0(self, p):
+        self._ser_write(p, 0, 1)
+        self._ser_write(p + 1, 0, 1)
+
+    def _ser_cycle(self, level, tper, tpre):
+        """One cycle of the serializer on the state during this cycle (15).
+        `level` is level(c); tper, tpre are period[owner](c) and
+        prescale[owner](c), sampled before the core's instruction. Called
+        after the core's instruction and the replay engine, so the engine's
+        pin writes come third in the order of 5.3; the instruction's own
+        serializer effects (self._ser_cmd) are merged last, with SERCFG
+        overriding everything the engine would do (15.2)."""
+        s = self.ser
+        cmd = self._ser_cmd
+        self._ser_cmd = None
+        cfg = s.cfg
+        p = 2 * ((cfg >> 6) & 3)
+        lvl_p = (level >> p) & 1
+        if cmd is not None and cmd[0] == _SER_CFG:
+            s.configure(cmd[1], cmd[2])            # overrides every engine update, no pin writes
+            s.rx_last = lvl_p                      # 15.1: in every cycle
+            return
+        mode = cfg & 3
+        if mode == 1 or mode == 2:
+            o = s.snapshot()                       # the state during c
+            if (cfg >> 4) & 1 and o.tx_state == SER_TX_IDLE:
+                self._ser_rx(o, s, level, tper, mode, cfg, p)       # 15.4-15.6
+            else:
+                self._ser_rx_hold(s)
+            if tper != 0 and tpre == 0:            # symbol tick (15.1)
+                self._ser_tx(o, s, mode, cfg, p)   # 15.3; its crc_m write stands over the receiver's
+        else:
+            self._ser_rx_hold(s)                   # off: no ticks, the receiver does not run
+        s.rx_last = lvl_p
+        if cmd is not None:
+            kind = cmd[0]
+            if kind == _SER_TX:                    # tx_full(c) = 0: the engine did not take it
+                s.tx_hold = cmd[1]
+                s.tx_hold_c = cmd[2]
+                s.tx_full = 1
+            elif kind == _SER_RXB:
+                s.rx_valid = 0
+            elif kind == _SER_RXE:
+                s.rx_end = 0
+
+    @staticmethod
+    def _ser_rx_hold(s):
+        """15.4: a cycle in which the receiver does not run."""
+        s.rx_state = SER_RX_HUNT
+        s.rx_sh = M8
+        s.rx_n = 0
+        s.rx_ones = 0
+        s.rx_psym = 0
+        s.rx_cnt = 0
+        s.rx_w = 1
+        s.rx_first = 0
+
+    def _ser_rx(self, o, s, level, tper, mode, cfg, p):
+        """15.6: clock recovery and decoding; reads o (the state during c),
+        writes s."""
+        sym = (level >> p) & 1
+        edge = sym != o.rx_last
+        if mode == 1:
+            if edge:
+                s.rx_cnt = tper >> 1
+            elif o.rx_cnt != 0:
+                s.rx_cnt = (o.rx_cnt - 1) & M16
+            else:                                  # sample cycle
+                s.rx_cnt = (tper - 1) & M16
+                if sym == 0 and ((level >> (p + 1)) & 1) == 0:
+                    self._ser_end(o, s, cfg)
+                    s.rx_psym = 0
+                else:
+                    s.rx_psym = sym
+                    self._ser_bit(o, s, 1 if sym == o.rx_psym else 0, mode, cfg)
+        else:
+            if edge and o.rx_w:                    # mid-bit transition
+                s.rx_w = 0
+                s.rx_cnt = (tper + (tper >> 1) - 2) & M16
+                self._ser_bit(o, s, sym, mode, cfg)
+            elif o.rx_cnt != 0:
+                s.rx_cnt = (o.rx_cnt - 1) & M16
+            elif not o.rx_w:
+                s.rx_w = 1
+                s.rx_cnt = (2 * tper - 1) & M16
+            else:                                  # idle
+                self._ser_end(o, s, cfg)
+
+    @staticmethod
+    def _ser_bit(o, s, d, mode, cfg):
+        """bit(d), section 15.5."""
+        stuff = (cfg >> 2) & 1
+        in_data = o.rx_state == SER_RX_DATA
+        if in_data and stuff and o.rx_ones == 6:   # a stuffed bit: discarded
+            s.rx_ones = 0
+            if d:
+                s.rx_serr = 1
+            return
+        if in_data and stuff:
+            s.rx_ones = ((o.rx_ones + 1) & 7) if d else 0
+        v = (d << 7) | (o.rx_sh >> 1)
+        s.rx_sh = v
+        crc32 = (cfg >> 3) & 1
+        if not in_data:
+            if v == (SER_SYNC_NRZI if mode == 1 else SER_SYNC_MAN):   # a frame starts
+                s.rx_state = SER_RX_DATA
+                s.rx_n = 0
+                s.rx_first = 1
+                s.rx_ones = (1 if mode == 1 else 2) if stuff else 0
+                s.crc5 = SER_CRC5_INIT
+                s.crc_m = SER_INIT_M[crc32]
+                s.rx_valid = 0
+                s.rx_end = 0
+                s.rx_ovr = 0
+                s.rx_serr = 0
+                s.rx_ferr = 0
+            return
+        if not ((cfg >> 5) & 1 and o.rx_first):
+            s.crc5 = _crc_step(o.crc5, d, SER_CRC5_POLY)
+            s.crc_m = _crc_step(o.crc_m, d, SER_POLY_M[crc32])
+        if o.rx_n == 7:                            # byte complete
+            s.rx_n = 0
+            s.rx_first = 0
+            if o.rx_valid:
+                s.rx_ovr = 1                       # the byte is lost
+            else:
+                s.rx_hold = v
+                s.rx_valid = 1
+        else:
+            s.rx_n = o.rx_n + 1
+
+    @staticmethod
+    def _ser_end(o, s, cfg):
+        """end(), section 15.5."""
+        if o.rx_state == SER_RX_DATA:
+            s.rx_end = 1
+            s.rx_ferr = int(o.rx_n != 0)
+            s.rx_c5ok = int(o.crc5 == SER_CRC5_RES)
+            s.rx_cok = int(o.crc_m == SER_RES_M[(cfg >> 3) & 1])
+        s.rx_state = SER_RX_HUNT
+        s.rx_sh = M8
+        s.rx_n = 0
+        s.rx_ones = 0
+        s.rx_first = 0
+
+    def _ser_emit(self, o, s, b, mode, p):
+        """emit(b), section 15.3."""
+        if mode == 1:
+            sv = o.tx_line if b else 1 - o.tx_line
+            s.tx_line = sv
+            self._ser_line(p, sv)
+        else:
+            self._ser_line(p, 1 - b)
+            s.tx_bit = b
+            s.tx_half = 1
+
+    @staticmethod
+    def _ser_count(o, s, b, stuff):
+        if stuff:
+            s.tx_ones = ((o.tx_ones + 1) & 7) if b else 0
+
+    def _ser_tx(self, o, s, mode, cfg, p):
+        """15.3, in a symbol tick: exactly the first rule that applies."""
+        stuff = (cfg >> 2) & 1
+        crc32 = (cfg >> 3) & 1
+        # 1. second half
+        if mode == 2 and o.tx_half:
+            self._ser_line(p, o.tx_bit)
+            s.tx_half = 0
+            return
+        st = o.tx_state
+        # 2. start
+        if st == SER_TX_IDLE:
+            if o.tx_full:
+                s.tx_sh = o.tx_hold
+                s.tx_c = o.tx_hold_c
+                s.tx_app = o.tx_hold_c
+                s.tx_full = 0
+                s.tx_state = SER_TX_DATA
+                s.tx_n = 0
+                s.tx_ones = 0
+                s.tx_line = 0
+                s.crc_m = SER_INIT_M[crc32]
+            return
+        # 3. stuffed bit
+        if stuff and o.tx_ones == 6:
+            self._ser_emit(o, s, 0, mode, p)
+            s.tx_ones = 0
+            return
+        # 4. data bit
+        if st == SER_TX_DATA:
+            b = o.tx_sh & 1
+            self._ser_emit(o, s, b, mode, p)
+            self._ser_count(o, s, b, stuff)
+            if o.tx_c:
+                s.crc_m = _crc_step(o.crc_m, b, SER_POLY_M[crc32])
+            if o.tx_n == 7:
+                s.tx_n = 0
+                if o.tx_full:
+                    s.tx_sh = o.tx_hold
+                    s.tx_c = o.tx_hold_c
+                    s.tx_app = o.tx_app | o.tx_hold_c
+                    s.tx_full = 0
+                else:
+                    s.tx_state = SER_TX_CRC if o.tx_app else SER_TX_TAIL
+            else:
+                s.tx_sh = o.tx_sh >> 1
+                s.tx_n = o.tx_n + 1
+            return
+        # 5. CRC bit
+        if st == SER_TX_CRC:
+            b = (~o.crc_m) & 1
+            self._ser_emit(o, s, b, mode, p)
+            self._ser_count(o, s, b, stuff)
+            s.crc_m = o.crc_m >> 1
+            if o.tx_n == SER_W[crc32] - 1:
+                s.tx_n = 0
+                s.tx_state = SER_TX_TAIL
+            else:
+                s.tx_n = o.tx_n + 1
+            return
+        # 6. tail
+        n = o.tx_n
+        done = False
+        if mode == 1:
+            if n <= 1:
+                self._ser_se0(p)
+            elif n == 2:
+                self._ser_line(p, 0)                   # J
+            elif n == 3:
+                for q in (p, p + 1):                   # release; uio_out is not written
+                    if not (self.od_mask >> q) & 1:
+                        self.uio_oe &= ~(1 << q) & M8
+                done = True
+        else:
+            if n == 0:
+                self._ser_line(p, 1)
+            elif n == 6:
+                self._ser_se0(p)
+                done = True
+        if done:
+            s.tx_state = SER_TX_IDLE
+            s.tx_n = 0
+        else:
+            s.tx_n = (n + 1) & 0x1F
 
     def run(self, cycles, on_cycle=None):
         """Run `cycles` cycles; on_cycle(machine) is called before each step."""
@@ -1222,6 +1584,72 @@ class Machine:
     def _x_SETD(self, t, o):
         t.deadline = (t.now + o["k"]) & M16
         return True
+
+
+    # ---- serializer (15.2, 7.4) -------------------------------------------
+    # The handlers observe self.ser as it is during the cycle (the engine has
+    # not run yet) and leave their effect in self._ser_cmd, which
+    # _ser_cycle() merges with the engine's update at the end of the cycle.
+
+    def _x_SERCFG(self, t, o):
+        self._ser_cmd = (_SER_CFG, t.regs[o["rs"]] & M8, t.tid)
+        return True
+
+    def _ser_tx_cmd(self, t, byte, mark, timed):
+        done, base = self._timed(t, not self.ser.tx_full, timed)
+        if base:
+            self._ser_cmd = (_SER_TX, byte & M8, mark)
+        return done
+
+    def _x_SERTX(self, t, o):
+        return self._ser_tx_cmd(t, t.regs[o["rs"]], 0, False)
+
+    def _x_SERTXC(self, t, o):
+        return self._ser_tx_cmd(t, t.regs[o["rs"]], 1, False)
+
+    def _x_SERTXT(self, t, o):
+        return self._ser_tx_cmd(t, t.regs[o["rs"]], 0, True)
+
+    def _x_SERTXCT(self, t, o):
+        return self._ser_tx_cmd(t, t.regs[o["rs"]], 1, True)
+
+    def _x_SERI(self, t, o):
+        return self._ser_tx_cmd(t, o["n"], 0, False)
+
+    def _x_SERIC(self, t, o):
+        return self._ser_tx_cmd(t, o["n"], 1, False)
+
+    def _ser_rx_cmd(self, t, o, timed):
+        s = self.ser
+        done, base = self._timed(t, bool(s.rx_valid or s.rx_end), timed)
+        if base:
+            if s.rx_valid:
+                t.regs[o["rd"]] = s.rx_hold
+                t.z = 0
+                self._ser_cmd = (_SER_RXB,)
+            else:
+                t.regs[o["rd"]] = s.status()
+                t.z = 1
+                self._ser_cmd = (_SER_RXE,)
+        return done
+
+    def _x_SERRX(self, t, o):
+        return self._ser_rx_cmd(t, o, False)
+
+    def _x_SERRXT(self, t, o):
+        return self._ser_rx_cmd(t, o, True)
+
+    def _x_SERST(self, t, o):
+        t.regs[o["rd"]] = self.ser.status()
+        return True
+
+    def _x_SERWT(self, t, o):
+        s = self.ser
+        return self._timed(t, s.tx_state == SER_TX_IDLE and not s.tx_full, False)[0]
+
+    def _x_SERWTT(self, t, o):
+        s = self.ser
+        return self._timed(t, s.tx_state == SER_TX_IDLE and not s.tx_full, True)[0]
 
 
 # Dispatch table: one handler per instruction of the encoding table. A name
