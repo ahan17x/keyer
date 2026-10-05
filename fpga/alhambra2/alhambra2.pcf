@@ -1,0 +1,48 @@
+# Keyer on the Alhambra II: pin constraints for fpga/alhambra2/keyer_alhambra2.v.
+# Package pin numbers from the board's own constraint file (FPGAwars
+# Alhambra-II-FPGA, pinout.pcf as shipped with apio's examples).
+
+set_io CLK 49          # 12 MHz oscillator
+
+# host SPI, on the Arduino SPI positions of the top header
+set_io D13 64          # SCK   -> ui[0]
+set_io D12 63          # MISO  <- uo[0]
+set_io D11 21          # MOSI  -> ui[1]
+set_io D10 22          # CS_n  -> ui[2]
+
+# firmware outputs
+set_io D9  19          # uo[3]
+set_io D8  20          # uo[2]
+
+# firmware bidirectional pins uio[7..0]
+set_io D7   9
+set_io D6  10
+set_io D5   7
+set_io D4   8
+set_io D3   3
+set_io D2   4
+set_io D1   1
+set_io D0   2
+
+# bottom header
+set_io DD0 114         # uo[4]
+set_io DD1 115         # uo[5]
+set_io DD2 116         # ui[3]
+set_io DD3 117         # ui[4]
+set_io DD4 118         # ui[5]
+set_io DD5 119         # RST_n (internal pull-up; drive low to reset)
+
+set_io SW1 34          # ui[6]
+
+# FTDI channel B (the board's USB serial port)
+set_io TX  61          # uo[7], FPGA -> PC
+set_io RX  62          # ui[7], PC -> FPGA
+
+set_io LED0 45         # heartbeat
+set_io LED1 44         # IRQ (uo[1])
+set_io LED2 43         # uo[2]
+set_io LED3 42
+set_io LED4 41
+set_io LED5 39
+set_io LED6 38
+set_io LED7 37         # uo[7]
