@@ -62,7 +62,7 @@ VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
 
 # List test modules to run, separated by commas and without the .py suffix:
-COCOTB_TEST_MODULES = test,test_host,test_corners,test_jtag_master,test_ws2812,test_ps2_host,test_i2c_slave,test_spi_slave,test_swd,test_ser
+COCOTB_TEST_MODULES = test,test_host,test_corners,test_jtag_master,test_ws2812,test_ps2_host,test_i2c_slave,test_spi_slave,test_swd,test_ser,test_usb_ls_device
 
 # include cocotb's make rules to take care of the simulator setup
 # cocotb-config is taken from the repo's virtualenv when it exists
