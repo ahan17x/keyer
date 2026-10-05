@@ -27,7 +27,7 @@ run "Icarus compile" iverilog -g2005 -I src -o /dev/null src/RM_IHPSG13_1P_256x1
 run "Serializer unit bench (test/ser_unit, no golden model)" bash test/ser_unit/run.sh
 
 if [ "${1:-}" != "quick" ]; then
-  run "cocotb (host interface + lockstep)" bash -c 'cd test && rm -f results.xml && make clean >/dev/null 2>&1; make > make.log 2>&1; grep -E "\*\* test|TESTS=" make.log; if [ ! -f results.xml ]; then echo "make did not produce results.xml; last lines of make.log:"; tail -25 make.log; exit 1; fi; grep -q "<failure" results.xml && exit 1; [ "$(grep -o "<testcase " results.xml | wc -l | tr -d " ")" = "52" ]'
+  run "cocotb (host interface + lockstep)" bash -c 'cd test && rm -f results.xml && make clean >/dev/null 2>&1; make > make.log 2>&1; grep -E "\*\* test|TESTS=" make.log; if [ ! -f results.xml ]; then echo "make did not produce results.xml; last lines of make.log:"; tail -25 make.log; exit 1; fi; grep -q "<failure" results.xml && exit 1; [ "$(grep -o "<testcase " results.xml | wc -l | tr -d " ")" = "71" ]'
   if command -v yowasp-sby >/dev/null; then
     # A step passes only on sby's own verdict: grepping for "DONE" alone also
     # matches "DONE (FAIL", and the pipeline's status is grep's.
@@ -49,10 +49,7 @@ if [ "${1:-}" != "quick" ]; then
     fi
     run "formal: capture and replay (prove + cover)" bash -c 'cd formal && rm -rf capture_prove capture_cover && out=$(yowasp-sby -f capture.sby 2>&1); echo "$out" | grep -E "DONE"; [ "$(echo "$out" | grep -c "DONE (PASS")" -eq 2 ]'
     # ten tasks: stuff, crc_any (pdr), crc16, crc32, rt_nrzi, rt_manch (bmc), four covers
-    # --yosys yowasp-yosys: with an older system Yosys on the PATH (apt's on the
-    # GitHub runner) sby's abc engine crashes reading that Yosys's witness map
-    # (KeyError 'asserts'); the Yosys that ships with yowasp-sby writes it.
-    run "formal: serializer (stuffing, CRC, round trip; prove + bmc + cover)" bash -c 'cd formal && rm -rf ser ser_stuff ser_crc_any ser_crc16 ser_crc32 ser_rt_nrzi ser_rt_manch ser_stuff_cover ser_crc_cover ser_crc_any_cover ser_rt_cover && out=$(yowasp-sby --yosys yowasp-yosys -f ser.sby 2>&1); echo "$out" | grep -E "DONE"; [ "$(echo "$out" | grep -c "DONE (PASS")" -eq 10 ] || { echo "not all ten tasks passed:"; for t in ser_*/; do grep -q "DONE (PASS" "$t/logfile.txt" 2>/dev/null || { echo "--- $t"; grep -v -E "^SBY.*engine_0: +[0-9]+ \+ :" "$t/logfile.txt" | tail -25; }; done; yosys-abc -q "version" 2>&1 | head -2; exit 1; }'
+    run "formal: serializer (stuffing, CRC, round trip; prove + bmc + cover)" bash -c 'cd formal && out=$(./run_ser.sh 2>&1); echo "$out"; [ "$(echo "$out" | grep -c "^SER [a-z0-9_]* PASS$")" -eq 10 ]'
   else
     echo "(formal skipped: yowasp-sby not installed)"
   fi

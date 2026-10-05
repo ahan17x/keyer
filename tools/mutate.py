@@ -544,6 +544,19 @@ def formal(work, group, timeout):
         if re.search(r"Output \d+ of miter .* was asserted|Property failed|was asserted in frame", out):
             return "fail", "formal:core"
         return "error", "proof did not run: " + out.strip()[-120:]
+    if group == "ser":
+        tasks = FORMAL_TASKS["ser"]
+        status, out = run_cmd(["sh", "./run_ser.sh"] + tasks, fdir, timeout)
+        if status in ("timeout", "signal"):
+            return "error", status
+        done = re.findall(r"^SER \w+ (\w+)$", out, re.M)
+        if len(done) == len(tasks) and all(d == "PASS" for d in done):
+            return "pass", ""
+        if "FAIL" in done:
+            return "fail", "formal:ser"
+        if done and set(done) <= {"PASS", "UNKNOWN"}:
+            return "inconclusive", "proof did not close"
+        return "error", "proof did not run: " + " ".join(done)
     tasks = FORMAL_TASKS.get(group)
     status, out = run_cmd(["yowasp-sby", "--yosys", "yowasp-yosys", "-f", group + ".sby"] + (tasks or []), fdir, timeout)
     if status in ("timeout", "signal"):

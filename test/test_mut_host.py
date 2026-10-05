@@ -271,7 +271,7 @@ async def test_hard_reset_in_the_middle_of_activity(dut):
     await ClockCycles(dut.clk, 4)
     assert str(dut.uo_out.value) == "00000000"                   # MISO, IRQ and uo[7:2] all 0
     assert str(dut.uio_oe.value) == "00000000" and str(dut.uio_out.value) == "00000000"
-    expect = [(R_ID, [0x4B, 0x02]), (R_CTRL, [0]), (R_STAT, [0]), (R_PC0, [0, 0]), (R_PC1, [0, 0]),
+    expect = [(R_ID, [0x4B, 0x03]), (R_CTRL, [0]), (R_STAT, [0]), (R_PC0, [0, 0]), (R_PC1, [0, 0]),
               (R_IMEM_ADDR, [0, 0]), (R_LEVELS, [0, 0, 0, 0]), (R_PINMODE, [0]), (R_IRQEN, [0]),
               (R_PINS, [0xFF, 0x00, 0x00]), (R_PINOUT, [0, 0]), (R_CR_CTRL, [0]), (R_CAP_CFG, [0, 0]),
               (R_CAP_BUF, [0, 0]), (R_REP_CFG, [0]), (R_REP_BUF, [0, 0]), (R_CR_COUNT, [0, 0])]

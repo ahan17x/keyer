@@ -1,6 +1,6 @@
 # Handoff: state of the project and the next task
 
-Updated 2026-10-04 (end of Claude Code session 4). This is the first file a
+Updated 2026-10-05 (end of Claude Code session 5). This is the first file a
 session reads. Keep it short: what exists, what is decided, what is open,
 what to do next.
 
@@ -10,65 +10,77 @@ what to do next.
   Workflows: `check` (`scripts/check_all.sh` in full), `test` (template),
   `docs`, `gds` (hardens only on changes to `src/**`, `info.yaml`,
   `macro/**`, or by dispatch; a newer run on a branch cancels the older,
-  D-022), and `mutation` (new; started by hand only, 16 shards, D-031).
+  D-022), and `mutation` (by hand only, 16 shards, D-031).
   `scripts/gds_report.py RUN_ID` summarises a `gds` run for `docs/AREA.md`.
-- **Master is the macro design with the one-hot thread select** (D-029,
-  D-030). Hardened on master as run 37228068179: 13,317 cells plus the
-  macro, 24.7% utilisation, setup +11.85 / +7.41 / -0.13 ns (fast / typical
-  / slow), one slow-corner endpoint (`deadline[0][15]`), hold clean, LVS and
-  antenna 0, precheck 9/9, gl_test passing. Sign-off is at the typical
-  corner (D-028).
-- `waitd-csa` is **merged** (D-034): the carry-save `WAITD`
-  completion test (one compressor level and one carry chain instead of two
-  chains), formal properties T9 and P8, `formal/equiv_core.sh` (533 of 533
-  points against master; a seeded fault fails it), and check scripts that
-  fail on a failed proof (BUGS 19). Full suite green on the branch.
-  Hardened (run 37247680638, all four jobs green, precheck 9/9): setup
-  +12.33 / +8.12 / +0.76 ns, **no violation at any corner**.
-- `docs/SEMANTICS.md` v0.3 is the contract; `docs/VERIFICATION.md` (new)
-  describes the eight verification layers, what each found and the
-  commands.
+- **Master is the macro design with the one-hot thread select, the
+  carry-save `WAITD` (D-034) and the serializer engine (D-036, D-037).**
+  The serializer design was hardened on its branch as run 37266431182:
+  14,859 cells plus the macro, 27.0% utilisation, setup +12.53 / +8.41 /
+  +1.37 ns (fast / typical / slow), no violation at any corner, hold clean,
+  LVS and antenna 0, precheck 9/9, gl_test passing. The run the merge
+  started on master is logged in docs/AREA.md when it finishes (see "Next
+  tasks").
+- `docs/SEMANTICS.md` v0.4 is the contract (section 15: the serializer);
+  `docs/SERIALIZER.md` is the serializer's design note and programmer's
+  guide; `docs/VERIFICATION.md` describes the eight verification layers.
+  ISA version 3.
 - `tools/`: `keyer_isa.py`, `keyerasm.py`, `keyersim.py` (golden model),
-  `protomodels.py` and one `protomodels_NAME.py` per added protocol,
-  `keyerhost.py`, `mutate.py` (mutation testing) with
-  `mutate_equivalents.md`; 278 pytest cases.
-- `fw/`: `uart.s`, `spi_master.s`, `i2c_master.s`, `capture_demo.s`, and new:
-  `spi_slave.s` (55 words), `i2c_slave.s` (86 plus a data table),
-  `jtag_master.s` (67), `swd.s` (117), `ps2_host.s` (79), `ws2812.s` (33).
-  Each has a protocol model, tests on the golden model and two lockstep
-  tests. None has run against a real device.
-- `test/`: cocotb, 39 tests in nine modules (26 lockstep, 13 through the
-  pads only; `test_corners.py` holds the cases mutation testing asked for).
-- `formal/`: FIFO, pins, core, capture; `equiv_core.sh` on `waitd-csa`.
-- `fpga/alhambra2/`: Alhambra II build (3,501 of 7,680 logic cells, 5 block
-  RAMs, 45.5 MHz against the board's 12 MHz) and a post-synthesis
-  simulation (10 of 10). Not run on the board. `KEYER_IMEM_FLOPS` now holds
-  its read data in a write cycle (D-032).
-- Mutation testing: a 150-mutant sample is fully resolved (141 killed, 9
-  equivalent). The full campaign of 1,535 mutants has **not** run.
+  `protomodels*.py` (11 protocol models), `ser_scenarios.py`,
+  `keyerhost.py`, `mutate.py` with `mutate_equivalents.md`; 406 pytest
+  cases.
+- `fw/`: twelve programs. New: `usb_ls_device.s` (253 of 256 words, one
+  thread, clock 48 MHz; enumerates against the USB host model, responses
+  3.7 to 4.7 bit times after the host's packet) and `eth_10bt_tx.s` (88
+  words, one thread, clock 40 MHz or 20 MHz; link pulses and frames with
+  CRC-32 checked by the 10BASE-T receiver model). Nothing has run against
+  a real device and no hardware bring-up is planned (D-035).
+- `test/`: cocotb, 71 tests in 14 modules; `test/ser_unit` (plain Verilog
+  bench of the serializer, no model).
+- `formal/`: FIFO, pins, core, capture, serializer (`ser.sby`, ten tasks),
+  `equiv_core.sh`.
+- `fpga/alhambra2/`: synthesis and post-synthesis simulation only (D-035).
+- Mutation testing: the full campaign ran (1,542 mutants, the design before
+  the serializer): 1,445 killed, 88 equivalent, 0 errors, 9 survivors
+  waiting for D-038.
 
 ## Decisions (docs/DECISIONS.md)
 
-Closed up to D-035. D-033: MISO is 0 while CS_n is high (SEMANTICS 10.1).
-D-034: `waitd-csa` merged. D-035: no hardware bring-up; the FPGA build is a
-synthesis and post-synthesis-simulation result only. Nothing is open.
+Closed up to D-037. **Open for Ahan: D-038**, four questions on the host
+interface that nine surviving mutants hang on (MISO during command and
+write bytes; a transaction across the release of reset; the fourth byte of
+a PINS read; an IMEM_DATA read while a thread runs), each with a
+recommendation. D-038 also lists, undecided: the lockstep harness's
+comparison of a word rewritten in the cycle it executes (BUGS 45), and
+three serializer points (an unread byte dropped at the next frame start
+without a flag; a frame being received abandoned by a transmitter start
+without a flag; a frame after an aborted one may start from K).
 
 ## Next tasks, in order
 
-1. Full mutation campaign (`mutation` workflow on master); every survivor
-   gets a test or a row in `tools/mutate_equivalents.md`; score in
-   `docs/VERIFICATION.md` section 8.
-2. Serializer engine: `docs/SERIALIZER.md`, a SEMANTICS section, model and
-   RTL written independently, formal properties, lockstep tests.
-3. Stretch firmware on it: `fw/usb_ls_device.s`, `fw/eth_10bt_tx.s`.
-4. Harden on a branch; merge if timing is clean at all corners and
-   utilisation is under 40%.
+1. Log the master `gds` run that the serializer merge started (see
+   `gh run list --workflow gds --branch master`) in docs/AREA.md and
+   WORKLOG.md with `scripts/gds_report.py`; it should equal 37266431182.
+2. After Ahan's answers to D-038: write the tests or the equivalence rows
+   for the nine mutants, and fix `test/keyer_tb.py` (BUGS 45) if he agrees.
+3. Mutation campaign for what the serializer added:
+   `gh workflow run mutation.yaml --ref master -f files="keyer_ser.v keyer_core.v keyer_pins.v tt_um_ahan17x_keyer.v keyer_isa.vh"`,
+   then process survivors by the same rule (only mutants on lines the
+   merge changed are new; the rest keep their ids and verdicts).
+4. Serializer follow-ups worth weighing: the receiver needs all eight SYNC
+   bits (check what a low-speed hub may drop); the round-trip proof covers
+   one message byte; 13 max-slew warnings appeared in the serializer run.
+5. Gate-level coverage of the new firmware if wanted (their tests are
+   lockstep; `test_mut_host.py` added eight pads-only tests).
+6. Then the rest of PLAN.md's stretch list (CRC engine as a firmware-visible
+   unit, Hardcaml port) and the datasheet polish before the freeze.
 
 Rules that proved their worth: a lockstep harness cannot see a wrong
 program load or a host action sent outside its loop, so keep functional
 checks next to it; a check script must test the verdict, not that a verdict
-was printed; in firmware, `SETD 0` goes directly before the `WAITD` it
-arms (BUGS 20, 21); a mutation kill is a reported test failure and nothing
-else; at most two subagents at a time, and they do not share a checkout
-with a running campaign; hold pushes that touch `src/` until a hardening
-run you need has finished.
+was printed, and must print why when it fails; in firmware, `SETD 0` goes
+directly before the `WAITD` it arms (BUGS 20, 21); a mutation kill is a
+reported test failure and nothing else; at most two subagents at a time,
+each in its own worktree; hold pushes that touch `src/` until a hardening
+run you need has finished; stimulus models start with the thread, not with
+the program load (BUGS 31); a proof that passes locally is not a proof
+that passes on the runner until it has (BUGS 44).

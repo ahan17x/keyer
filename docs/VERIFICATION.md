@@ -19,13 +19,13 @@ Layers 7 and 8 run on GitHub.
 | # | Layer | What it compares | Size | Command |
 |---|---|---|---|---|
 | 1 | Lint and compile | the RTL against the language rules | Verilator `-Wall`, Icarus `-g2005`, header freshness | `bash scripts/check_all.sh quick` |
-| 2 | Model tests | the golden model, the assembler and the encoding table against SEMANTICS and isa.md | 278 pytest cases (43 on the model and the host driver, 6 on the mutation tool, 229 firmware cases counted in layer 3) | `python3 -m pytest tools/ -q` |
-| 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 10 programs, 9 models, 229 pytest cases | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py -q` |
-| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads | 39 cocotb tests: 26 lockstep, 13 through the pads only | `cd test && make` |
-| 5 | Formal | the RTL against properties stated from SEMANTICS, for all inputs | FIFO, pin unit, core (timer, control, thread select), capture and replay | `cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh && yowasp-sby -f capture.sby` |
+| 2 | Model tests | the golden model, the assembler and the encoding table against SEMANTICS and isa.md | 406 pytest cases (87 on the model, the serializer scenarios and the host driver, 6 on the mutation tool, 313 firmware cases counted in layer 3) | `python3 -m pytest tools/ -q` |
+| 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 313 pytest cases | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py -q` |
+| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 71 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
+| 5 | Formal | the RTL against properties stated from SEMANTICS, for all inputs | FIFO, pin unit, core (timer, control, thread select), capture and replay, serializer (stuffing, CRC, round trip) | `cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh && yowasp-sby -f capture.sby && yowasp-sby --yosys yowasp-yosys -f ser.sby` |
 | 6 | Equivalence | a restructured core against the core it replaces | every flop input and output bit | `bash formal/equiv_core.sh GIT_REF` |
 | 7 | Gate level | the hardened netlist (and the FPGA netlist) against the pads-only tests | the 13 pads-only tests (10 in the runs logged so far, which predate three of them) | `gl_test` job of the `gds` workflow; `bash fpga/alhambra2/sim.sh` |
-| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | 1,535 mutants; a 150-mutant sample run locally | `python3 tools/mutate.py run --sample 150 --seed 1 -j 4`; the `mutation` workflow |
+| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 1,542 mutants on GitHub (2026-10-05, before the serializer); every survivor processed | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4` |
 
 ### 1. Lint and compile
 
@@ -107,12 +107,13 @@ SEMANTICS section 13 lists).
 | `pins.sby` | an open-drain pin is never driven high; `uo[1:0]` untouched; synchroniser latency exactly two cycles; edge history exactly two cycles | z3, 1 s |
 | `run_core_pdr.sh` | timer T1 to T8, control P3 to P7, thread select S1 and D1; on `waitd-csa` also T9 (a thread that executes and does not complete changes no register, flag or LR and sends nothing out) and P8 (START and STOP act on the other thread only) | abc PDR, 5 to 9 s |
 | `capture.sby` | C1 to C10 (overflow never silent, writes inside the buffer, replay timing exact for every delta, data integrity, port discipline) and six covers | z3, 1 s |
+| `ser.sby` | the stuffer never emits seven consecutive ones, in either mode, and an NRZI frame that starts from J never holds the line for seven symbol ticks (all inputs free); `crc_m` equals an independent bit-serial reference throughout a frame of any length and the appended bits are its complement; known answers for a symbolic 2-byte message under CRC-16 and CRC-32; a transmitter instance through the pin synchroniser into a receiver instance delivers the sync-framed byte, the CRC bytes and a good verdict (NRZI with stuffing at T = 4, Manchester at T = 2; one message byte) | abc pdr (unbounded) for stuffing and CRC, abc bmc3 to depth 88 to 200 for the rest, z3 covers; about 2 min |
 
 Found: the saturated-counter underrun rule of the replay engine (spec
 question Q16, resolved into SEMANTICS 14.7). The layer's own
 infrastructure failed three times: BUGS 10 (a proof compiled out), 11 (a
 property file deleted), 19 (a failed proof passing the script); each has a
-check now. Would miss: anything not stated as a property (the host
+check now. The serializer's wire-level stuffing property found a precondition the spec had not stated (a frame sent after a `SERCFG` abort that left K on the pair starts with a non-transition; SEMANTICS 15.3 now says so, BUGS 41); seven seeded faults each fail a task. The round trip is proved for one message byte only; longer frames rest on the lockstep and model tests. Would miss: anything not stated as a property (the host
 interface and the top have none); a property proved on a small instance
 that fails on the real size (the FIFO is proved at depth 4); a property
 that follows the same misreading of the spec as the RTL. In the mutation
@@ -220,6 +221,69 @@ roughly 45 minutes a shard on a runner at half this machine's speed). Its
 survivors get the same treatment: a test, or a row in
 `tools/mutate_equivalents.md`.
 
+**Full campaign of 2026-10-05** (GitHub run 37260274984, 16 shards, on
+master a56aae4: the design before the serializer; rows in
+`docs/mutation_full.jsonl`). As the runners reported it:
+
+| File | Mutants | Killed | Not killed | Equivalent (Yosys) | Error |
+|---|---|---|---|---|---|
+| `keyer_capture.v` | 357 | 335 | 18 | 4 | 0 |
+| `keyer_core.v` | 426 | 399 | 14 | 13 | 0 |
+| `keyer_fifo.v` | 35 | 35 | 0 | 0 | 0 |
+| `keyer_host.v` | 357 | 290 | 64 | 3 | 0 |
+| `keyer_imem.v` | 15 | 7 | 8 | 0 | 0 |
+| `keyer_isa.vh` | 98 | 85 | 1 | 12 | 0 |
+| `keyer_pins.v` | 176 | 147 | 23 | 6 | 0 |
+| `tt_um_ahan17x_keyer.v` | 78 | 67 | 7 | 4 | 0 |
+| **all** | **1,542** | **1,365** | **135** | **42** | **0** |
+
+No mutant ended in error. Every one of the 135 was then judged by the rule
+of D-031 and re-run locally (only those mutants, with the new tests in the
+suite):
+
+| Verdict | Mutants |
+|---|---|
+| a test gap, now killed by a new test | 80 |
+| equivalent, with a reason in `tools/mutate_equivalents.md` (41 new rows; 5 rows from the sample) | 46 |
+| unresolved: SEMANTICS does not define the behaviour the mutant changes (D-038, open) | 9 |
+
+**Score after processing: 1,445 killed, 88 equivalent, 0 errors, 9
+survivors: 1,445 of 1,454 non-equivalent mutants, 99.4%.** The nine
+survivors are listed in D-038 with what the RTL does; each becomes a kill
+or an equivalent once Ahan decides the four questions.
+
+The 19 new tests (`test/test_mut_host.py`, 9, eight of them pads-only so
+they also run on the gate-level netlist; `test/test_mut_core.py`, 10):
+
+| Test | What had not been looked at |
+|---|---|
+| `test_irq_follows_each_condition` | each IRQ condition and each IRQEN bit by itself (10 mutants) |
+| `test_fifoclr_bits_and_extra_bytes`, `test_byte_0_registers_ignore_further_bytes` | which data byte of a write counts, per register (11) |
+| `test_reads_of_ctrl_pins_pinout_and_unmapped_registers` | read-back bytes nobody had read (4) |
+| `test_hard_reset_in_the_middle_of_activity` (both modules) | reset applied to non-zero state: every earlier test reset once at time zero (5) |
+| `test_imem_data_writes_dropped_while_a_thread_runs`, `test_lockstep_replay_fetches_against_host_and_thread_start`, `test_capture_writes_while_the_host_reads_registers` | memory-port arbitration between host, engines and a starting thread (6) |
+| `test_pp_returns_a_pin_to_push_pull` | `PP` had never been executed after `OD` (1) |
+| `test_lockstep_pin_modes_and_reserved_pins` | `OEN`/`OEF`/`PP`/`OD` on pins in the other mode, PINMODE on driven pins, pin 24 (14) |
+| `test_lockstep_replay_writes_every_group` | replay on every pin group (5) |
+| `test_lockstep_delay_jmp_addi_and_soft_reset`, `test_lockstep_delay_count_cleared_under_a_rewritten_word`, `test_lockstep_delay_count_untouched_while_blocked` | the `DELAY` count against stops, soft reset and blocking (11) |
+| `test_lockstep_capture_groups_and_idle_entries`, `test_lockstep_capture_queue_while_the_port_is_busy`, `test_lockstep_replay_underrun_at_saturation` | capture groups, idle entries at 4,095 cycles, the queue with the port busy, underrun at saturation (12, among them the 13 mutants on which the capture proof merely stopped closing) |
+| `test_program_memory_macro_static_inputs` | the macro's `A_DLY` tie-off: the vendored model ignores it, the silicon does not (1) |
+
+What the campaign says about the suite: the gaps were not in the datapath
+(the lockstep comparison kills those) but in three places the sample had
+only hinted at: reset of non-zero state, host-register corner bytes, and
+pin and capture corners no firmware happens to reach. The 41 new
+equivalents are reset values overwritten before anything reads them (the
+host's strobes and shift registers, `level2` and the capture queue words
+in the first cycles), and seven BIST inputs of the macro that are cut off
+by `A_BIST_EN = 0` in the macro's own netlist. One documented equivalent
+from the sample, `host-c6659575`, holds only if CS_n is high when reset is
+released (question 2 of D-038).
+
+Not yet mutated: `src/keyer_ser.v` and the lines the serializer changed in
+the core, the pin unit and the top (the campaign ran on the design before
+the merge). `keyer_ser.v` is in the tool's target list with its proof.
+
 Which check kills first (the fastest failing check, so slow tests are
 under-represented):
 
@@ -269,3 +333,10 @@ not against lint or the model tests.
   the harness that mirrored a wrong effect into the model consistently
   would hide the corresponding RTL fault.
 - Timing at the slow corner is reported, not enforced (D-028).
+- USB and 10BASE-T are checked against protocol models only: no USB host,
+  hub, PHY or link partner has seen these waveforms, and the electrical
+  layer (levels, edge rates, the transformer) is outside the simulation.
+- The serializer and the lines it changed elsewhere have not been through
+  mutation testing yet.
+- Nine mutants of the host interface survive on behaviour SEMANTICS does
+  not define (D-038).

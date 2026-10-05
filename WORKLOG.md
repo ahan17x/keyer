@@ -375,3 +375,42 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   Q21-Q25 in docs/spec-questions.md. `formal/equiv_core.sh` against
   master no longer applies (the core gains ports on purpose): run
   check_all with EQUIV_REF=none on this branch.
+- **Mutation campaign** (run 37260274984, started with `gh`, 16 shards, on
+  the merged master before the serializer): 1,542 mutants, 1,365 killed,
+  42 equivalent by Yosys, 0 errors, 135 not killed. Processed by two
+  agents, one per half, each re-running only its mutants locally: 80
+  killed by 19 new tests (`test/test_mut_host.py`, `test/test_mut_core.py`),
+  41 new equivalence rows, 5 rows already documented, 9 unresolved because
+  SEMANTICS is silent (D-038 OPEN). Score 1,445 of 1,454 non-equivalent,
+  99.4%. No RTL or model bug. docs/VERIFICATION.md section 8 has the
+  tables; rows in docs/mutation_full.jsonl.
+- **Serializer** (D-036): docs/SERIALIZER.md and SEMANTICS section 15
+  written first (shared engine, half duplex, symbol period from the owner's
+  timer, 48 MHz for USB low speed and 40 MHz for 10BASE-T, ISA version 3
+  with ten instructions in XFER sub-opcode 15 and `SERI`/`SERIC`). The
+  golden-model agent and the rtl agent then worked from SEMANTICS alone in
+  separate worktrees. First lockstep run of nine new tests: no mismatch on
+  any of the 33 engine registers, three random seeds included; the four
+  failures were in the test stimulus (BUGS 31, 32). The agents' spec
+  questions (Q21, Q22, R21 to R25) were settled by quoting or clarifying
+  SEMANTICS 15; none needed a change of behaviour on either side.
+  Formal (`formal/ser.sby`, a third agent): stuffing and CRC proved
+  unbounded, round trip bounded; it found the J precondition now stated in
+  15.3 (BUGS 41). Yosys estimate for the engine 15,253 um^2; layout
+  20,113 um^2.
+- **Stretch firmware**: `fw/usb_ls_device.s` (253 words; enumerates against
+  `tools/protomodels_usb_host.py`; 56 model tests, 2 lockstep) and
+  `fw/eth_10bt_tx.s` (88 words; `tools/protomodels_eth_10bt.py`; 28 model
+  tests, 2 lockstep). BUGS 33 to 40.
+- **Hardening**: branch run 37266431182: +12.53 / +8.41 / +1.37 ns, no
+  violation at any corner, 27.0%, precheck 9/9, gl_test passing. Merged
+  into master as D-037.
+- The `check` workflow failed on the branch although the suite passed
+  locally: sby's abc engine against the runner's older system Yosys (BUGS
+  44): fixed by `--yosys yowasp-yosys` and by `formal/run_ser.sh`, which
+  runs the two PDR tasks with abc directly.
+- End of session: `bash scripts/check_all.sh` green on the merged master
+  (406 pytest, 71 cocotb, lint, Icarus, the serializer unit bench, core
+  equivalence 547 of 547, five formal groups). Pushed. Open for Ahan:
+  D-038.
+

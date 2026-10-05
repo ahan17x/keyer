@@ -459,3 +459,44 @@ version 3, `fw/usb_ls_device.s` and `fw/eth_10bt_tx.s`. The estimate of
 D-036 was low: the engine costs 20,113 um^2 in layout, not 12,000 to
 13,000. Rejected: nothing; the rule was met.
 
+## D-038 2026-10-05 OPEN: four things SEMANTICS does not say about the host interface (nine surviving mutants)
+
+The full mutation campaign left nine mutants that change behaviour at a pad
+or in a host read which SEMANTICS does not define. No test was written for
+them, because a test would invent the rule. For Ahan, one at a time, with
+the recommendation first:
+
+1. **MISO during the command byte and during the data bytes of a write**
+   (`host-931f4e64`, `host-2b5da9fb`, `host-160d459e`, `host-4bbc0a41`).
+   The RTL drives 0. Recommended: add to 10.1 "MISO is 0 except while a
+   read data byte is shifted out"; one short pads-only test then kills all
+   four. Alternative: leave it undefined and list the four as equivalent.
+2. **A transaction in progress when reset is released** (`host-6c196bbf`:
+   the input synchronisers not reset; it also decides the documented
+   equivalent `host-c6659575`). Recommended: add to 10.1 the constraint
+   "CS_n is high from two cycles before `rst_n` rises"; both are then
+   equivalent, with that reason. Alternative: define the behaviour (the
+   interface ignores everything until CS_n has been seen high) and test it.
+3. **The fourth byte of a PINS read** (`host-b6056c12`). 10.4 says reads
+   past the listed bytes follow the pattern modulo its period, but PINS has
+   three bytes and the index wraps at four; the RTL returns 0. Recommended:
+   say so in 10.4 ("PINS: a fourth byte of 0, then the pattern repeats")
+   and extend the read-back test.
+4. **IMEM_DATA read while a thread runs, before any read with both
+   threads stopped** (`host-07c66559`, `host-5fe456e3`, `host-38125bb3`).
+   10.4 says "stale data"; after reset the RTL returns 0. Recommended:
+   keep "stale" as unspecified and list the three as equivalent (a host
+   must not read the memory while a thread runs anyway). Alternative: state
+   that the read-data register resets to 0 and test it.
+
+Also for Ahan, raised by this session's agents and not decided here: the
+lockstep harness compares the executing word against the model's memory
+after the step, which is wrong in the cycle the capture engine overwrites
+that word (BUGS 45; `test_mut_core.py` works around it in a subclass
+because the agent's edit of `test/keyer_tb.py` was refused by the
+permission system and the coordinating session did not make it on the
+agent's behalf); and three serializer points (spec-questions R24, R25 and
+the J precondition of 15.3): an unread byte or frame end is dropped at the
+next frame start without a flag, a transmitter start abandons a frame being
+received without a flag, and a frame after an aborted one may start from K.
+

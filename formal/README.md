@@ -34,3 +34,10 @@ Everything else is observed at the engine's ports. The round trip is bounded
 to one message byte: with two, `rt_manch` did not finish within several
 minutes. `tools/mutate.py` runs the six proof tasks (not the covers) for a
 mutant of `keyer_ser.v`.
+
+`run_ser.sh [TASK ...]` runs the tasks of `ser.sby` and prints one verdict
+line per task. The two PDR tasks are run with `yosys-abc` directly on the
+model sby builds, as `run_core_pdr.sh` does, because sby passes abc a switch
+that older abc builds reject (BUGS 44); `scripts/check_all.sh` and
+`tools/mutate.py` use this script.
+
