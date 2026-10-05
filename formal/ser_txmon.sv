@@ -7,7 +7,10 @@
 // registers.
 //
 //   A frame is in progress from the cycle after the start tick (tx_idle
-//   falls: rule 2 writes no pin) until the first se0() write (the tail).
+//   falls: rule 2 writes no pin) until the first se0() write (the tail)
+//   or a SERCFG. The write a SERCFG makes when it aborts a frame (idle(),
+//   15.2) is not part of the frame: no event is reported in a SERCFG
+//   cycle.
 //   NRZI (mode 1): each line(s) write is one emitted bit b = (s == previous
 //   symbol), the previous symbol being J (s = 0) at the start ("coded from
 //   J"). Manchester (mode 2): the writes of a frame alternate first half,
@@ -28,6 +31,7 @@ module ser_txmon (
     input  wire       cfg_tid,
     input  wire       pin_valid,
     input  wire       pin_drive,
+    input  wire       pin_wout,
     input  wire       pin_p,
     input  wire       pin_n,
     input  wire       tx_idle,
@@ -59,11 +63,12 @@ module ser_txmon (
     wire ph      = fresh ? 1'b0 : f_ph;
     assign ones  = fresh ? 3'd0 : f_ones;
 
-    wire wr      = act & pin_valid & pin_drive;
+    wire pv      = act & pin_valid & ~cfg_we;
+    wire wr      = pv & pin_drive & pin_wout;
     wire is_se0  = ~pin_p & ~pin_n;
     wire is_line = pin_p ^ pin_n;
     assign ev_end    = wr & is_se0;
-    assign ev_bad    = act & pin_valid & ~(pin_drive & (is_se0 | is_line));
+    assign ev_bad    = pv & ~(pin_drive & pin_wout & (is_se0 | is_line));
     assign ev_bit    = wr & is_line & (m1 | (m2 & ~ph));
     assign bit_b     = m1 ? (pin_p == prev) : pin_n;
     assign ev_second = wr & is_line & m2 & ph;

@@ -20,13 +20,21 @@
  * Inputs from the core are one-cycle strobes of the executing thread's
  * committed instruction: cfg_we (SERCFG), tx_we (SERTX, SERTXC, SERI,
  * SERIC; only when tx_full = 0), rx_ack (SERRX taking a byte or a frame
- * end). A SERCFG overrides every engine update of its cycle and suppresses
- * the engine's pin write (15.2).
+ * end), st_ack (SERST). A SERCFG overrides every engine update of its
+ * cycle and suppresses the engine's pin write (15.2); if it aborts a frame
+ * (tx_state != IDLE) it writes idle(m, P, N) of the configuration it
+ * replaces instead (15.1, 15.2, DECISIONS D-039).
  *
- * The pin write leaves on pin_*: pin_valid, the pair k, pin_drive = 1 for
- * line(s) / se0() (uio_out <= pin_p / pin_n, uio_oe <= 1) and 0 for the
- * NRZI release (uio_oe <= 0, uio_out unchanged). keyer_pins applies it
- * only to push-pull pins (od_mask' of 15.1).
+ * rx_drop (status bit 10, 15.5, 15.7): set by a frame start that discards
+ * an untaken byte or frame end, cleared by a read of the status word
+ * (st_ack, or rx_ack with rx_valid = 0) and by SERCFG; the set wins.
+ *
+ * The pin write leaves on pin_*: pin_valid, the pair k, pin_drive (the
+ * uio_oe value written), pin_wout (uio_out <= pin_p / pin_n is written
+ * too). line(s) / se0(): drive 1, wout 1. NRZI tail release: drive 0,
+ * wout 0 (uio_out unchanged). Abort, mode 1: drive 0, wout 1, J (P 0,
+ * N 1); mode 2: se0(). keyer_pins applies it only to push-pull pins
+ * (od_mask' of 15.1).
  *
  * Register names and widths are those of SEMANTICS 13 / 15.1: the lockstep
  * harness reads them by name. All are reset to 0 by rst_n only.
@@ -45,6 +53,7 @@ module keyer_ser (
     input  wire [7:0]  tx_val,          // the byte
     input  wire        tx_val_c,        // 1: the byte is in the CRC (SERTXC, SERIC)
     input  wire        rx_ack,          // SERRX completes (byte or frame end)
+    input  wire        st_ack,          // SERST completes (reads the status word)
     // both threads' timers (registered state of the core)
     input  wire [31:0] period,          // {period[1], period[0]}
     input  wire [1:0]  tm_tick,         // bit t: period[t] != 0 and prescale[t] = 0
@@ -52,9 +61,10 @@ module keyer_ser (
     input  wire [7:0]  level,           // level(c)[7:0]: the uio pins
     output wire        pin_valid,
     output wire [1:0]  pin_k,
-    output reg         pin_drive,
-    output reg         pin_p,
-    output reg         pin_n,
+    output wire        pin_drive,       // uio_oe value
+    output wire        pin_wout,        // 1: uio_out <= pin_p / pin_n as well
+    output wire        pin_p,
+    output wire        pin_n,
     // to the core, all from flops
     output wire [15:0] rd_st,           // status(c) (15.7)
     output wire [15:0] rd_rx,           // SERRX result: zext(rx_hold) if rx_valid, else status
@@ -88,6 +98,7 @@ module keyer_ser (
     reg        rx_w, rx_first;
     reg [7:0]  rx_hold;
     reg        rx_ovr, rx_serr, rx_ferr, rx_c5ok, rx_cok;
+    reg        rx_drop;
 
     // ---- configuration fields ---------------------------------------------
     wire       mode_on = cfg[0] ^ cfg[1];   // mode 1 or 2; 0 and 3 are off
@@ -116,7 +127,7 @@ module keyer_ser (
 
     // ---- status (15.7) -----------------------------------------------------
     assign tx_idle = (tx_state == TX_IDLE);
-    assign rd_st   = {6'd0, rx_ferr, rx_serr, rx_ovr, rx_cok, rx_c5ok, rx_end,
+    assign rd_st   = {5'd0, rx_drop, rx_ferr, rx_serr, rx_ovr, rx_cok, rx_c5ok, rx_end,
                       rx_state, rx_valid, ~tx_idle, tx_full};
     assign rd_rx   = rx_valid ? {8'd0, rx_hold} : rd_st;
 
@@ -130,6 +141,7 @@ module keyer_ser (
     reg        t_crc_we;
     reg [31:0] t_crc;
     reg        t_pv;                        // a pin write (before the SERCFG override)
+    reg        t_drive, t_pp, t_pn;         // its oe value (1: line / se0, 0: release) and levels
     reg        e_do, e_b, c_do, e_s;        // emit(e_b), count(e_b), NRZI symbol
 
     always @(*) begin
@@ -137,12 +149,12 @@ module keyer_ser (
         t_state = tx_state; t_n = tx_n;
         t_half = tx_half; t_bit = tx_bit; t_line = tx_line; t_ones = tx_ones;
         t_crc_we = 1'b0; t_crc = crc_m;
-        t_pv = 1'b0; pin_drive = 1'b1; pin_p = 1'b0; pin_n = 1'b0;
+        t_pv = 1'b0; t_drive = 1'b1; t_pp = 1'b0; t_pn = 1'b0;
         e_do = 1'b0; e_b = 1'b0; c_do = 1'b0; e_s = 1'b0;
         if (tick) begin
             if (~m1 & tx_half) begin
                 // 1. second half of a Manchester bit: line(tx_bit)
-                t_pv = 1'b1; pin_p = tx_bit; pin_n = ~tx_bit;
+                t_pv = 1'b1; t_pp = tx_bit; t_pn = ~tx_bit;
                 t_half = 1'b0;
             end else if (tx_state == TX_IDLE) begin
                 // 2. start; no pin is written
@@ -188,15 +200,15 @@ module keyer_ser (
                 if (m1) begin
                     case (tx_n[1:0])
                         2'd0, 2'd1: t_pv = 1'b1;                       // se0()
-                        2'd2: begin t_pv = 1'b1; pin_n = 1'b1; end     // line(0): J
+                        2'd2: begin t_pv = 1'b1; t_pn = 1'b1; end    // line(0): J
                         default: begin                                 // release
-                            t_pv = 1'b1; pin_drive = 1'b0;
+                            t_pv = 1'b1; t_drive = 1'b0;
                             t_state = TX_IDLE; t_n = 5'd0;
                         end
                     endcase
                 end else begin
                     if (tx_n[2:0] == 3'd0) begin                       // line(1): K
-                        t_pv = 1'b1; pin_p = 1'b1;
+                        t_pv = 1'b1; t_pp = 1'b1;
                     end else if (tx_n[2:0] == 3'd6) begin              // se0()
                         t_pv = 1'b1;
                         t_state = TX_IDLE; t_n = 5'd0;
@@ -209,9 +221,9 @@ module keyer_ser (
                 if (m1) begin
                     e_s = e_b ? tx_line : ~tx_line;
                     t_line = e_s;
-                    pin_p = e_s; pin_n = ~e_s;
+                    t_pp = e_s; t_pn = ~e_s;
                 end else begin
-                    pin_p = ~e_b; pin_n = e_b;
+                    t_pp = ~e_b; t_pn = e_b;
                     t_bit = e_b; t_half = 1'b1;
                 end
             end
@@ -219,8 +231,16 @@ module keyer_ser (
         end
     end
 
-    // a SERCFG of the same cycle cancels the engine's pin write (15.2)
-    assign pin_valid = t_pv & ~cfg_we;
+    // A SERCFG of the same cycle cancels the engine's pin write (15.2). If
+    // it aborts a frame (tx_state != IDLE, so the old mode is 1 or 2 and m1
+    // tells them apart) it writes idle() of the old pair instead (15.1):
+    // mode 1 write(P, 0, 0), write(N, 1, 0); mode 2 se0(). One 2:1 mux per
+    // port bit on cfg_we, after the engine's own selection.
+    assign pin_valid = cfg_we ? ~tx_idle : t_pv;
+    assign pin_drive = cfg_we ? ~m1      : t_drive;
+    assign pin_wout  = cfg_we | t_drive;
+    assign pin_p     = ~cfg_we & t_pp;
+    assign pin_n     = cfg_we ? m1       : t_pn;
 
     // ---- receiver (15.4 - 15.6): next state ----------------------------------
     wire        rx_run = mode_on & rxen & tx_idle;
@@ -242,6 +262,7 @@ module keyer_ser (
     reg        r_crc_we;
     reg [31:0] r_crc;
     reg        do_bit, bit_d, do_end;
+    reg        r_fs;                       // a frame starts (15.5)
     reg [7:0]  v;
 
     always @(*) begin
@@ -250,7 +271,7 @@ module keyer_ser (
         r_sh = rx_sh; r_hold = rx_hold; r_n = rx_n; r_ones = rx_ones; r_cnt = rx_cnt;
         r_ovr = rx_ovr; r_serr = rx_serr; r_ferr = rx_ferr; r_c5ok = rx_c5ok; r_cok = rx_cok;
         r_crc5 = crc5; r_crc_we = 1'b0; r_crc = crc_m;
-        do_bit = 1'b0; bit_d = 1'b0; do_end = 1'b0;
+        do_bit = 1'b0; bit_d = 1'b0; do_end = 1'b0; r_fs = 1'b0;
         v = {1'b0, rx_sh[7:1]};
         if (!rx_run) begin
             // 15.4: not running
@@ -289,6 +310,7 @@ module keyer_ser (
                 r_sh = v;
                 if (!rx_state) begin
                     if (v == sync) begin             // frame start
+                        r_fs = 1'b1;
                         r_state = 1'b1; r_n = 3'd0; r_first = 1'b1;
                         r_ones = !stuff ? 3'd0 : m1 ? 3'd1 : 3'd2;
                         r_crc5 = 5'h1F; r_crc_we = 1'b1; r_crc = init_m;
@@ -324,6 +346,13 @@ module keyer_ser (
         end
     end
 
+    // rx_drop (15.5): a frame start discards an untaken byte (rx_valid, and
+    // no SERRX takes it now) or an untaken frame end (rx_end, and no SERRX
+    // takes it now: a SERRX takes the frame end only when rx_valid = 0).
+    // A read of the status word clears it; the set wins (15.2).
+    wire drop_set = r_fs & ((rx_valid & rx_end) | ((rx_valid | rx_end) & ~rx_ack));
+    wire st_read  = st_ack | (rx_ack & ~rx_valid);
+
     // ---- registers -------------------------------------------------------------
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -336,6 +365,7 @@ module keyer_ser (
             rx_psym <= 1'b0; rx_last <= 1'b0; rx_cnt <= 16'd0; rx_w <= 1'b0; rx_first <= 1'b0;
             rx_hold <= 8'd0; rx_valid <= 1'b0; rx_end <= 1'b0;
             rx_ovr <= 1'b0; rx_serr <= 1'b0; rx_ferr <= 1'b0; rx_c5ok <= 1'b0; rx_cok <= 1'b0;
+            rx_drop <= 1'b0;
         end else begin
             rx_last <= sym;                          // every cycle, P from cfg(c) (15.1)
             if (cfg_we) begin
@@ -349,6 +379,7 @@ module keyer_ser (
                 rx_psym <= 1'b0; rx_cnt <= 16'd0; rx_w <= 1'b1; rx_first <= 1'b0;
                 rx_hold <= 8'd0; rx_valid <= 1'b0; rx_end <= 1'b0;
                 rx_ovr <= 1'b0; rx_serr <= 1'b0; rx_ferr <= 1'b0; rx_c5ok <= 1'b0; rx_cok <= 1'b0;
+                rx_drop <= 1'b0;
             end else begin
                 // holding register: SERTX completes only when tx_full = 0, the
                 // transmitter takes it only when tx_full = 1 (15.2)
@@ -369,6 +400,7 @@ module keyer_ser (
                 rx_end   <= r_end & ~(rx_ack & ~rx_valid);
                 rx_ovr <= r_ovr; rx_serr <= r_serr; rx_ferr <= r_ferr;
                 rx_c5ok <= r_c5ok; rx_cok <= r_cok;
+                rx_drop <= drop_set | (rx_drop & ~st_read);
             end
         end
     end

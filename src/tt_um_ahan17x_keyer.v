@@ -63,7 +63,7 @@ module tt_um_ahan17x_keyer (
     wire        rep_valid;
     wire [2:0]  rep_group;
     wire [3:0]  rep_mask, rep_data;
-    wire        ser_pin_valid, ser_pin_drive, ser_pin_p, ser_pin_n;
+    wire        ser_pin_valid, ser_pin_drive, ser_pin_wout, ser_pin_p, ser_pin_n;
     wire [1:0]  ser_pin_k;
 
     keyer_pins u_pins (
@@ -73,7 +73,7 @@ module tt_um_ahan17x_keyer (
         .cmd_valid (pin_valid), .cmd_op (pin_op), .cmd_pin (pin_pin), .cmd_data (pin_data),
         .rep_valid (rep_valid), .rep_group (rep_group), .rep_mask (rep_mask), .rep_data (rep_data),
         .ser_valid (ser_pin_valid), .ser_k (ser_pin_k), .ser_drive (ser_pin_drive),
-        .ser_p (ser_pin_p), .ser_n (ser_pin_n),
+        .ser_wout (ser_pin_wout), .ser_p (ser_pin_p), .ser_n (ser_pin_n),
         .host_mode_we (pinmode_we), .host_mode_val (pinmode_val), .od_mask (od_mask),
         .level (level), .level2 (level2)
     );
@@ -116,7 +116,7 @@ module tt_um_ahan17x_keyer (
     wire [15:0] dbg_ir;
     wire       core_cr_we, cap_active, rep_active;
     wire [3:0] core_cr_val;
-    wire       ser_cfg_we, ser_tx_we, ser_tx_c, ser_rx_ack;
+    wire       ser_cfg_we, ser_tx_we, ser_tx_c, ser_rx_ack, ser_st_ack;
     wire [7:0] ser_wdata;
     wire       ser_tx_full, ser_tx_idle, ser_rx_valid, ser_rx_end;
     wire [15:0] ser_rd_st, ser_rd_rx;
@@ -139,7 +139,7 @@ module tt_um_ahan17x_keyer (
         .cr_ctrl_we (core_cr_we), .cr_ctrl_val (core_cr_val),
         .cap_active (cap_active), .rep_active (rep_active),
         .ser_cfg_we (ser_cfg_we), .ser_tx_we (ser_tx_we), .ser_tx_c (ser_tx_c),
-        .ser_wdata (ser_wdata), .ser_rx_ack (ser_rx_ack),
+        .ser_wdata (ser_wdata), .ser_rx_ack (ser_rx_ack), .ser_st_ack (ser_st_ack),
         .ser_tx_full (ser_tx_full), .ser_tx_idle (ser_tx_idle),
         .ser_rx_valid (ser_rx_valid), .ser_rx_end (ser_rx_end),
         .ser_rd_st (ser_rd_st), .ser_rd_rx (ser_rd_rx),
@@ -177,11 +177,11 @@ module tt_um_ahan17x_keyer (
         .clk (clk), .rst_n (rst_n),
         .cfg_we (ser_cfg_we), .cfg_val (ser_wdata), .cfg_tid (dbg_tid),
         .tx_we (ser_tx_we), .tx_val (ser_wdata), .tx_val_c (ser_tx_c),
-        .rx_ack (ser_rx_ack),
+        .rx_ack (ser_rx_ack), .st_ack (ser_st_ack),
         .period (tm_period), .tm_tick (tm_tick),
         .level (level[7:0]),
         .pin_valid (ser_pin_valid), .pin_k (ser_pin_k), .pin_drive (ser_pin_drive),
-        .pin_p (ser_pin_p), .pin_n (ser_pin_n),
+        .pin_wout (ser_pin_wout), .pin_p (ser_pin_p), .pin_n (ser_pin_n),
         .rd_st (ser_rd_st), .rd_rx (ser_rd_rx),
         .tx_full (ser_tx_full), .tx_idle (ser_tx_idle),
         .rx_valid (ser_rx_valid), .rx_end (ser_rx_end)

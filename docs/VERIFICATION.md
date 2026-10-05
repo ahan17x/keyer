@@ -113,7 +113,7 @@ Found: the saturated-counter underrun rule of the replay engine (spec
 question Q16, resolved into SEMANTICS 14.7). The layer's own
 infrastructure failed three times: BUGS 10 (a proof compiled out), 11 (a
 property file deleted), 19 (a failed proof passing the script); each has a
-check now. The serializer's wire-level stuffing property found a precondition the spec had not stated (a frame sent after a `SERCFG` abort that left K on the pair starts with a non-transition; SEMANTICS 15.3 now says so, BUGS 41); seven seeded faults each fail a task. The round trip is proved for one message byte only; longer frames rest on the lockstep and model tests. Would miss: anything not stated as a property (the host
+check now. The serializer's wire-level stuffing property found a precondition the spec had not stated (a frame sent after a `SERCFG` abort that left K on the pair starts with a non-transition, BUGS 41); since SEMANTICS 0.5 (D-039) an abort returns the pair to idle, and the property holds for every frame the engine starts, with S4 proving that each starts from idle; seven seeded faults each fail a task. The round trip is proved for one message byte only; longer frames rest on the lockstep and model tests. Would miss: anything not stated as a property (the host
 interface and the top have none); a property proved on a small instance
 that fails on the real size (the FIFO is proved at depth 4); a property
 that follows the same misreading of the spec as the RTL. In the mutation

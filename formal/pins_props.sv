@@ -12,7 +12,7 @@ module pins_props (
     input wire [7:0] ui_in, input wire [7:0] uio_in,
     input wire cmd_valid, input wire [2:0] cmd_op, input wire [4:0] cmd_pin, input wire [7:0] cmd_data,
     input wire rep_valid, input wire [2:0] rep_group, input wire [3:0] rep_mask, input wire [3:0] rep_data,
-    input wire ser_valid, input wire [1:0] ser_k, input wire ser_drive, input wire ser_p, input wire ser_n,
+    input wire ser_valid, input wire [1:0] ser_k, input wire ser_drive, input wire ser_wout, input wire ser_p, input wire ser_n,
     input wire host_mode_we, input wire [7:0] host_mode_val
 );
     wire [7:0] uio_out, uio_oe, uo_out, od_mask;
@@ -22,7 +22,7 @@ module pins_props (
         .uio_out(uio_out), .uio_oe(uio_oe), .uo_out(uo_out),
         .cmd_valid(cmd_valid), .cmd_op(cmd_op), .cmd_pin(cmd_pin), .cmd_data(cmd_data),
         .rep_valid(rep_valid), .rep_group(rep_group), .rep_mask(rep_mask), .rep_data(rep_data),
-        .ser_valid(ser_valid), .ser_k(ser_k), .ser_drive(ser_drive), .ser_p(ser_p), .ser_n(ser_n),
+        .ser_valid(ser_valid), .ser_k(ser_k), .ser_drive(ser_drive), .ser_wout(ser_wout), .ser_p(ser_p), .ser_n(ser_n),
         .host_mode_we(host_mode_we), .host_mode_val(host_mode_val), .od_mask(od_mask),
         .level(level), .level2(level2));
 
@@ -53,8 +53,8 @@ module pins_props (
     // 6. A serializer write alone (no core command, replay or PINMODE in the
     //    cycle): open-drain pins and pins outside the pair keep uio_out and
     //    uio_oe; a push-pull pin of the pair takes uio_oe <= ser_drive and,
-    //    when driven, uio_out <= its value (P = 2k gets ser_p, N = 2k+1
-    //    ser_n); od_mask is unchanged.
+    //    when ser_wout = 1, uio_out <= its value (P = 2k gets ser_p, N = 2k+1
+    //    ser_n), else keeps uio_out; od_mask is unchanged.
     wire [7:0] f_pair = 8'd3 << {ser_k, 1'b0};
     wire [7:0] f_val  = {4{ser_n, ser_p}};
     wire [7:0] f_w    = f_pair & ~od_mask;      // the pair's push-pull pins
@@ -64,7 +64,7 @@ module pins_props (
         assert((uio_oe  & ~$past(f_w)) == ($past(uio_oe)  & ~$past(f_w)));
         assert((uio_out & ~$past(f_w)) == ($past(uio_out) & ~$past(f_w)));
         assert((uio_oe  &  $past(f_w)) == $past({8{ser_drive}} & f_w));
-        if ($past(ser_drive))
+        if ($past(ser_wout))
             assert((uio_out & $past(f_w)) == $past(f_val & f_w));
         else
             assert((uio_out & $past(f_w)) == $past(uio_out & f_w));
