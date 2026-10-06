@@ -484,3 +484,24 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
 - After the merge the master `gds` and `docs` runs (37363511492,
   37363511559) were cancelled by GitHub: no hosted runner took the jobs.
   Both re-run; not logged yet (HANDOFF, next task 1).
+
+## 2026-10-06 (session 7)
+
+- Ahan's answers: D-040 closed as no (256 words stay); D-043
+  `DESIGN_REPAIR_MAX_CAP_PCT` 30 on branch `d043` (hardening run started;
+  merged or reverted by the rule in the entry). Housekeeping: the eleven
+  subagent worktrees under `.claude/worktrees/` and their branches, plus
+  `d039` and `waitd-csa`, deleted locally and on GitHub (all were merged;
+  `git branch --no-merged master` was empty); `.gitattributes` marks `.v`
+  and `.vh` as Verilog and `macro/` as vendored for GitHub's language
+  statistics; the attribution of the block facts and the macro recipe
+  taken from thomasgilbert481/tt_um_loom now lives in D-025, D-040 and the
+  head of docs/AREA.md, and `docs/review-of-tt_um_loom.md` is deleted with
+  every link to it.
+- **Step 1.** Master run 37363511492 (71d8a6d) logged: success, equal to
+  branch run 37339746749 in every number (15,085 cells, 27.1%, +12.39 /
+  +8.25 / +0.99 ns, 0 max-slew, 1 max-cap, precheck 9/9, gl_test passing).
+  The `check` and `docs` runs of the last commit of session 6 had also been
+  dropped by GitHub for want of a runner; both were started again (`docs`
+  green; `check` noted below).
+

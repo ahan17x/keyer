@@ -19,9 +19,11 @@ Context for this project:
   Python model, UART/SPI/I2C firmware verified against protocol models,
   complete RTL, a cocotb harness that runs the model in lockstep with the
   RTL from reset, and formal proofs. Everything passes.
-- A friend's parallel entry exists at github.com/thomasgilbert481/tt_um_loom,
-  reviewed in docs/review-of-tt_um_loom.md. It was built by the same model
-  family, so it looks like a sibling of ours. Rules: never copy its ISA,
+- A friend's parallel entry exists at github.com/thomasgilbert481/tt_um_loom
+  (the review that was kept in docs/ is gone since 2026-10-06; the facts and
+  the macro recipe taken from it are attributed in DECISIONS D-025 and
+  docs/AREA.md). It was built by the same model family, so it looks like a
+  sibling of ours. Rules: never copy its ISA,
   RTL, model, firmware or text. You may use its published facts about the
   Tiny Tapeout CMOS5L flow and, with attribution, its SRAM macro flow
   recipe (Apache-2.0 infrastructure), or wait for Tiny Tapeout's official

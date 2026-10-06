@@ -222,10 +222,16 @@ rule of CLAUDE.md and only on this branch: a `MACROS` block (instance
 `ERROR_ON_ILLEGAL_OVERLAPS`, `MAGIC_EXT_ABSTRACT_CELLS`,
 `MAGIC_MACRO_STD_CELL_SOURCE`, and the stripe keys `FP_PDN_VPITCH 67.44`,
 `FP_PDN_VSPACING 3.52`, `FP_PDN_VOFFSET 26.36`. The recipe is the one that
-took the sibling entry's 512 x 16 macro through hardening, precheck and
-gate-level test (thomasgilbert481/tt_um_loom, Apache-2.0,
-`docs/tt_cmos5l_facts.md` section 11 and `src/pdn_cfg.tcl`; attribution in
-the file headers). Tiny Tapeout had published no macro template on
+took the parallel entry's 512 x 16 macro through hardening, precheck and
+gate-level test: Thomas Gilbert's thomasgilbert481/tt_um_loom (Apache-2.0),
+`docs/tt_cmos5l_facts.md` section 11 (the `MACROS` key, PDN stripes through
+the macro's Metal4 power columns, the Magic waivers) and its
+`src/pdn_cfg.tcl`, whose pdngen wrapper and stripe verifier are the body of
+our `src/pdn_cfg.tcl` with the identifiers renamed; attribution in the file
+headers of `src/pdn_cfg.tcl`, `src/config.json` and the macro's README. The
+block dimensions and the routing-layer facts that sized the placement also
+come from that document (docs/AREA.md, head). Nothing of its ISA, RTL,
+model, firmware or text was used. Tiny Tapeout had published no macro template on
 2026-10-02. The cocotb suite now simulates the vendored macro model instead
 of the behavioural array, which also checks the wrapper's enable polarity.
 Rejected: waiting for the official template (unknown date); a second
@@ -591,8 +597,9 @@ of the tests all change; the ID register reads version 4.
 (`RM_IHPSG13_1P_512x16_c2_bm_bist`: gds, lef, three libs, blackbox,
 spice), `PDN_MACRO_CONNECTIONS` keeps its two lines. The macro has the same
 width (236.8 um) and the same Metal4 power columns as ours, which is why
-`src/pdn_cfg.tcl` and the `FP_PDN_V*` keys were taken from the sibling
-entry's 512 x 16 recipe in the first place: they stay as they are, the
+`src/pdn_cfg.tcl` and the `FP_PDN_V*` keys were taken from the parallel
+entry's 512 x 16 recipe (thomasgilbert481/tt_um_loom, Apache-2.0, D-025) in
+the first place: they stay as they are, the
 stripe verifier in `pdn_cfg.tcl` checks it at run time. Placement
 `[12, 40]` still fits: the macro is 191.34 um tall instead of 118.78 (die
 710.64). These edits to `config.json` are outside the two keys CLAUDE.md
@@ -693,3 +700,41 @@ mutation campaign on the same commit has no survivor. Master now carries
 D-039 (model and RTL) and the slew margin of D-041. Not clean in the
 reports and left for Ahan: one max-cap entry on the macro's `A_DOUT[7]`
 (docs/AREA.md). Rejected: nothing; the rule was met.
+
+## D-040 (resolved) 2026-10-06 Ahan: no, the program memory stays at 256 words
+
+Ahan's answer to the OPEN entry: no, for the reason it gives. The 512 x 16
+macro adds 1.26 ns of clock-to-output at the slow corner on the path that
+every worst endpoint shares, which is nearly the whole of the margin there
+(+0.99 ns in the last two runs), to buy memory that one program is close to
+needing and none needs today. The OPEN entry stays as the work list should a
+firmware goal that does not fit 256 words ever be put on the plan. Rejected:
+the move, in either form (base registers with a ninth bit, or the buffers in
+the low half).
+
+## D-043 2026-10-06 Ahan (value chosen by Claude within Ahan's instruction): `DESIGN_REPAIR_MAX_CAP_PCT` 20 -> 30 on branch `d043`, to clear the max-cap entry on the macro's `A_DOUT[7]`
+
+Runs 37339746749 and 37363511492 report one max-capacitance entry at all
+three corners: the macro's output pin `A_DOUT[7]` drives 68.4 to 68.7 fF
+against the 64 fF its library allows (7% over). The flow reports it and does
+not fail; the pin's delay in the slow-corner timing is extrapolated beyond
+the macro's characterised load. Ahan's instruction: `DESIGN_REPAIR_MAX_CAP_PCT`
+may be raised in `src/config.json`; use the smallest value that gives 0
+max-cap on the next hardening run; if it does not work, revert and record
+that. The mechanism is D-041's: the flow repairs capacitance once, after
+global placement, at the typical corner, to (100 - PCT)% of each pin's
+limit, with estimated wires. At the default 20 the target was 51.2 fF and
+the routed net came out at 68.4 fF, 1.34 times the target (routing added
+the difference; which pins land over the limit is placement luck, as for
+the slews: earlier runs had 1, 5 and 0 such entries). The smallest margin
+that puts the same ratio under the limit is 64 / 1.34 = 47.8 fF, that is
+25.4%; 25 would land on the limit, so **30** (target 44.8 fF, expected
+about 60 fF, 6% under). The change rides on branch `d043` (config.json is
+under `src/`, so the push hardens it) and is merged by the rule of D-037 if
+the run is clean at all corners, under 40% utilisation and has 0 max-cap;
+otherwise the key goes back to 20 and this entry records it. Rejected:
+`MAX_CAPACITANCE_CONSTRAINT` (a global limit that would also move the
+reported figures); an RTL change (the net is the macro's data output into
+the instruction register, nothing to restructure); leaving it (reported at
+every corner, and the one remaining entry in the sign-off checks).
+

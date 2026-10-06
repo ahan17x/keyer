@@ -13,9 +13,6 @@ CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle. Named Keyer
 4. `docs/BUGS.md` and `WORKLOG.md` (newest entries at the bottom).
 5. `PLAN.md` for scope and milestones.
 
-Do not read `docs/review-of-tt_um_loom.md` unless the task is about positioning
-or the flow recipe; it is reference material about a parallel entry.
-
 ## Rules
 
 - **The spec wins.** If the RTL, the simulator and the spec disagree, the spec

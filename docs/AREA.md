@@ -8,6 +8,14 @@ placement. Budget (PLAN.md section 4): the 6x4 block core is 902,417 um^2;
 at the template's 60% placement density about 430,000 um^2 of cells fit.
 Hardening results from the GitHub `gds` workflow are appended below.
 
+The block's dimensions used before the first hardening run (6x4 block
+1289.28 x 710.64 um, 916,214 um^2, core 902,417 um^2; signal routing on
+Metal1 to Metal4 only; an IHP SRAM macro allowed on the shuttle, confirmed
+by the organisers by email on 2026-09-28) were taken from the published
+research notes of the parallel entry thomasgilbert481/tt_um_loom
+(`docs/tt_cmos5l_facts.md` in that repository, Apache-2.0); every run below
+confirms them from the flow's own `resolved.json` and `metrics.json`.
+
 ## Synthesis
 
 | Date | Commit | What | Cells | Flops | Area (um^2) |
@@ -316,6 +324,9 @@ routing, which took twice as long. Both conditions for the merge hold
 | 37252116397 | the same design as 37228068179 (1c6def3, master with the behavioural-memory change of D-032) | 13,317 + macro | 24.7% | +11.85 / +7.41 / -0.13 (1) | 47 min | 9/9 | pass |
 | 37260270799 | macro + capture + one-hot select + carry-save WAITD (a56aae4, master after D-034; same design as 37247680638) | 13,501 + macro | 24.8% | +12.33 / +8.12 / +0.76 (0) | 45 min | 9/9 | pass |
 | 37266431182 | the above + serializer engine (f0e0b96, `serializer`) | 14,859 + macro | 27.0% | +12.53 / +8.41 / +1.37 (0) | 1 h 33 | 9/9 | pass |
+| 37286790227 | the same design as 37266431182 (da3e126, master after D-037) | 14,859 + macro | 27.0% | +12.53 / +8.41 / +1.37 (0) | 1 h 33 | 9/9 | pass |
+| 37339746749 | the above + D-039 and the slew margin of D-041 (103b52d, `d039`) | 15,085 + macro | 27.1% | +12.39 / +8.25 / +0.99 (0) | 54 min | 9/9 | pass |
+| 37363511492 | the same design as 37339746749 (71d8a6d, master after D-042) | 15,085 + macro | 27.1% | +12.39 / +8.25 / +0.99 (0) | 55 min | 9/9 | pass |
 
 ### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
 
@@ -388,3 +399,24 @@ this kind; the last two had none. Not fixed here: the key that would do it
 by Ahan's instruction for the slew step. Open, see HANDOFF.
 
 Merge rule (timing clean at all corners, utilisation under 40%): met.
+
+### Run 37363511492, 2026-10-05, commit 71d8a6d (master after the merge of `d039`, D-042)
+
+Started by the push of the merge. Its first attempt, and the `docs` run of
+the same push, were cancelled by GitHub after 15 minutes ("The job was not
+acquired by Runner of type hosted even after multiple attempts"); both were
+started again by hand and finished. Jobs: `gds` success (1 h 39 min),
+`gl_test` success, `viewer` success, `precheck` success (36 min, all nine
+checks). Numbers from `python3 scripts/gds_report.py 37363511492`
+(downloaded once, 2026-10-06). **Every number equals branch run
+37339746749**: 15,085 standard cells (1,601 flops, 3,287 timing-repair
+buffers) plus the macro, 73,033 instances with fill, 216,717 um^2 + 28,127
+um^2 macro, utilisation 27.1%, setup +12.39 / +8.25 / +0.99 ns (fast /
+typical / slow), hold +0.104 / +0.286 / +0.610 ns, no violation at any
+corner, detailed routing 55 min with DRC 0, wire length 619,655 um, Magic
+DRC 29,294 and 10 illegal overlaps (macro-internal, as before), LVS 0,
+antenna 0, 0 max-slew, 1 max-cap (the macro's `A_DOUT[7]`: 68.4 fF at the
+slow corner, 68.5 typical, 68.7 fast, against 64), 138 max-fanout, power
+5.9 mW, worst IR drop 0.3 mV. `resolved.json`: `DESIGN_REPAIR_MAX_SLEW_PCT`
+50, `DESIGN_REPAIR_MAX_CAP_PCT` 20 (the default). The max-cap entry is
+D-043's.
