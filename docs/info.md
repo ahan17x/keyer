@@ -19,7 +19,7 @@ pins into a small logic analyser and waveform generator.
   taken branches cost nothing extra, and there are no stalls, caches or
   interrupts, so timing can be read off the listing. A full-duplex protocol
   is two straight-line programs.
-- 16-bit datapath, eight registers per thread, 86 instructions in one
+- 16-bit datapath, eight registers per thread, 98 instructions in one
   16-bit format. Pin instructions set, clear, read, branch on and wait for
   any of the 24 pins, by level or by edge; inputs pass a two-flop
   synchroniser (two clocks of latency, exactly).
@@ -152,16 +152,21 @@ layers, what each found and the commands.
 
 ## How to test
 
-The host driver `tools/keyerhost.py` does everything below. It runs under
-MicroPython on the demo board's RP2350 and bit-bangs the host SPI on
-`ui[0..2]` and `uo[0]`; from a PC, `python3 tools/keyerhost.py ...` forwards
-each command to the board with `mpremote` (`pip install mpremote`), and at
-the board's prompt the same commands are `keyerhost.main([...])`. The
-driver's SPI code is the code the simulation exercises (`cd test && make`
-runs it against the design); the pin numbers in `BoardTransport` follow the
-v3 demo board (SCK GP17, MOSI GP18, CS_n GP19, MISO GP33) and can be
-overridden. Select the project and set the clock to 50 MHz first; the
-driver does this through the board's SDK when it is present.
+Everything below needs only the Tiny Tapeout demo board (its RP2350 is the
+host) and the driver `tools/keyerhost.py`. The driver runs under
+MicroPython on the board and bit-bangs the host SPI on `ui[0..2]` and
+`uo[0]`; from a PC, `python3 tools/keyerhost.py ...` forwards each command
+to the board with `mpremote` (`pip install mpremote`), and at the board's
+prompt the same commands are `keyerhost.main([...])`. The driver's SPI code
+is the code the simulation exercises (`cd test && make` runs it against the
+design, `test/test_host.py`); the pin numbers in `BoardTransport` follow
+the demo board's GPIO map (SCK GP17, MOSI GP18, CS_n GP19, MISO GP33: `ui`
+is GP17-24, `uo` is GP33-40) and can be overridden. The driver selects the
+project, sets the clock to 50 MHz and resets it through the board's SDK
+when it is present, once per session; `reset` resets it again on purpose.
+Words, bytes, addresses and masks on the command line are hex; thread
+numbers and `--option` values are decimal. No board has run this yet
+(DECISIONS D-035): every step below is the simulation's output.
 
 1. Self-test, nothing connected to the pins:
 
@@ -172,26 +177,70 @@ driver does this through the board's SDK when it is present.
    It checks the ID register, writes and reads back all 256 program words,
    runs an echo program through both FIFOs with more data than they hold,
    and replays a waveform on `uo[2]`/`uo[3]` while capturing it. Expected:
-   `selftest passed, ISA version 2`.
+   `selftest passed, ISA version 3`.
 
-2. UART loopback: wire `uo[2]` to `ui[3]`.
+2. UART with the board as the other end, no wiring: the RP2350's UART1 can
+   drive `ui[3]` (GP20 is UART1 TX) and listen on `uo[4]` (GP37 is UART1
+   RX), so the firmware is loaded with its transmit pin moved from `uo[2]`
+   to `uo[4]` (pin 20) and its divider set for 115200 baud at 50 MHz:
 
    ```sh
-   python3 tools/keyerhost.py load fw/uart.s     # assembles and loads (115200 baud at 60 MHz; edit BAUD_DIV)
+   python3 tools/keyerhost.py load fw/uart.s -D BAUD_DIV=434 -D TX=20
    python3 tools/keyerhost.py pc 1 0F            # thread 1 starts at rx_init
    python3 tools/keyerhost.py run 3              # both threads
-   python3 tools/keyerhost.py push 0 48 65 6C 6C 6F
-   python3 tools/keyerhost.py pop 1              # 48 65 6C 6C 6F
-   python3 tools/keyerhost.py status
    ```
 
-   A USB-UART adapter on `uo[2]`/`ui[3]` shows the same bytes on a terminal.
+   Then at the board's MicroPython prompt (`mpremote`):
 
-3. Capture an I2C transaction and decode it: pull-ups on `uio[2]` (SCL) and
-   `uio[3]` (SDA), an I2C EEPROM at address 0x50. The capture watches
-   group 0 (pins 0-3) under mask `C` (SCL is bit 2, SDA bit 3), triggers on
-   a START (SCL high, SDA low: pattern `4` under mask `C`) and records into
-   the 117 words above the 139-word firmware (base `8B`, length `75`):
+   ```python
+   from machine import UART, Pin
+   import keyerhost
+   u = UART(1, baudrate=115200, tx=Pin(20), rx=Pin(37))
+   keyerhost.main(["push", "0", "48", "65", "6C", "6C", "6F"])   # the chip transmits "Hello"
+   u.read()                                                      # b'Hello'
+   u.write(b"Keyer")                                             # the chip receives
+   keyerhost.main(["pop", "1"])                                  # 4B 65 79 65 72
+   ```
+
+   With a wire from `uo[2]` to `ui[3]` instead (the default pins, no `-D
+   TX`), `push 0 ...` followed by `pop 1` returns the same bytes through the
+   chip's own transmitter and receiver, which is what
+   `test_host_uart_loopback` does in simulation. A USB-UART adapter on
+   `uo[2]`/`ui[3]` shows the bytes on a terminal.
+
+3. Capture and decode the chip's own UART, no wiring: the transmitter of
+   step 2 is on pin 20, bit 0 of group 5 (pins 20-23). The capture engine
+   writes the buffer in the slots of a thread that is not running, so run
+   the transmitter alone; arm a capture that triggers when the line falls
+   (pattern `0` under mask `1`) into the words above the 37-word firmware,
+   send a byte, stop, read the recording back and decode it (`--period` is
+   BAUD_DIV):
+
+   ```sh
+   python3 tools/keyerhost.py run 1              # thread 0 only
+   python3 tools/keyerhost.py capture 5 1 0 1 40 40
+   python3 tools/keyerhost.py push 0 4B
+   python3 tools/keyerhost.py capture disarm
+   python3 tools/keyerhost.py stop
+   python3 tools/keyerhost.py capture listing --clock 50000000 --names 0=TX
+   python3 tools/keyerhost.py capture decode uart --bit 0 --period 434 --clock 50000000
+   ```
+
+   The listing shows the start bit, the data edges and the stop bit with
+   their times, and the decode prints the byte `4B` with the cycle of its
+   start bit (`test_host_capture_decode_uart` runs this sequence with eight
+   bytes, on the default pin and divider, and checks every decoded byte and
+   every edge spacing). `capture read --save F` keeps the entries; `capture
+   decode uart --file F ...` decodes them later without the board.
+
+4. Capture an I2C transaction and decode it. This step needs pull-ups on
+   `uio[2]` (SCL) and `uio[3]` (SDA) and an I2C EEPROM at address 0x50 (the
+   only step that needs anything beyond the board; without a device the
+   address byte is NACKed, which is captured and decoded just the same).
+   The capture watches group 0 (pins 0-3) under mask `C` (SCL is bit 2, SDA
+   bit 3), triggers on a START (SCL high, SDA low: pattern `4` under mask
+   `C`) and records into the 117 words above the 139-word firmware (base
+   `8B`, length `75`):
 
    ```sh
    python3 tools/keyerhost.py load fw/i2c_master.s -D I2C_Q=30
@@ -231,22 +280,29 @@ driver does this through the board's SDK when it is present.
 
    `I2C_Q=30` gives about 400 kHz at 50 MHz; without `-D` (200) the bus
    runs at about 80 kHz with the same entries and longer deltas. A logic
-   analyser on SCL/SDA shows the same edges. `capture read --save F` keeps
-   the entries for later `capture decode i2c --file F`; `replay 0 C 8B 0`
-   plays the recording back on the same pins (`fw/capture_demo.s` does the
-   capture and the replay from thread 1).
+   analyser on SCL/SDA shows the same edges. `replay 0 C 8B 0` plays the
+   recording back on the same pins (`fw/capture_demo.s` does the capture
+   and the replay from thread 1, and `test_host_capture_replay_demo` checks
+   that the EEPROM model sees the transaction twice with the same edge
+   timing). `docs/CAPTURE.md` section 5 has every option of the three
+   `capture` commands and the SPI, USB and 10BASE-T decoders.
 
-4. In simulation, without hardware: `bash scripts/check_all.sh` runs the
-   model's tests, the cocotb suite (the driver's self-tests among them) and
-   the formal proofs; `cd test && make` runs the cocotb suite alone.
+5. In simulation, without hardware: `bash scripts/check_all.sh` runs the
+   model's tests, the cocotb suite (the driver's self-tests and the four
+   steps above among them) and the formal proofs; `cd test && make` runs
+   the cocotb suite alone.
 
 ## External hardware
 
-None is needed for the self-test. For the firmware: pull-up resistors
-(4.7 kOhm) on any bidirectional pin used in open-drain mode (I2C on
-`uio[2]`/`uio[3]`, PS/2 on `uio[0]`/`uio[1]`, SWDIO on `uio[0]`); a wire or
-a USB-UART adapter on `uo[2]`/`ui[3]`; an SPI flash or sensor on
-`uo[3..5]`/`ui[4]`; an I2C device on `uio[2]`/`uio[3]`; for the other
-firmware a JTAG or SWD target on `uo[3..5]`/`ui[4]`/`uio[0]`, an SPI or I2C
-master, a PS/2 keyboard, a WS2812B strip on `uo[2]` (through a 3.3 V to 5 V
-level shifter). A logic analyser is useful to see the replayed waveforms.
+None. The self-test, the UART through the board's own UART peripheral and
+the capture of the chip's own transmitter (steps 1 to 3) use the demo board
+alone. For the other firmware: pull-up resistors (4.7 kOhm) on any
+bidirectional pin used in open-drain mode (I2C on `uio[2]`/`uio[3]`, PS/2 on
+`uio[0]`/`uio[1]`, SWDIO on `uio[0]`); a wire or a USB-UART adapter on
+`uo[2]`/`ui[3]`; an SPI flash or sensor on `uo[3..5]`/`ui[4]`; an I2C
+device on `uio[2]`/`uio[3]`; a JTAG or SWD target on
+`uo[3..5]`/`ui[4]`/`uio[0]`, an SPI or I2C master, a PS/2 keyboard, a
+WS2812B strip on `uo[2]` (through a 3.3 V to 5 V level shifter); for the
+serializer firmware a 1.5 kOhm pull-up on `uio[1]` and a USB host for the
+low-speed device, a line driver and magnetics for 10BASE-T. A logic
+analyser is useful to see the replayed waveforms.

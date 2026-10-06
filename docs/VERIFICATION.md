@@ -2,8 +2,8 @@
 
 What is checked, by which layer, what each layer has found so far (rows of
 `docs/BUGS.md`), what each would miss on its own, and the command that
-reproduces every number. Companion to `docs/AREA.md`. State: 2026-10-05,
-after session 6.
+reproduces every number. Companion to `docs/AREA.md`. State: 2026-10-06,
+after session 7.
 
 The reference is `docs/SEMANTICS.md`, the cycle-exact contract. The golden
 model (`tools/keyersim.py`) and the RTL (`src/`) are written from it by
@@ -19,12 +19,12 @@ each other.
 | # | Layer | What it compares | Size | Command |
 |---|---|---|---|---|
 | 1 | Lint and compile | the RTL against the language rules | Verilator `-Wall`, Icarus `-g2005`, header freshness | `bash scripts/check_all.sh quick` |
-| 2 | Model tests | the golden model, the assembler and the encoding table against SEMANTICS and isa.md | 473 pytest cases (120 on the model, the serializer scenarios and the host driver, 6 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
+| 2 | Model tests | the golden model, the assembler, the encoding table and the host driver against SEMANTICS and isa.md | 484 pytest cases (131 on the model, the serializer scenarios and the host driver with its capture decoders, 6 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
 | 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 313 pytest cases; 10 cases of published and hand-built vectors against the USB and Ethernet models | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py tools/test_protomodels.py -q` |
-| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 75 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
+| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 77 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
 | 5 | Formal | the RTL against properties stated from SEMANTICS, for all inputs | FIFO, pin unit, core (timer, control, thread select), capture and replay, serializer (stuffing, CRC, round trip) | `cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh && yowasp-sby -f capture.sby && yowasp-sby --yosys yowasp-yosys -f ser.sby` |
 | 6 | Equivalence | a restructured core against the core it replaces | every flop input and output bit | `bash formal/equiv_core.sh GIT_REF` |
-| 7 | Gate level | the hardened netlist (and the FPGA netlist) against the pads-only tests | the 13 pads-only tests (10 in the runs logged so far, which predate three of them) | `gl_test` job of the `gds` workflow; `bash fpga/alhambra2/sim.sh` |
+| 7 | Gate level | the hardened netlist (and the FPGA netlist) against the pads-only tests | the 25 tests that do not read RTL internals (23 in the runs logged so far, which predate the two capture-decode tests) | `gl_test` job of the `gds` workflow; `bash fpga/alhambra2/sim.sh` |
 | 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 2,118 mutants on GitHub (2026-10-05, the design with the serializer, D-038 and D-039); every survivor processed: 2,021 killed, 97 equivalent | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4` |
 | 9 | Static firmware timing | every `WAITD` of every program against the slots the program can spend before it, on all paths | 38 `WAITD` sites in 12 programs | `python3 tools/keyerasm.py fw/NAME.s --check-timing` |
 
@@ -43,7 +43,10 @@ functional. It is not counted as a kill in mutation testing (D-031).
 `tools/test_iss.py` pins the golden model to SEMANTICS instruction by
 instruction and rule by rule (slots, synchroniser latency on both thread
 parities, timer, timeouts, FIFOs, capture and replay); `tools/test_keyerhost.py`
-runs the host driver against a pin-level fake chip.
+runs the host driver against a pin-level fake chip, and its capture
+listing and decoders (UART, SPI, I2C, USB low speed, 10BASE-T) on
+synthetic captures, including the inverse pair `entries_from_wave` /
+`expand_capture` and a passive I2C decode with a NACK and a repeated START.
 
 Found: BUGS 8's regression test lives here (the model's synchroniser had
 one cycle of latency instead of two). Would miss: any error the model and
@@ -55,10 +58,10 @@ afterwards) and why layer 4 exists.
 
 | Firmware | Words | Model (knows only the protocol) | Cases |
 |---|---|---|---|
-| `uart.s` | 31 | 8N1 decoder and stimulus with baud error | 4 |
-| `spi_master.s` | 17 | SPI mode 0 slave | 1 |
+| `uart.s` | 37 | 8N1 decoder and stimulus with baud error | 4 |
+| `spi_master.s` | 31 | SPI mode 0 slave | 1 |
 | `i2c_master.s` | 139 | 24Cxx-style slave with clock stretching | 4 |
-| `capture_demo.s` | 37 | the same I2C slave, twice | in layer 4 |
+| `capture_demo.s` | 17 | the same I2C slave, twice | in layer 4 |
 | `spi_slave.s` | 55 | SPI mode 0 master: set-up and hold of MISO, MISO off the bus when deselected, aborts | 18 |
 | `i2c_slave.s` | 86 + 2 per data byte | I2C master: START/STOP rules, stretching with a limit, ACK bookkeeping | 35 |
 | `jtag_master.s` | 67 | IEEE 1149.1 TAP: 16-state controller, IR, IDCODE, BYPASS, set-up/hold, arbitrary power-up state | 88 |
@@ -115,7 +118,12 @@ firmware of layer 3 runs this way with its protocol models, plus directed
 programs, constrained-random instruction streams on both threads with pin
 noise, and (new) undefined encodings and the status word in every FIFO
 state. The pads-only tests drive the host SPI and the protocol models from
-the pads alone, so they also run on a netlist.
+the pads alone, so they also run on a netlist; two of them
+(`test_host_capture_decode_i2c`, `test_host_capture_decode_uart`) record
+the I2C master's transaction and the UART's bytes with the capture engine
+through the driver and check that the driver's decoders recover the
+transaction the firmware was told to make, and the entry deltas against
+the edge spacing seen at the pads.
 
 Found: BUGS 8 (the model, not the RTL), 14 (found by a functional check
 next to the lockstep: the comparison cannot see a wrong program load), 15

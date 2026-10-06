@@ -504,4 +504,30 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   The `check` and `docs` runs of the last commit of session 6 had also been
   dropped by GitHub for want of a runner; both were started again (`docs`
   green; `check` noted below).
+- **Step 3** (subagent, Opus, in the main tree): `keyerhost.py capture read |
+  listing | decode` (UART, SPI, I2C, USB low speed, 10BASE-T Manchester)
+  on the board, from a PC (listing and decode run on the PC from the
+  forwarded `capture read`, or from a saved file) and in the simulation,
+  which calls the same `command()`. The I2C slave model is a slave, not a
+  decoder (on a read it substitutes its own memory for the wire), so a
+  passive `I2cDecoder` joined `tools/protomodels.py`. Two pads-only cocotb
+  tests capture the I2C master's pointer write, repeated START and
+  one-byte read (102 entries; a two-byte read would need 116 to 128, more
+  than the 117 words above the 139-word firmware) and eight UART bytes,
+  and check the decodes against what the firmware was told to send and
+  the entry deltas against the pad edges. `load FILE.s -D NAME=VALUE`.
+  Found on the way: the board entry point reset the chip on every command
+  (BUGS 51). 484 pytest, 77 cocotb, `check_all.sh` green.
+- **Step 4.** `docs/SUBMISSION.md` (the form text and the datasheet's long
+  form, with the numbers of run 37363511492 and the present suite).
+  info.md's "How to test" now needs only the demo board and the driver:
+  self-test; UART through the RP2350's own UART1 (`ui[3]` is GP20, UART1
+  TX; `uo[4]` is GP37, UART1 RX; the firmware is loaded with `-D TX=20 -D
+  BAUD_DIV=434`); a capture and decode of the chip's own UART transmitter
+  (thread 0 alone, so the engine has the memory port); then the I2C
+  capture, which needs pull-ups and an EEPROM, with the simulation's real
+  output; "External hardware" says none for the first three. Stale facts
+  fixed on the way: 98 instructions (not 86), ISA version 3 in the
+  self-test's expected line, `uart.s` is 37 words (VERIFICATION's table
+  had the sizes of three programs in the wrong rows).
 

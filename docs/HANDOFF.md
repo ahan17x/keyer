@@ -60,6 +60,16 @@ Also for Ahan, smaller: one max-cap entry in run 37339746749 (the macro's
 key that would repair it, `DESIGN_REPAIR_MAX_CAP_PCT`, is a `config.json`
 edit his slew instruction did not cover.
 
+## Schedule to submission (deadline Monday 2027-01-18, two weeks of margin)
+
+| Date | Milestone |
+|---|---|
+| until Fri 2026-12-04 | Feature work on branches (PLAN.md's stretch list, the serializer follow-ups below), each merged by the hardening rule of D-037: setup met at all corners, utilisation under 40%, precheck 9 of 9, `gl_test` passing. Nothing is started after this date that cannot be merged by the freeze. |
+| Mon 2026-12-07 to Fri 2026-12-11 | Freeze week. On the candidate commit: the full `check` suite on the runner, a full mutation campaign (`mutation` workflow, every survivor processed), a master hardening run logged in AREA. **RTL freeze Fri 2026-12-11**: tag `rtl-freeze`; from then on nothing under `src/`, `info.yaml` or `macro/` changes. |
+| Sat 2026-12-12 to Wed 2026-12-30 | Docs only: `docs/SUBMISSION.md` and `docs/info.md` final (every number from the freeze run and the freeze campaign), README, the datasheet render checked on the `docs` workflow, VERIFICATION and AREA refreshed. Tools, firmware and tests may still change if the datasheet stays true; they do not touch silicon. An RTL fault found in this period reopens the freeze: fix, re-run the freeze week's checks, re-tag, and the docs period restarts from the new run; the last date on which that still fits is Mon 2026-12-21. |
+| Thu 2026-12-31 | The final hardening run, started by hand (`gds` workflow, dispatch) on the exact commit to be submitted (tag `submission`), logged in AREA with `scripts/gds_report.py`; it must equal the freeze run in every number. `gl_test` and precheck green on it. |
+| Mon 2027-01-04 | Submission: the Jane Street form (text from SUBMISSION.md) and the Tiny Tapeout submission of that commit. Two weeks remain to 2027-01-18 for anything the organisers ask for, a failed upload or a repeat of the final run. |
+
 ## Next tasks, in order
 
 1. Log the master `gds` run that the merge of `d039` started (see

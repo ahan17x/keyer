@@ -75,6 +75,9 @@ Yosys will be run against the real liberty file after each RTL milestone and the
 
 ## 5. Milestones
 
+The dates below are the plan of 2026-10-01. The schedule that counts, from
+the RTL freeze to the submission, is in `docs/HANDOFF.md` (2026-10-06).
+
 | Date | Milestone |
 |---|---|
 | Oct 1-5 | Plan, ISA v0.1, assembler + ISS with tests, first RTL modules. |
