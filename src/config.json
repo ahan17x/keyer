@@ -86,6 +86,10 @@
   "//": "limit at the slow corner, where the cells are 1.7 to 1.8 times slower (13 pins on two nets in run",
   "//": "37286790227). 50 holds a net to 1.25 ns at the typical corner, about 2.2 ns at the slow one (limit 2.507).",
   "DESIGN_REPAIR_MAX_SLEW_PCT": 50,
+  "//": "Capacitance repair margin (DECISIONS D-043): the same mechanism for the pin capacitance limit. At the",
+  "//": "default 20 the macro's A_DOUT[7] came out at 68.4 fF against its 64 fF limit (runs 37339746749 and",
+  "//": "37363511492), 1.34 times the repair target; 30 puts the expected routed value about 6% under the limit.",
+  "DESIGN_REPAIR_MAX_CAP_PCT": 30,
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
