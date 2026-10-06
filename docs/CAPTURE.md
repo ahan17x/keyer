@@ -27,8 +27,9 @@ section 14. This file is the programmer's view and the sizing decision.
   never needs one, 9600-baud UART needs one per bit.
 - **Buffer.** The entries live in the **program memory**: the host (or the
   firmware's loader) assigns a base word and a length (1..255 entries) that
-  the program does not use. The I2C master firmware is 136 words, which
-  leaves 120 entries, roughly two I2C bytes with START and STOP; a chip
+  the program does not use. The I2C master firmware is 139 words, which
+  leaves 117 entries: a pointer write, a repeated START and a one-byte read
+  with STOP (four bytes on the bus) take about 100 (section 5); a chip
   used purely as an analyser has 255. The host drains the buffer through
   the existing `IMEM_DATA` read and writes a waveform to replay through the
   existing `IMEM_DATA` write.
@@ -129,3 +130,169 @@ through the flow; it stays a later option.
   to finish, starts a replay of the recording on the same pins and waits for
   it. The test checks that the I2C slave model sees the same transaction
   twice with identical edge timing.
+- Reading (section 5): `tools/test_keyerhost.py` checks the listing and
+  every decoder on entries made from synthetic waveforms (with
+  `entries_from_wave`), the passive I2C decoder, and the commands against a
+  fake chip; `test/test_host.py` captures the I2C master's transaction and
+  the UART transmitter on the chip and decodes them (pads only, so also at
+  gate level).
+
+## 5. Reading a capture with the driver
+
+`tools/keyerhost.py` reads the buffer back and turns it into a timing
+listing or a protocol decode. The commands are the same on the demo board,
+from a PC (forwarded through `mpremote`) and in the simulation, which calls
+the same `command()` function (`test/test_host.py`,
+`test_host_capture_decode_i2c` and `test_host_capture_decode_uart`):
+
+```
+capture GROUP MASK TPAT TMASK BASE LEN   configure and arm (hex, as before)
+capture status                           status bits and counts
+capture disarm                           stop recording; the entries so far stay
+capture read [BASE]                      the entries: a "# capture group G mask M entries N"
+                                         line, then one "delta pins" line each
+capture listing [BASE] [--clock HZ] [--names 2=SCL,3=SDA]
+capture decode PROTO [BASE] [--clock HZ] [--KEY VALUE ...]
+```
+
+All three reading commands need both threads stopped (the memory port rule
+of section 1; the driver refuses otherwise). BASE (hex) defaults to the
+configured capture base and the number of entries is CR_COUNT's count of
+entries written. The group and the watch mask are read back from CAP_CFG;
+`--group G` overrides the group. Option values are decimal: bit numbers
+are 0 to 3 inside the group's nibble, periods are core cycles, `--clock` is
+the core clock in Hz and only adds times in us to the output. `drain` is
+still there and prints the entry lines without the header.
+
+**Listing.** A header with the group, its pins, the number of entries and
+the total duration (the sum of the deltas: the cycle of the last entry,
+counted from the trigger), then one line per entry: index, cycle, time (with
+`--clock`), delta, the four bits under their pin numbers (with `--names`
+labels; a bit outside the watch mask prints `-`), and what changed:
+`trigger` for entry 0, `idle` for an idle entry, otherwise the bits that
+rose or fell.
+
+**Decoders.** `capture decode PROTO` runs one of the protocol models of
+`tools/protomodels*.py` over the entries expanded to one pad vector per
+cycle (the nibble at its real pins, so the models see pin numbers):
+
+| PROTO | Parameters (default) | Reports | Model |
+|---|---|---|---|
+| `uart` | `--bit` (2), `--period` cycles per bit, or `--baud` with `--clock` | 8N1 bytes with the cycle of each start bit, framing errors | `UartDecoder` |
+| `spi` | `--sck` (0), `--mosi` (1), `--csn` (2), `--miso` (none) | mode 0: the bytes of every CS_n frame, MOSI and MISO, partial bytes | `SpiSlaveModel`, one per data line |
+| `i2c` | `--scl` (2), `--sda` (3) | START, repeated START, STOP, the address and R/W, every byte with its ACK bit (0 = ACK), a STOP or START inside a byte | `I2cDecoder` (passive) |
+| `usb` | `--dp` (0), `--dm` (1), `--bit_cycles` (32) | low-speed packets: PID, address and endpoint or frame number, payload, CRC-5 or CRC-16 verdict, NRZI, stuffing, EOP and bit-timing errors; keep-alives and resets | `UsbLsHost._analyse` |
+| `manchester` | `--p` (0), `--n` (1), `--clk_ns` (25.0) | 10BASE-T link pulses (start, width) and frames (destination, source, type, payload length, FCS), and the receiver's errors | `Eth10BTReceiver` |
+
+The defaults of `uart` are the transmitter of `fw/uart.s` in group 4 (TX is
+`uo[2]`, pin 18, bit 2), those of `i2c` the bus of `fw/i2c_master.s` in
+group 0, those of `usb` and `manchester` the pairs of the serializer
+firmware in group 0. Two more options apply to every decoder. `--initial V`
+is the group's level in the cycle before the trigger: the capture starts at
+the trigger, so a decoder that needs an edge to begin (a START, a CS_n fall,
+a start bit) would miss the first one; by default it is the protocol's idle
+level (both I2C lines high, CS_n high, the UART line high). `--tail N` is
+how long the last level is held after the last entry: the entries do not
+say how long it lasted, so by default it is 11 bit periods for UART (so a
+last character whose final edge is a data bit, 0xF0 for example, still
+reaches its stop bit), two bit times for USB and 1 cycle otherwise. A
+decoder bit outside the watch mask reads 0; the command prints a warning.
+
+**Library.** The same functions without a chip: `expand_capture(entries,
+group)` (per-cycle pad vectors), `capture_listing(entries, group,
+clock_hz, names, mask)`, `decode_capture(entries, group, proto, **params)`
+(returns the result as a dict and the text), `entries_from_wave(levels)`
+(the entries the engine records for a per-cycle nibble sequence, the
+inverse of `expand_capture`), and `parse_capture(text)` for the text of
+`capture read`. `KeyerHost.capture_read()` returns the entries as `(delta,
+pins)` pairs (`capture_drain()` is the same).
+
+**Files.** From a PC, `capture listing` and `capture decode` run on the PC:
+the driver forwards `capture read` to the board and decodes the printed
+entries locally, so the board needs no decoder. `capture read --save F`
+also writes the entries to F, and `--file F` (in place of the board) lists
+or decodes a saved capture, or the output of `drain` with `--group G`.
+
+**Limits.**
+
+- One nibble per capture: every line a decoder needs must be in one group
+  and in its watch mask. I2C (two lines) and UART (one per direction) fit
+  anywhere. SPI needs SCK, MOSI and CS_n (and MISO) in one group: no pin
+  map of the firmware in `fw/` has that (`spi_master.s` has SCK on pin 19,
+  group 4, and MOSI and CS_n in group 5), so the SPI decoder is for a bus
+  wired to one group, for instance `uio[3:0]` of a chip used as an analyser.
+- 255 entries are about 250 edges. A low-speed USB SETUP transaction
+  (token, DATA0 with 8 bytes, ACK) is about 120 entries, and a capture next
+  to `fw/usb_ls_device.s` (253 words) has 3. A 10BASE-T frame has one or
+  two edges per bit, so a capture holds the preamble and the first bytes
+  of a frame (the decoder then reports the truncated frame's errors), or
+  link pulses: at 40 MHz the 16 ms between two pulses are 156 idle entries.
+- Idle entries cost one entry per 4095 cycles of silence; the listing marks
+  them and the decoders see the level held across them. At 9600 baud and
+  60 MHz every bit of a UART character is at least one entry.
+- The I2C test's transaction (pointer write, repeated START, one-byte read)
+  is 102 entries in simulation; with a two-byte read it would need 116 to
+  128 depending on the data, more than the 117 words above the I2C
+  firmware. Each SDA change of the slave model comes a cycle after the SCL
+  fall it answers and is an entry of its own; a real device's timing
+  differs, so leave a margin.
+
+**Example** (the simulation test `test_host_capture_decode_i2c`, 50 MHz,
+`I2C_Q` = 30; the I2C slave model at 0x50 holds 0x5A at address 0x10):
+
+```
+> keyerhost load fw/i2c_master.s -D I2C_Q=30          (from a PC; 139 words)
+loaded 139 words
+> keyerhost capture 0 C 4 C 8B 75                     (group 0, SCL/SDA, START trigger, words 8B..FF)
+armed
+> keyerhost run 1
+running [1, 0]
+> keyerhost push 0 01 03 02 A0 10 01 03 01 A1 04 01 02 03 00
+pushed 14
+> keyerhost pop 0
+00 00 5A 00
+> keyerhost capture disarm
+disarmed
+> keyerhost stop
+stopped
+> keyerhost capture status
+capture idle triggered done | replay idle | recorded 102 applied 0
+> keyerhost capture read
+# capture group 0 mask C entries 102
+   0 4
+  36 0
+  86 8
+  36 C
+...
+> keyerhost capture listing --clock 50000000 --names 2=SCL,3=SDA
+capture: group 0 (pins 0-3), 102 entries, 4988 cycles = 99.760 us at 50 MHz
+  idx    cycle         us delta  p3=SDA p2=SCL p1 p0  change
+    0        0      0.000     0       0      1  -  -  trigger
+    1       36      0.720    36       0      0  -  -  SCL fall
+    2      122      2.440    86       1      0  -  -  SDA rise
+    3      158      3.160    36       1      1  -  -  SCL rise
+    4      202      4.040    44       1      0  -  -  SCL fall
+...
+   46     2335     46.700     1       1      0  -  -  SDA rise
+   47     2434     48.680    99       1      1  -  -  SCL rise
+   48     2478     49.560    44       0      1  -  -  SDA fall
+   49     2514     50.280    36       0      0  -  -  SCL fall
+...
+   99     4908     98.160    52       0      0  -  -  SDA fall
+  100     4944     98.880    36       0      1  -  -  SCL rise
+  101     4988     99.760    44       1      1  -  -  SDA rise
+> keyerhost capture decode i2c --clock 50000000
+i2c (scl bit 2 = pin 2, sda bit 3 = pin 3): 2 transfers, 0 errors
+  @0 (0.000 us)          START   0x50 W ACK : 10 ACK
+  @2478 (49.560 us)      RESTART 0x50 R ACK : 5A NACK
+  @4988 (99.760 us)      STOP
+```
+
+The bytecode is the one in the header of `fw/i2c_master.s`: START, WRITE
+of `A0 10` (address 0x50 write, pointer 0x10), START (repeated), WRITE of
+`A1` (address 0x50 read), READ of one byte (NACKed, the last), STOP, and a
+WRITE of no bytes, which only pushes a status byte: when the host has
+popped it, the STOP is on the bus. The outbox holds the two write statuses
+(0: all ACKed), the byte read and that last status. Entry 48 is the
+repeated START (SDA falls while SCL is high); entry 47 is the clock pulse
+that carries it, which the decoder does not count as a data bit.

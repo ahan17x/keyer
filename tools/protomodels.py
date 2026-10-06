@@ -249,3 +249,109 @@ class I2cSlaveModel:
         # in read state the data bit for bit 0 must be presented right after the ACK
         self._prev_scl, self._prev_sda = scl, sda
         self._drive(m)
+
+
+class I2cDecoder:
+    """Passive I2C bus decoder on two pads (SCL, SDA): drives nothing, reads
+    m.pad() and m.cycle only. Unlike I2cSlaveModel it follows every
+    transfer, whatever the address, and reports the bytes as they are on
+    the wire.
+
+    A START is SDA falling while SCL is high in this cycle and the previous
+    one; it is a repeated START ("restart") when no STOP came since the last
+    START. A STOP is SDA rising while SCL is high. A data bit is SDA
+    sampled at a rising SCL edge, counted when SCL falls again without a
+    START or STOP in between (the clock pulse that carries a repeated START
+    or a STOP is not a bit); nine bits make a byte and its ACK bit as seen
+    on SDA at the ninth clock (0 = ACK, 1 = NACK). The first byte after a
+    START is the 7-bit address and the R/W bit (1 = read).
+
+    Records:
+      events     (kind, cycle, detail): "start", "restart", "stop", "byte"
+                 (detail (byte, ack); the cycle of the ninth rising SCL edge)
+      transfers  tuples (kind, address, rw, addr_ack, [(byte, ack), ...], end):
+                 kind "start" or "restart", end "stop", "restart" or None
+                 (still open); address and rw are None until the address
+                 byte is complete. Built in place: the last one may be open.
+      errors     (kind, cycle, detail): "stop inside a byte", "start inside
+                 a byte" (detail: the bits of the byte seen), "bit outside
+                 a transfer", "incomplete byte" (from finish(): the record
+                 ends inside a byte).
+
+    The first sample only sets the previous levels; feed the idle bus first
+    (both lines high) when the record starts at a START condition.
+    """
+
+    def __init__(self, scl, sda):
+        self.scl, self.sda = scl, sda
+        self.events = []
+        self.transfers = []
+        self.errors = []
+        self._prev = None         # (scl, sda) of the previous cycle
+        self._open = False        # inside a transfer (a START seen, no STOP since)
+        self._bits = []
+        self._pending = None      # (sda, cycle) sampled at a rising SCL edge, not yet a bit
+        self._cur = None          # the transfer being built, as a list
+        self._outside_flagged = False
+
+    def _close(self, end):
+        if self._cur is not None:
+            self._cur[5] = end
+            self.transfers[-1] = tuple(self._cur)
+            self._cur = None
+
+    def on_cycle(self, m):
+        pad = m.pad()
+        scl, sda = _bit(pad, self.scl), _bit(pad, self.sda)
+        prev, self._prev = self._prev, (scl, sda)
+        if prev is None:
+            return
+        pscl, psda = prev
+        if scl and pscl and psda and not sda:                  # START / repeated START
+            kind = "restart" if self._open else "start"
+            if self._bits:
+                self.errors.append(("start inside a byte", m.cycle, len(self._bits)))
+            self._close("restart" if self._open else None)
+            self.events.append((kind, m.cycle, None))
+            self._cur = [kind, None, None, None, [], None]
+            self.transfers.append(tuple(self._cur))
+            self._open, self._bits, self._pending, self._outside_flagged = True, [], None, False
+        elif scl and pscl and not psda and sda:                # STOP
+            if self._bits:
+                self.errors.append(("stop inside a byte", m.cycle, len(self._bits)))
+            self.events.append(("stop", m.cycle, None))
+            self._close("stop")
+            self._open, self._bits, self._pending = False, [], None
+        elif scl and not pscl:                                 # rising SCL: sample
+            self._pending = (sda, m.cycle)
+        elif pscl and not scl and self._pending is not None:   # falling SCL: a bit
+            self._bit()
+
+    def _bit(self):
+        sda, cycle = self._pending
+        self._pending = None
+        if not self._open:
+            if not self._outside_flagged:
+                self.errors.append(("bit outside a transfer", cycle, None))
+            self._outside_flagged = True
+            return
+        self._bits.append(sda)
+        if len(self._bits) == 9:
+            byte = sum(b << (7 - i) for i, b in enumerate(self._bits[:8]))
+            ack = self._bits[8]
+            self._bits = []
+            self.events.append(("byte", cycle, (byte, ack)))
+            cur = self._cur
+            if cur[1] is None:
+                cur[1], cur[2], cur[3] = byte >> 1, byte & 1, ack
+            else:
+                cur[4].append((byte, ack))
+            self.transfers[-1] = tuple(cur)
+
+    def finish(self):
+        """The record ends: a bit sampled with SCL still high counts, and a
+        byte in progress is reported."""
+        if self._pending is not None:
+            self._bit()
+        if self._bits:
+            self.errors.append(("incomplete byte", None, len(self._bits)))

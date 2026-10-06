@@ -48,7 +48,7 @@ pins into a small logic analyser and waveform generator.
 
 - Capture records timestamped edges on a group of four pins (under a watch
   mask) from a trigger condition on, as 16-bit entries `{delta[11:0],
-  pins[3:0]}` in program-memory words the program does not use: 120 entries
+  pins[3:0]}` in program-memory words the program does not use: 117 entries
   next to the I2C firmware, 255 with no firmware. The trigger is "the group
   matches a pattern under a mask after not matching", so an I2C START is
   one setting. An edge is never lost silently: if the two-entry queue
@@ -62,6 +62,9 @@ pins into a small logic analyser and waveform generator.
   not running, so the firmware under test keeps its exact timing while it
   is being recorded. A thread can arm, stop and start them itself (`CAPC`),
   and the host can read the buffer back over SPI.
+- The host driver reads a capture back as a timing listing and decodes it
+  as UART, SPI, I2C, low-speed USB or 10BASE-T (`docs/CAPTURE.md` section
+  5).
 
 **Serializer**
 
@@ -184,31 +187,54 @@ driver does this through the board's SDK when it is present.
 
    A USB-UART adapter on `uo[2]`/`ui[3]` shows the same bytes on a terminal.
 
-3. Capture an I2C transaction and replay it: pull-ups on `uio[2]` (SCL) and
-   `uio[3]` (SDA), an I2C device at address 0x50 optional (without one the
-   write is NACKed, which is captured just the same). In Python, on the
-   board or in a script using the library:
+3. Capture an I2C transaction and decode it: pull-ups on `uio[2]` (SCL) and
+   `uio[3]` (SDA), an I2C EEPROM at address 0x50. The capture watches
+   group 0 (pins 0-3) under mask `C` (SCL is bit 2, SDA bit 3), triggers on
+   a START (SCL high, SDA low: pattern `4` under mask `C`) and records into
+   the 117 words above the 139-word firmware (base `8B`, length `75`):
 
-   ```python
-   from keyerhost import *
-   host = KeyerHost(BoardTransport())            # after BoardTransport().setup()
-   run_sync(host.load_program(image))            # i2c_master.s at 0, capture_demo.s at 0x90
-   run_sync(host.pinmode(0x0C))                  # SCL, SDA open-drain
-   run_sync(host.capture_config(group=0, mask=0xC, trigger_pattern=0x4,
-                                trigger_mask=0xC, base=0xA4, length=92))
-   run_sync(host.replay_config(group=0, mask=0xC, base=0xA4, length=0))
-   run_sync(host.set_pc(1, 0x90))
-   run_sync(host.push(0, [0x01, 0x03, 2, 0xA0, 0x10, 0x02, 0x05]))   # START, write 2 bytes, STOP, wake thread 1
-   run_sync(host.run(0b10))                      # thread 1 arms the capture and starts thread 0
-   run_sync(host.wait_replay_done())             # recorded, then replayed on the same pins
-   run_sync(host.stop())
-   for delta, pins in run_sync(host.capture_drain(0xA4)):
-       print(delta, bin(pins))                   # SCL is bit 2, SDA bit 3
+   ```sh
+   python3 tools/keyerhost.py load fw/i2c_master.s -D I2C_Q=30
+   python3 tools/keyerhost.py capture 0 C 4 C 8B 75
+   python3 tools/keyerhost.py run 1
+   python3 tools/keyerhost.py push 0 01 03 02 A0 10 01 03 01 A1 04 01 02 03 00
+   python3 tools/keyerhost.py pop 0                # 00 00 5A 00
+   python3 tools/keyerhost.py capture disarm
+   python3 tools/keyerhost.py stop
+   python3 tools/keyerhost.py capture listing --clock 50000000 --names 2=SCL,3=SDA
+   python3 tools/keyerhost.py capture decode i2c --clock 50000000
    ```
 
-   A logic analyser on SCL/SDA shows the transaction twice with identical
-   edge spacing; `image` is the two firmware files assembled into one
-   256-word list (`test/test.py`, `fw_merge`, shows how).
+   The bytes pushed are the I2C master's bytecode: START, write `A0 10`
+   (address 0x50, pointer 0x10), repeated START, write `A1` (address 0x50,
+   read), read one byte, STOP, and a write of no bytes whose status byte
+   tells the host that the STOP is done. `pop` shows the two write
+   statuses (0: ACKed), the byte read and that status. The simulation of
+   this sequence (`test_host_capture_decode_i2c`, an EEPROM model holding
+   0x5A at 0x10) prints:
+
+   ```
+   capture: group 0 (pins 0-3), 102 entries, 4988 cycles = 99.760 us at 50 MHz
+     idx    cycle         us delta  p3=SDA p2=SCL p1 p0  change
+       0        0      0.000     0       0      1  -  -  trigger
+       1       36      0.720    36       0      0  -  -  SCL fall
+       2      122      2.440    86       1      0  -  -  SDA rise
+       3      158      3.160    36       1      1  -  -  SCL rise
+   ...
+     101     4988     99.760    44       1      1  -  -  SDA rise
+
+   i2c (scl bit 2 = pin 2, sda bit 3 = pin 3): 2 transfers, 0 errors
+     @0 (0.000 us)          START   0x50 W ACK : 10 ACK
+     @2478 (49.560 us)      RESTART 0x50 R ACK : 5A NACK
+     @4988 (99.760 us)      STOP
+   ```
+
+   `I2C_Q=30` gives about 400 kHz at 50 MHz; without `-D` (200) the bus
+   runs at about 80 kHz with the same entries and longer deltas. A logic
+   analyser on SCL/SDA shows the same edges. `capture read --save F` keeps
+   the entries for later `capture decode i2c --file F`; `replay 0 C 8B 0`
+   plays the recording back on the same pins (`fw/capture_demo.s` does the
+   capture and the replay from thread 1).
 
 4. In simulation, without hardware: `bash scripts/check_all.sh` runs the
    model's tests, the cocotb suite (the driver's self-tests among them) and
