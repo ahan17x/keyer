@@ -327,6 +327,7 @@ routing, which took twice as long. Both conditions for the merge hold
 | 37286790227 | the same design as 37266431182 (da3e126, master after D-037) | 14,859 + macro | 27.0% | +12.53 / +8.41 / +1.37 (0) | 1 h 33 | 9/9 | pass |
 | 37339746749 | the above + D-039 and the slew margin of D-041 (103b52d, `d039`) | 15,085 + macro | 27.1% | +12.39 / +8.25 / +0.99 (0) | 54 min | 9/9 | pass |
 | 37363511492 | the same design as 37339746749 (71d8a6d, master after D-042) | 15,085 + macro | 27.1% | +12.39 / +8.25 / +0.99 (0) | 55 min | 9/9 | pass |
+| 37534398328 | the same RTL with the capacitance repair margin of D-043 (19440d7, `d043`) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
 
 ### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
 
@@ -420,3 +421,31 @@ slow corner, 68.5 typical, 68.7 fast, against 64), 138 max-fanout, power
 5.9 mW, worst IR drop 0.3 mV. `resolved.json`: `DESIGN_REPAIR_MAX_SLEW_PCT`
 50, `DESIGN_REPAIR_MAX_CAP_PCT` 20 (the default). The max-cap entry is
 D-043's.
+
+### Run 37534398328, 2026-10-06, commit 19440d7 (branch `d043`: `DESIGN_REPAIR_MAX_CAP_PCT` 30, D-043)
+
+Started by the push of the branch. Jobs: `gds` success (1 h 41 min),
+`gl_test` success, `viewer` success, `precheck` success (42 min, all nine
+checks). Numbers from `python3 scripts/gds_report.py 37534398328`
+(downloaded once).
+
+| Item | Value |
+|---|---|
+| Standard cells | 15,109 instances (1,601 flops, 3,292 timing-repair buffers) plus the macro; 73,054 with fill |
+| Cell area / utilisation | 216,888 um^2 + 28,127 um^2 macro; 27.2% (standard cells 24.8%) |
+| Setup slack, 20 ns | fast +12.43 ns; typical +8.24 ns; slow +1.09 ns; no violating endpoint at any corner |
+| Hold slack | fast +0.104 ns, typical +0.285 ns, slow +0.607 ns; no violations |
+| Routing | detailed routing 55 min (ten iterations); DRC 0; wire length 617,009 um |
+| DRC / LVS / antenna | Magic DRC 29,294 and 10 illegal overlaps (as before); LVS 0; antenna 0 |
+| Slew / cap / fanout | 0 max-slew, **0 max-cap**, 139 max-fanout |
+| gl_test | success |
+
+Against master (37363511492): +24 cells (five more repair buffers), +171
+um^2, +0.1 point of utilisation; the max-cap entry on the macro's
+`A_DOUT[7]` is gone at all three corners (`resolved.json`:
+`DESIGN_REPAIR_MAX_CAP_PCT` 30), and the slow-corner setup margin is +1.09
+ns instead of +0.99 (placement). D-043 is confirmed at its first value;
+merged as D-044. The sign-off checks now report nothing: no setup or hold
+violation at any corner, no slew, capacitance or routing DRC entry, LVS and
+antenna clean.
+

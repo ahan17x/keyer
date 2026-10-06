@@ -738,3 +738,16 @@ reported figures); an RTL change (the net is the macro's data output into
 the instruction register, nothing to restructure); leaving it (reported at
 every corner, and the one remaining entry in the sign-off checks).
 
+## D-044 2026-10-06 Claude, applying Ahan's rule for step 6: `d043` is merged into master
+
+The rule: merge if timing is clean at all corners and utilisation is under
+40%; D-043 added 0 max-cap. Run 37534398328 on the branch: setup +12.43 /
++8.24 / +1.09 ns (fast / typical / slow), no violating endpoint, hold clean,
+utilisation 27.2%, routing DRC, LVS and antenna 0, 0 max-slew, 0 max-cap,
+precheck 9 of 9, `gl_test` passing. The value 30 of D-043 stands (the
+smallest tried; nothing says 25 would have failed, and a second run to
+find out is not worth two hours of the runner). Master now carries the
+capacitance repair margin; the master run that the merge starts should
+equal 37534398328 and is logged by the next session. Rejected: nothing;
+the rule was met.
+

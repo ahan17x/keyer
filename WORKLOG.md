@@ -530,4 +530,8 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   fixed on the way: 98 instructions (not 86), ISA version 3 in the
   self-test's expected line, `uart.s` is 37 words (VERIFICATION's table
   had the sizes of three programs in the wrong rows).
+- **Step 6.** Branch `d043` (only `DESIGN_REPAIR_MAX_CAP_PCT` 30) hardened as
+  run 37534398328: 0 max-cap at all corners (1 before), +12.43 / +8.24 /
+  +1.09 ns, 27.2%, 0 max-slew, precheck 9/9, gl_test passing: merged
+  (D-044). The sign-off checks of the design now report nothing at all.
 
