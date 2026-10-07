@@ -1,6 +1,6 @@
 # Handoff: state of the project and the next task
 
-Updated 2026-10-05 (end of Claude Code session 6). This is the first file a
+Updated 2026-10-06 (end of Claude Code session 7). This is the first file a
 session reads. Keep it short: what exists, what is decided, what is open,
 what to do next.
 
@@ -13,52 +13,54 @@ what to do next.
   D-022), and `mutation` (by hand only, 16 shards, D-031).
   `scripts/gds_report.py RUN_ID` summarises a `gds` run for `docs/AREA.md`.
 - **Master is the macro design with the one-hot thread select, the
-  carry-save `WAITD` (D-034), the serializer engine (D-036, D-037) and
-  D-039.** Hardened on branch `d039` as run 37339746749: 15,085 cells plus
-  the macro, 27.1% utilisation, setup +12.39 / +8.25 / +0.99 ns (fast /
+  carry-save `WAITD` (D-034), the serializer engine (D-036, D-037), D-039
+  and the repair margins of D-041 (slew) and D-043 (capacitance).**
+  Hardened on branch `d043` as run 37534398328: 15,109 cells plus the
+  macro, 27.2% utilisation, setup +12.43 / +8.24 / +1.09 ns (fast /
   typical / slow), no violation at any corner, hold clean, LVS and antenna
-  0, no max-slew entry (D-041), one max-cap entry (see below), precheck
-  9/9, gl_test passing. The run that the merge started on master should
-  equal it; log it (see "Next tasks").
+  0, 0 max-slew, 0 max-cap, precheck 9/9, gl_test passing: the sign-off
+  checks report nothing. The master run that the merge started
+  (37549369058) should equal it; log it (see "Next tasks").
 - `docs/SEMANTICS.md` v0.5 is the contract (section 15: the serializer);
   `docs/SERIALIZER.md` is the serializer's design note and programmer's
   guide; `docs/VERIFICATION.md` describes the nine verification layers.
   ISA version 3.
 - `tools/`: `keyer_isa.py`, `keyerasm.py` (with `--check-timing`,
   `keytiming.py`: every `WAITD` against the slots that can precede it),
-  `keyersim.py` (golden model), `protomodels*.py` (11 protocol models,
-  the USB and Ethernet ones checked against published vectors in
-  `test_protomodels.py`), `ser_scenarios.py`, `keyerhost.py` (holds CS_n
-  high across every reset), `mutate.py` with `mutate_equivalents.md`; 473
-  pytest cases.
+  `keyersim.py` (golden model), `protomodels*.py` (11 protocol models and
+  a passive I2C decoder, the USB and Ethernet models checked against
+  published vectors in `test_protomodels.py`), `ser_scenarios.py`,
+  `keyerhost.py` (holds CS_n high across every reset; `capture read |
+  listing | decode` for UART, SPI, I2C, USB low speed and 10BASE-T on the
+  board, from a PC or in simulation; `load FILE.s -D NAME=VALUE`),
+  `mutate.py` with `mutate_equivalents.md` and the `prove-equivalents`
+  mode (reset-sequence miter); 485 pytest cases.
 - `fw/`: twelve programs. New: `usb_ls_device.s` (253 of 256 words, one
   thread, clock 48 MHz; enumerates against the USB host model, responses
   3.7 to 4.7 bit times after the host's packet) and `eth_10bt_tx.s` (88
   words, one thread, clock 40 MHz or 20 MHz; link pulses and frames with
   CRC-32 checked by the 10BASE-T receiver model). Nothing has run against
   a real device and no hardware bring-up is planned (D-035).
-- `test/`: cocotb, 75 tests in 14 modules; `test/ser_unit` (plain Verilog
+- `test/`: cocotb, 77 tests in 14 modules (two decode captures of the I2C
+  master and the UART through the driver); `test/ser_unit` (plain Verilog
   bench of the serializer, no model).
 - `formal/`: FIFO, pins, core, capture, serializer (`ser.sby`, ten tasks),
   `equiv_core.sh`.
 - `fpga/alhambra2/`: synthesis and post-synthesis simulation only (D-035).
-- Mutation testing: the full campaign on the present design (run
-  37339747331, 2,118 mutants): 2,021 killed, 97 equivalent, no survivor,
-  no error.
+- Mutation testing: the full campaign on the present RTL (run
+  37339747331, 2,118 mutants): 2,021 killed, 97 equivalent (27 proved at
+  the module level, 20 at the top level, 20 by the reset-sequence miter,
+  30 on a written reason: 23 where the miter gave no verdict in 1,200 s
+  and 7 inside the macro), no survivor, no error.
+- `docs/SUBMISSION.md`: the text for the Jane Street form and the
+  datasheet; info.md's "How to test" works with the demo board and the
+  driver alone.
 
 ## Decisions (docs/DECISIONS.md)
 
-Closed up to D-042, except **D-040, open for Ahan**: moving to 512 words
-of program memory. The entry has the work list, the PDK's numbers and the
-recommendation (no: the larger macro costs 1.26 of the 1.37 ns of
-slow-corner margin on the path every worst endpoint shares). D-038 is
-resolved, D-039 is the serializer's overrun bit and abort rule, D-041 the
-slew repair margin in `config.json`.
-
-Also for Ahan, smaller: one max-cap entry in run 37339746749 (the macro's
-`A_DOUT[7]`, 68.4 fF against 64, all corners; reported, not fatal). The
-key that would repair it, `DESIGN_REPAIR_MAX_CAP_PCT`, is a `config.json`
-edit his slew instruction did not cover.
+Closed up to D-044; nothing is open for Ahan. D-040 is closed as no (256
+words stay); D-043 raised `DESIGN_REPAIR_MAX_CAP_PCT` to 30 and the branch
+run confirmed it (0 max-cap); D-044 merged it.
 
 ## Schedule to submission (deadline Monday 2027-01-18, two weeks of margin)
 
@@ -72,26 +74,29 @@ edit his slew instruction did not cover.
 
 ## Next tasks, in order
 
-1. Log the master `gds` run that the merge of `d039` started (see
-   `gh run list --workflow gds --branch master`) in docs/AREA.md and
-   WORKLOG.md with `scripts/gds_report.py`; it should equal 37339746749.
-   It is run 37363511492: its first attempt was cancelled by GitHub after
-   15 minutes ("The job was not acquired by Runner of type hosted"), as
-   was the `docs` run; both were started again at the end of session 6.
-   Check that the second attempt finished.
-   The script downloads about 300 MB per run and the account has an
-   egress limit: once per run.
-2. After Ahan's answer on D-040 and on the max-cap entry: act on them.
+1. Log the master `gds` run that the merge of `d043` started (run
+   37549369058, `gh run list --workflow gds --branch master`) in
+   docs/AREA.md and WORKLOG.md with `scripts/gds_report.py`; it should
+   equal 37534398328. One download per run (about 1 GB now; the account
+   has an egress limit).
+2. The 23 documented equivalents the miter did not settle in 1,200 s
+   (`tools/mutate_equivalents.md`, Proof column): a longer timeout, or
+   `abc`'s `dprove`/`&pdr` variants, may close more of them; each proof
+   that closes moves a row from "reason only" to proved (run
+   `prove-equivalents --only ID --timeout N --update` and re-mark the
+   table). Not required: every reason stands and no row got a
+   counterexample.
 3. Serializer follow-ups worth weighing: the receiver needs all eight SYNC
    bits (check what a low-speed hub may drop); the round-trip proof covers
    one message byte.
-4. Gate-level coverage of the new firmware if wanted (their tests are
-   lockstep; thirteen tests are pads-only).
-5. Run `--check-timing` on each program at its smallest supported divider
+4. Run `--check-timing` on each program at its smallest supported divider
    (`-D NAME=VALUE`), not only at the defaults.
-6. Then the rest of PLAN.md's stretch list (CRC engine as a
-   firmware-visible unit, Hardcaml port) and the datasheet polish before
-   the freeze.
+5. Then the rest of PLAN.md's stretch list (CRC engine as a
+   firmware-visible unit, Hardcaml port) within the schedule above, and
+   the datasheet polish before the freeze: the `How to test` steps have
+   never run on a board (D-035); the RP2350 UART1 pin claim (GP20 TX,
+   GP37 RX) is from the RP2350 datasheet's GPIO function table and should
+   be confirmed on the demo board's SDK before the final text.
 
 Rules that proved their worth: a lockstep harness cannot see a wrong
 program load or a host action sent outside its loop, so keep functional
@@ -105,4 +110,7 @@ the program load (BUGS 31); a proof that passes locally is not a proof
 that passes on the runner until it has (BUGS 44, 50); a mutant that only
 a random program kills is not killed: give it a directed test; a vector
 written from memory is checked by an independent computation before it
-goes into a test.
+goes into a test; a formal flow is trusted only after its controls behave
+(a fault that must fail and a change that must prove, both quick): four
+broken flows this session each looked like "hard proofs" until a control
+failed to prove in seconds (WORKLOG, step 2).

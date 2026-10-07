@@ -137,3 +137,32 @@ def test_equivalence_step_controls(tmp_path, monkeypatch):
     assert verdict(variant("assign fetch_addr = pc_oth;", "assign fetch_addr = pc_oth | 8'd0;")) == "module"
     assert verdict(variant("assign dbg_retire = commit;", "assign dbg_retire = ~commit;")) == "top"
     assert verdict(variant(".A_DLY      (1'b1),", ".A_DLY      (1'b0),", file="keyer_imem.v")) is None
+
+
+@pytest.mark.skipif(shutil.which("yosys") is None or shutil.which("yosys-abc") is None, reason="yosys or yosys-abc not installed")
+def test_reset_miter_controls(tmp_path, monkeypatch):
+    """The reset-sequence miter (prove-equivalents): a fault visible at a pad
+    from the first cycle after reset gets a counterexample, a change on an
+    output the top does not connect is proved, and the macro instantiation
+    is skipped. Both runs take seconds (the proof of a real documented
+    equivalent can take minutes and is not a unit test)."""
+    monkeypatch.setattr(M, "WORK", str(tmp_path))
+
+    def variant(needle, replacement, file="keyer_core.v", define=None):
+        src = open(os.path.join(M.SRC, file)).read().split("\n")
+        n = [i for i, l in enumerate(src) if needle in l]
+        assert len(n) == 1, (needle, n)
+        return dict(id="ctl", file=file, line=n[0] + 1, define=define, text=src[n[0]].replace(needle, replacement))
+
+    def verdict(mt, timeout=600):
+        work = os.path.join(str(tmp_path), "w")
+        M.prepare(work, mt)
+        return M.reset_miter(work, mt, timeout)
+
+    v, detail = verdict(variant("tx_shift <= 8'd0; miso <= 1'b0;", "tx_shift <= 8'd0; miso <= 1'b1;", file="keyer_host.v"))
+    assert v == "cex", (v, detail)                     # MISO high after reset (SEMANTICS 10.1)
+    v, detail = verdict(variant("assign dbg_retire = commit;", "assign dbg_retire = ~commit;"))
+    assert v == "proved", (v, detail)
+    v, detail = verdict(variant(".A_DLY      (1'b1),", ".A_DLY      (1'b0),", file="keyer_imem.v"))
+    assert v == "skipped", (v, detail)
+

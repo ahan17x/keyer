@@ -5,6 +5,8 @@
     python3 tools/mutate.py run    [FILE ...] [-j N] [--out F.jsonl] [--resume] [--sample N --seed S]
                                    [--shard I/N] [--only ID,...] [--timeout SECONDS]
     python3 tools/mutate.py report [F.jsonl ...] [--md FILE]
+    python3 tools/mutate.py prove-equivalents [F.jsonl ...] [-j N] [--only ID,...] [--timeout SECONDS]
+                                   [--out F.jsonl] [--update]
 
 A mutant is the design with one single-line fault. `run` first takes the
 unmutated design through every check (it must pass; the times order the
@@ -27,6 +29,16 @@ Status:
   survived    no check failed and it is not known to be equivalent.
 `report` merges result files, prints the score (killed / (killed + survived)),
 the survivors and the errors, and exits non-zero while any of either remain.
+`prove-equivalents` takes the mutants that only tools/mutate_equivalents.md
+vouches for (status survived in the result files, id in the table) and tries
+the reset-sequence miter on each (reset_miter below): a proof that the
+mutant and the design agree at the pads and at the program memory's port
+in every cycle from the release of reset on, for every input sequence the
+host contract allows. --update rewrites the result rows: a proved mutant
+becomes `equivalent` with the proof in its note, a counterexample is a
+survivor again (the mutant is not equivalent: it needs a test), a timeout
+leaves the row as it is (reason only). The macro instantiation
+(keyer_imem.v without KEYER_IMEM_FLOPS) is outside the miter and is skipped.
 
 Mutation operators (all confined to one source line):
   op      operator swap: + -, & |, ^ -> |, && ||, == !=, the relational
@@ -649,6 +661,173 @@ def yosys_equiv(work, mt, timeout=600):
     return None
 
 
+
+# ---------------------------------------------------------------- reset-sequence miter
+#
+# Two copies of the chip (gold: src/, gate: the mutant) in one wrapper, with
+# the same pads and the same program-memory read data (a free input: the
+# memory instance is everted out of each copy, so its port becomes outputs
+# of the design and its read data an input, and the proof is "the memory
+# sees the same inputs in every cycle and its read data is used the same
+# way", whatever a real memory does). Asserted, in every cycle from the
+# release of the first reset on: uo_out, uio_out, uio_oe, the memory's we
+# and addr, and its wdata when we is set, are equal. Assumed (SEMANTICS
+# 10.1, D-038): reset is asserted at power-up and every reset lasts at least
+# three cycles; CS_n is high in the two cycles before a release; each SCK
+# half-period is at least four cycles; CS_n stays high at least four cycles
+# between transactions; SCK is low when CS_n falls. The power-up state is
+# all zeros on both sides (every flop, the FIFO storage included); from
+# then on every reset the host applies is checked from every reachable
+# state, so a reset value the mutant changes is seen whenever the register
+# can hold something else before a reset. What this cannot see: a register
+# that the design resets but never writes otherwise, read with a non-zero
+# power-up value. Engine: abc's signal correspondence (scorr, which merges
+# the registers of the two copies that stay equal by induction) and then
+# PDR on the AIGER model, as formal/run_core_pdr.sh.
+
+RESET_STANDIN = """`default_nettype none
+module keyer_imem (
+    input  wire        clk,
+    input  wire        we,
+    input  wire [7:0]  addr,
+    input  wire [15:0] wdata,
+    output wire [15:0] rdata
+);
+    assign rdata = 16'd0;
+    wire _unused = &{clk, we, addr, wdata};
+endmodule
+"""
+
+RESET_WRAP = r"""module eqwrap(input wire clk, input wire rst_n, input wire ena, input wire [7:0] ui_in, input wire [7:0] uio_in,
+              input wire [15:0] rd);
+    wire [7:0] g_uo, m_uo, g_uio_out, m_uio_out, g_uio_oe, m_uio_oe, g_addr, m_addr;
+    wire g_we, m_we;
+    wire [15:0] g_wd, m_wd;
+    gold g(.clk(clk), .rst_n(rst_n), .ena(ena), .ui_in(ui_in), .uio_in(uio_in), .u_imem_rdata(rd),
+           .uo_out(g_uo), .uio_out(g_uio_out), .uio_oe(g_uio_oe),
+           .u_imem_we(g_we), .u_imem_addr(g_addr), .u_imem_wdata(g_wd));
+    gate m(.clk(clk), .rst_n(rst_n), .ena(ena), .ui_in(ui_in), .uio_in(uio_in), .u_imem_rdata(rd),
+           .uo_out(m_uo), .uio_out(m_uio_out), .uio_oe(m_uio_oe),
+           .u_imem_we(m_we), .u_imem_addr(m_addr), .u_imem_wdata(m_wd));
+    reg [2:0] rh = 3'b111;      // rst_n in the previous three cycles (power-up: as after a long reset)
+    reg [1:0] ch = 2'b11;       // CS_n in the previous two cycles
+    reg       live = 1'b0;      // a reset has been released
+    reg       started = 1'b0;
+    reg       sck_q = 1'b0, csn_q = 1'b1;
+    reg [2:0] sck_hold = 3'd4;  // cycles SCK has held its level, saturating at 4
+    reg [2:0] csn_hold = 3'd4;  // cycles CS_n has held its level, saturating at 4
+    wire sck = ui_in[0], csn = ui_in[2];
+    always @(posedge clk) begin
+        rh <= {rh[1:0], rst_n};
+        ch <= {ch[0], csn};
+        started <= 1'b1;
+        if (rst_n && !rh[0]) live <= 1'b1;
+        sck_q <= sck;
+        csn_q <= csn;
+        sck_hold <= (sck != sck_q) ? 3'd1 : (sck_hold == 3'd4 ? 3'd4 : sck_hold + 3'd1);
+        csn_hold <= (csn != csn_q) ? 3'd1 : (csn_hold == 3'd4 ? 3'd4 : csn_hold + 3'd1);
+    end
+    wire release = rst_n & ~rh[0];
+    always @(*) begin
+        if (!started) assume(!rst_n);
+        if (release) assume(rh == 3'b000 && ch == 2'b11);
+        if (sck != sck_q) assume(sck_hold == 3'd4);
+        if (csn_q && !csn) assume(csn_hold == 3'd4 && !sck);
+        if (live || release) begin
+            assert(g_uo == m_uo);
+            assert(g_uio_out == m_uio_out);
+            assert(g_uio_oe == m_uio_oe);
+            assert(g_we == m_we);
+            assert(g_addr == m_addr);
+            if (g_we) assert(g_wd == m_wd);     // write data matters only with the write enable
+        end
+    end
+endmodule
+"""
+
+RESET_SIDE = """read_verilog {defs} -I{src} {files} {standin}
+hierarchy -top {top}
+proc
+opt_clean
+setattr -mod -set keep_hierarchy 1 keyer_imem
+flatten -noscopeinfo
+memory_map
+opt_clean
+expose -evert -sep _ c:u_imem
+opt_clean
+rename {top} {name}
+design -stash {name}
+"""
+
+RESET_MITER = """design -copy-from gold -as gold gold
+design -copy-from gate -as gate gate
+read_verilog -formal -sv {wrap}
+hierarchy -check -top eqwrap
+proc
+flatten -noscopeinfo
+opt_clean
+opt
+async2sync
+setundef -undriven -init -zero
+techmap
+opt -fast -nodffe -nosdff
+dffunmap
+abc -g AND
+opt_clean
+stat
+write_aiger -zinit -map {out}/miter.aim {out}/miter.aig
+"""
+
+
+def reset_miter(work, mt, timeout=1800):
+    """The reset-sequence miter of the mutant in work/src against src/.
+    Returns (verdict, detail): proved / cex (detail: the frame) / unknown
+    (timeout, or the engine gave no verdict) / error (the model did not
+    build) / skipped (the macro instantiation)."""
+    if mt["file"] == "keyer_imem.v" and not mt["define"]:
+        return "skipped", "the macro instantiation is outside the miter"
+    out = os.path.join(work, "reset_miter")
+    os.makedirs(out, exist_ok=True)
+    standin = os.path.join(out, "imem_standin.v")
+    open(standin, "w").write(RESET_STANDIN)
+    wrap = os.path.join(out, "wrap.sv")
+    open(wrap, "w").write(RESET_WRAP)
+    files = [f for f in DESIGN if f != "keyer_imem.v"]
+    defs = "-D" + mt["define"] if mt["define"] else ""
+    ys = ""
+    for name, src in (("gold", SRC), ("gate", os.path.join(work, "src"))):
+        ys += RESET_SIDE.format(defs=defs, src=src, files=" ".join(os.path.join(src, f) for f in files),
+                                standin=standin, top=TOP, name=name)
+    ys += RESET_MITER.format(wrap=wrap, out=out)
+    open(os.path.join(out, "miter.ys"), "w").write(ys)
+    t0 = time.time()
+    status, _ = run_cmd(["yosys", "-q", "-l", os.path.join(out, "yosys.log"), os.path.join(out, "miter.ys")], out, timeout)
+    if status != "ok" or not os.path.exists(os.path.join(out, "miter.aig")):
+        return "error", "the model did not build (%s): see %s/yosys.log" % (status, out)
+    left = timeout - (time.time() - t0)
+    status, res = run_cmd(["yosys-abc", "-c", "read_aiger %s/miter.aig; fold; strash; scorr; print_stats; pdr; write_cex -a %s/cex.txt" % (out, out)],
+                          out, max(60, left))
+    open(os.path.join(out, "abc.log"), "w").write(res)
+    if "Property proved" in res:
+        return "proved", "%.0f s" % (time.time() - t0)
+    m = re.search(r"was asserted in frame (\d+)", res)
+    if m:
+        return "cex", "counterexample at frame %s (the inputs are in %s/cex.txt)" % (m.group(1), out)
+    if status == "timeout":
+        return "unknown", "timeout after %d s" % timeout
+    st = re.search(r"lat =\s*(\d+)\s+and =\s*(\d+)", res)
+    if st and st.group(1) == "0":
+        # scorr merged the two copies completely: the properties are constants
+        # that pdr does not judge (UNDECIDED); a combinational check does
+        status, res2 = run_cmd(["yosys-abc", "-c", "read_aiger %s/miter.aig; fold; strash; scorr; iprove" % out], out, 600)
+        open(os.path.join(out, "abc.log"), "a").write(res2)
+        if "UNSATISFIABLE" in res2:
+            return "proved", "%.0f s, every register merged by signal correspondence" % (time.time() - t0)
+        if "SATISFIABLE" in res2:
+            return "cex", "a constant difference after signal correspondence (see %s/abc.log)" % out
+    return "unknown", "no verdict: " + res.strip()[-120:]
+
+
 def documented_equivalents():
     ids = {}
     if os.path.exists(EQUIV_DOC):
@@ -820,6 +999,12 @@ def cmd_report(args):
     for fn in sorted({r["file"] for r in rows}):
         out.append("| `%s` | %s |" % (fn, " | ".join(str(x) for x in stat([r for r in rows if r["file"] == fn]))))
     out.append("| **all** | %s |" % " | ".join("**%s**" % x for x in stat(rows)))
+    eq = [r for r in rows if r["status"] == "equivalent"]
+    if eq:
+        kinds = (("proved by Yosys at the module level", "module level"), ("proved by Yosys at the top level", "top level"),
+                 ("reset-sequence miter", "reset-sequence miter"), ("tools/mutate_equivalents.md", "written reason only"))
+        parts = ["%d %s" % (sum(k in r["note"] for r in eq), label) for k, label in kinds]
+        out += ["", "Equivalent: " + ", ".join(parts) + "."]
     out += ["", "| Operator | Mutants | Killed | Survived | Equivalent | Error | Score |", "|---|---|---|---|---|---|---|"]
     for op in ("op", "neg", "const", "cond", "stuck"):
         out.append("| %s | %s |" % (op, " | ".join(str(x) for x in stat([r for r in rows if r["op"] == op]))))
@@ -842,6 +1027,69 @@ def cmd_report(args):
     if args.md:
         open(args.md, "w").write(text)
     return 1 if left else 0
+
+
+def cmd_prove_equivalents(args):
+    paths = args.results or [DEFAULT_OUT]
+    rows = read_jsonl(paths)
+    doc = documented_equivalents()
+    if args.only:
+        want = [i for i in args.only.split(",")]
+    else:
+        want = sorted(i for i, r in rows.items() if r["status"] == "survived" and i in doc)
+    mutants = {m["id"]: m for m in all_mutants(DEFAULT_FILES)}
+    missing = [i for i in want if i not in mutants]
+    if missing:
+        print("not a mutant of the present sources (the line changed?): " + " ".join(missing))
+    todo = [mutants[i] for i in want if i in mutants]
+    print("%d mutants backed only by a written reason; %d workers, %d s each" % (len(todo), args.jobs, args.timeout), flush=True)
+    os.makedirs(WORK, exist_ok=True)
+    lock, results = threading.Lock(), {}
+
+    def work(mt):
+        wdir = os.path.join(WORK, "prove_" + mt["id"])
+        t0 = time.time()
+        try:
+            prepare(wdir, mt)
+            verdict, detail = reset_miter(wdir, mt, args.timeout)
+        except Exception as e:                      # a harness fault is not a verdict
+            verdict, detail = "error", "harness: %r" % (e,)
+        rec = dict(id=mt["id"], file=mt["file"], line=mt["line"], verdict=verdict, detail=detail,
+                   seconds=round(time.time() - t0, 1))
+        with lock:
+            results[mt["id"]] = rec
+            if args.out:
+                with open(args.out, "a") as f:
+                    f.write(json.dumps(rec, sort_keys=True) + "\n")
+            print("[%d/%d] %-18s %-8s %5.0f s  %s" % (len(results), len(todo), rec["id"], verdict, rec["seconds"], detail), flush=True)
+        if not args.keep and verdict != "cex":
+            shutil.rmtree(wdir, ignore_errors=True)
+
+    if args.out and not args.resume:
+        open(args.out, "w").close()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        list(pool.map(work, todo))
+    counts = {k: sum(r["verdict"] == k for r in results.values()) for k in ("proved", "cex", "unknown", "error", "skipped")}
+    print("proved %(proved)d, counterexample %(cex)d, unknown %(unknown)d, error %(error)d, skipped %(skipped)d" % counts)
+    if args.update:
+        for p in paths:
+            if not os.path.exists(p):
+                continue
+            lines = []
+            for line in open(p):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                res = results.get(r["id"])
+                if res and res["verdict"] == "proved":
+                    r["status"], r["note"] = "equivalent", "proved by the reset-sequence miter (%.0f s)" % res["seconds"]
+                elif res and res["verdict"] == "cex":
+                    r["status"], r["note"] = "survived", "reset-sequence miter: %s; not equivalent, needs a test" % res["detail"]
+                lines.append(json.dumps(r, sort_keys=True))
+            open(p, "w").write("\n".join(lines) + "\n")
+            print("updated " + p)
+    return 1 if counts["cex"] or counts["error"] else 0
 
 
 DEFAULT_OUT = os.path.join(WORK, "results.jsonl")
@@ -868,8 +1116,17 @@ def main(argv=None):
     p = sub.add_parser("report")
     p.add_argument("results", nargs="*")
     p.add_argument("--md", help="also write the report to this file")
+    p = sub.add_parser("prove-equivalents")
+    p.add_argument("results", nargs="*", help="result files (default test/sim_build/mutation/results.jsonl)")
+    p.add_argument("--only", help="comma-separated mutant ids (default: every documented equivalent with status survived)")
+    p.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    p.add_argument("--timeout", type=float, default=1800, help="seconds per mutant for the model build and the proof (default 1800)")
+    p.add_argument("--out", help="JSONL file for the verdicts (one line per mutant)")
+    p.add_argument("--resume", action="store_true", help="append to --out instead of truncating it")
+    p.add_argument("--update", action="store_true", help="rewrite the result rows with the verdicts (see the module docstring)")
+    p.add_argument("--keep", action="store_true", help="keep the scratch directory of every mutant (a counterexample's is always kept)")
     args = ap.parse_args(argv)
-    return {"list": cmd_list, "run": cmd_run, "report": cmd_report}[args.cmd](args)
+    return {"list": cmd_list, "run": cmd_run, "report": cmd_report, "prove-equivalents": cmd_prove_equivalents}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -534,4 +534,27 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   run 37534398328: 0 max-cap at all corners (1 before), +12.43 / +8.24 /
   +1.09 ns, 27.2%, 0 max-slew, precheck 9/9, gl_test passing: merged
   (D-044). The sign-off checks of the design now report nothing at all.
+- **Step 2.** `tools/mutate.py prove-equivalents`: the reset-sequence
+  miter (two copies of the chip, the memory everted out of each so its
+  read data is a shared free input, pads and memory port asserted equal
+  from the release of reset on under the host-timing assumptions of
+  SEMANTICS 10.1, all-zero power-up, abc `scorr` then `pdr`), 1,200 s per
+  mutant. Of the 50 reason-only rows: 20 proved (10 to 25 s each; now
+  `equivalent` in docs/mutation_full.jsonl with the proof in the note), 23
+  without a verdict in the time (reason only), 7 inside the macro (reason
+  only), 0 counterexamples. `mutate_equivalents.md` has a Proof column;
+  `report` prints the split (27 module level, 20 top level, 20 miter, 30
+  reason only); controls in `test_mutate.py`. Four wrong turns on the
+  way, each caught by a control that should have been trivial: Yosys's
+  `miter` pass folds undriven wires to x and deleted the datapath (a
+  hand-written wrapper instead); escaped dotted port names in the wrapper
+  were silently dropped, so both copies ran on an undriven instruction
+  word (`expose -evert -sep _` on the kept memory instance gives plain
+  names); `opt_merge` cannot merge the two copies' state (feedback), so a
+  structural merge never collapses them (abc's `scorr` does); and `pdr`
+  reports UNDECIDED on a network `scorr` has reduced to constants
+  (`iprove` settles it).
+- End of session: `bash scripts/check_all.sh` green on master (485 pytest,
+  77 cocotb, lint, the unit bench, five formal groups). Pushed. The merge
+  of `d043` started master `gds` run 37549369058; not logged yet (HANDOFF).
 

@@ -2,7 +2,7 @@
 
 The text for the Jane Street protocol emulator competition form and for the
 Tiny Tapeout datasheet (`docs/info.md`). Numbers are those of
-`docs/AREA.md` (run 37363511492, master) and `docs/VERIFICATION.md` as of
+`docs/AREA.md` (run 37534398328, merged as D-044) and `docs/VERIFICATION.md` as of
 2026-10-06; update both before the final submission (docs/HANDOFF.md has
 the schedule). Keep the two texts consistent: the datasheet's "How it
 works" and "Verification" paragraphs are the long form of sections 1 to 3
@@ -31,10 +31,10 @@ synchroniser with exactly two clocks of latency. The bidirectional pins
 have a per-pin open-drain mode in which the pad can never be driven high,
 which makes I2C and similar buses safe by construction. The program memory
 is 256 words of 16 bits in an SRAM macro; each thread has a 16-byte inbox
-and a 16-byte outbox to the host. The design is 15,085 standard cells plus
-the macro, 27.1% of a 6x4 Tiny Tapeout block on IHP's 130 nm CMOS5L
-process, signed off at 50 MHz with setup met at all three corners (+12.39
-ns fast, +8.25 ns typical, +0.99 ns slow).
+and a 16-byte outbox to the host. The design is 15,109 standard cells plus
+the macro, 27.2% of a 6x4 Tiny Tapeout block on IHP's 130 nm CMOS5L
+process, signed off at 50 MHz with setup met at all three corners (+12.43
+ns fast, +8.24 ns typical, +1.09 ns slow).
 
 ## 2. What is unique about it
 
@@ -94,7 +94,7 @@ that reproduces its numbers:
 
 - Lint and compile with Verilator `-Wall` and Icarus; a single encoding
   table generates the header the RTL decodes with.
-- 484 model and tool tests pin the golden model, the assembler and the
+- 485 model and tool tests pin the golden model, the assembler and the
   host driver to the contract instruction by instruction.
 - Every firmware program (twelve) runs against a model of its peer that
   knows only the protocol, eleven models in all, 313 test cases; the USB
@@ -119,15 +119,15 @@ that reproduces its numbers:
   the RTL (operator swaps, removed negations, flipped constants, inverted
   conditions, stuck-at on every condition, enable and strobe); 2,021 are
   killed by a test failure or a formal counterexample, 97 are equivalent
-  (no behaviour at the pins or in any state a test may read differs:
-  proved by Yosys, or argued in writing where the proof needs the reset
-  sequence), none survives. The campaign found no fault in the RTL or the
+  (no behaviour at the pins or in any state a test may read differs: 67
+  proved with Yosys and abc, 47 of them from any state and 20 by a
+  sequential miter from reset, 30 argued in writing), none survives. The campaign found no fault in the RTL or the
   model; it found two holes in the suite, both closed.
 - Static timing: every hardening run is checked at all three process
   corners, and the merge rule for any change under `src/` is a clean run
   (setup met at every corner, hold clean, LVS and antenna clean, precheck
-  passing) under 40% utilisation. The last run had no slew violation and
-  one reported capacitance entry on the macro's output, being repaired.
+  passing) under 40% utilisation. The last run (37534398328) reports
+  nothing: no slew, capacitance or routing entry at any corner.
 
 Every bug found by any layer is a row in `docs/BUGS.md` (51 rows: five in
 the RTL, found by review against the contract, by a lockstep test and by

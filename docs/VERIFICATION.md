@@ -19,13 +19,13 @@ each other.
 | # | Layer | What it compares | Size | Command |
 |---|---|---|---|---|
 | 1 | Lint and compile | the RTL against the language rules | Verilator `-Wall`, Icarus `-g2005`, header freshness | `bash scripts/check_all.sh quick` |
-| 2 | Model tests | the golden model, the assembler, the encoding table and the host driver against SEMANTICS and isa.md | 484 pytest cases (131 on the model, the serializer scenarios and the host driver with its capture decoders, 6 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
+| 2 | Model tests | the golden model, the assembler, the encoding table and the host driver against SEMANTICS and isa.md | 485 pytest cases (131 on the model, the serializer scenarios and the host driver with its capture decoders, 7 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
 | 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 313 pytest cases; 10 cases of published and hand-built vectors against the USB and Ethernet models | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py tools/test_protomodels.py -q` |
 | 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 77 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
 | 5 | Formal | the RTL against properties stated from SEMANTICS, for all inputs | FIFO, pin unit, core (timer, control, thread select), capture and replay, serializer (stuffing, CRC, round trip) | `cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh && yowasp-sby -f capture.sby && yowasp-sby --yosys yowasp-yosys -f ser.sby` |
 | 6 | Equivalence | a restructured core against the core it replaces | every flop input and output bit | `bash formal/equiv_core.sh GIT_REF` |
 | 7 | Gate level | the hardened netlist (and the FPGA netlist) against the pads-only tests | the 25 tests that do not read RTL internals (23 in the runs logged so far, which predate the two capture-decode tests) | `gl_test` job of the `gds` workflow; `bash fpga/alhambra2/sim.sh` |
-| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 2,118 mutants on GitHub (2026-10-05, the design with the serializer, D-038 and D-039); every survivor processed: 2,021 killed, 97 equivalent | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4` |
+| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 2,118 mutants on GitHub (2026-10-05, the design with the serializer, D-038 and D-039); every survivor processed: 2,021 killed, 97 equivalent (67 proved, 30 on a written reason) | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4`; `python3 tools/mutate.py prove-equivalents docs/mutation_full.jsonl` |
 | 9 | Static firmware timing | every `WAITD` of every program against the slots the program can spend before it, on all paths | 38 `WAITD` sites in 12 programs | `python3 tools/keyerasm.py fw/NAME.s --check-timing` |
 
 ### 1. Lint and compile
@@ -396,6 +396,40 @@ The nine open ones, by the rule of D-031 (each re-run locally afterwards):
 errors, 0 survivors: 2,021 of 2,021 non-equivalent mutants.** No RTL or
 model fault was found; the campaign found two holes in the suite (the pin
 8 boundary and the same-cycle cases of `rx_drop`) and both are closed.
+
+**The documented equivalents, proved where a proof closes (2026-10-06).**
+The campaign's equivalence check (`yosys_equiv`) asks for equality from
+every state; the 50 rows of `tools/mutate_equivalents.md` are equal only
+from the states a reset produces, so they rested on written reasons. `python3
+tools/mutate.py prove-equivalents` now tries the **reset-sequence miter**
+on each: two copies of the chip (the design and the mutant) with the same
+pads and the same program-memory read data (the memory instance is
+everted out of each copy: its port becomes outputs of the design and its
+read data a free input, so the proof covers any memory contents), asserted
+equal at `uo_out`, `uio_out`, `uio_oe` and at the memory's write enable,
+address and, under the enable, write data, in every cycle from the release
+of the first reset on, for every input sequence SEMANTICS 10.1 allows the
+host (reset asserted at power-up and held at least three cycles, CS_n high
+in the two cycles before a release, SCK half-periods of at least four
+cycles, CS_n high at least four cycles between transactions, SCK low when
+CS_n falls); the power-up state is all zeros on both sides and every later
+reset is checked from every reachable state. Engine: abc's signal
+correspondence (which merges the registers of the two copies that stay
+equal by induction) and PDR on the AIGER model; 1,200 s per mutant.
+Controls in `tools/test_mutate.py`: a fault visible at a pad after reset
+gets a counterexample, a change on an output the top does not use is
+proved, the macro branch is skipped.
+
+| Verdict | Mutants | What they are |
+|---|---|---|
+| proved by the miter (`docs/mutation_full.jsonl` now carries them as `equivalent` with the proof in the note) | 20 | write pulses and values that reset leaves at 1 for one cycle with a value of 0 (`host-*_we`, `run_val`, `rst_pulse`, `pc_we`, `outbox_pop`, `fifo_clr`, `wdata_q`, `fetch_ok`, `blocked`), the capture queue words `q0`, `q1`, the `uo` edge history (`uo_d1`, `uo_d2`), all in 10 to 25 s |
+| no verdict in 1,200 s: the row stands on its written reason | 23 | registers whose stale value is overwritten only by a later host byte or edge (`is_write`, `reg_sel`, `shift_in`, `rx_byte`, `imem_hi`, `imem_lo`, the synchroniser resets, the replay prefetch words and `pf_fly`, `level2` and `lvl_d*`, the `IMEM_DATA` read register of D-038) |
+| outside the miter | 7 | the BIST tie-offs inside the macro instantiation, argued from the macro's transistor netlist |
+
+No row got a counterexample, so the 30 reasons stand unchallenged by the
+proof as far as it went. What the miter cannot see: a register that the
+design resets but never writes otherwise, read with a non-zero power-up
+value (the power-up state is zero on both sides); the macro's inside.
 
 Would miss: faults the operators do not make (two-line faults, timing,
 anything inside the macro); code under `KEYER_IMEM_FLOPS` is tested with
