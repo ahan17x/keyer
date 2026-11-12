@@ -750,7 +750,7 @@ hierarchy -top {top}
 proc
 opt_clean
 setattr -mod -set keep_hierarchy 1 keyer_imem
-flatten -noscopeinfo
+flatten{noscope}
 memory_map
 opt_clean
 expose -evert -sep _ c:u_imem
@@ -764,7 +764,7 @@ design -copy-from gate -as gate gate
 read_verilog -formal -sv {wrap}
 hierarchy -check -top eqwrap
 proc
-flatten -noscopeinfo
+flatten{noscope}
 opt_clean
 opt
 async2sync
@@ -777,6 +777,24 @@ opt_clean
 stat
 write_aiger -zinit -map {out}/miter.aim {out}/miter.aig
 """
+
+
+
+_NOSCOPE = None
+
+
+def flatten_noscope():
+    """" -noscopeinfo" when the installed Yosys has that option of `flatten`
+    (0.39 on), "" before it, when there are no $scopeinfo cells: Ubuntu 24.04
+    ships 0.33, and that is what the `check` workflow runs (BUGS 59)."""
+    global _NOSCOPE
+    if _NOSCOPE is None:
+        try:
+            h = subprocess.run(["yosys", "-h", "flatten"], capture_output=True, text=True, timeout=60).stdout
+        except (OSError, subprocess.SubprocessError):
+            h = ""
+        _NOSCOPE = " -noscopeinfo" if "-noscopeinfo" in h else ""
+    return _NOSCOPE
 
 
 def reset_miter(work, mt, timeout=1800):
@@ -797,8 +815,8 @@ def reset_miter(work, mt, timeout=1800):
     ys = ""
     for name, src in (("gold", SRC), ("gate", os.path.join(work, "src"))):
         ys += RESET_SIDE.format(defs=defs, src=src, files=" ".join(os.path.join(src, f) for f in files),
-                                standin=standin, top=TOP, name=name)
-    ys += RESET_MITER.format(wrap=wrap, out=out)
+                                standin=standin, top=TOP, name=name, noscope=flatten_noscope())
+    ys += RESET_MITER.format(wrap=wrap, out=out, noscope=flatten_noscope())
     open(os.path.join(out, "miter.ys"), "w").write(ys)
     t0 = time.time()
     status, _ = run_cmd(["yosys", "-q", "-l", os.path.join(out, "yosys.log"), os.path.join(out, "miter.ys")], out, timeout)
