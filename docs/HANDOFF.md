@@ -1,6 +1,6 @@
 # Handoff: state of the project and the next task
 
-Updated 2026-10-06 (end of Claude Code session 7). This is the first file a
+Updated 2026-11-12 (Claude Code session 8). This is the first file a
 session reads. Keep it short: what exists, what is decided, what is open,
 what to do next.
 
@@ -20,7 +20,13 @@ what to do next.
   typical / slow), no violation at any corner, hold clean, LVS and antenna
   0, 0 max-slew, 0 max-cap, precheck 9/9, gl_test passing: the sign-off
   checks report nothing. The master run that the merge started
-  (37549369058) should equal it; log it (see "Next tasks").
+  (37549369058) equals it in every number (logged in AREA.md, session 8).
+- **`docs/FACTS.md`** (session 8): every external fact the project rests
+  on, where it is used, its source, the source's words and a status
+  (63 verified, 3 computed, 20 unverified and marked so where they are
+  used). CLAUDE.md: no external fact without a row there from a fetched
+  source. The competition post and the template changed after session 7
+  (FACTS C3, T11): see "Decisions".
 - `docs/SEMANTICS.md` v0.5 is the contract (section 15: the serializer);
   `docs/SERIALIZER.md` is the serializer's design note and programmer's
   guide; `docs/VERIFICATION.md` describes the nine verification layers.
@@ -58,15 +64,27 @@ what to do next.
 
 ## Decisions (docs/DECISIONS.md)
 
-Closed up to D-044; nothing is open for Ahan. D-040 is closed as no (256
-words stay); D-043 raised `DESIGN_REPAIR_MAX_CAP_PCT` to 30 and the branch
-run confirmed it (0 max-cap); D-044 merged it.
+Closed up to D-044. **Two are open for Ahan, both from changes outside the
+repo found by the audit of 2026-11-12:**
+
+- **D-046** (ask first): the Tiny Tapeout template's `main` branch now uses
+  `tt-gds-action@ttihp27a` (LibreLane 3.1.0.dev4, the support tools' `main`
+  with a tenth precheck); this repo's `gds` workflow is still on
+  `@ihp-cmos5l`. Recommendation: move on a branch, harden, merge by the
+  D-037 rule, before anything else under `src/`.
+- **D-045**: the post now says the maximum is 8x4 tiles and "Set the tile
+  size in info.yaml to 8x4"; the repo is 6x4 (27.2% used). Recommendation:
+  e-mail the organisers whether a smaller block is acceptable and harden
+  8x4 on a branch meanwhile (`info.yaml` only), after D-046.
+
+Also for Ahan: `docs/SUBMISSION.md` section 5 (how AI tools were used; the
+post asks for it) is a draft to review.
 
 ## Schedule to submission (deadline Monday 2027-01-18, two weeks of margin)
 
 | Date | Milestone |
 |---|---|
-| until Fri 2026-12-04 | Feature work on branches (PLAN.md's stretch list, the serializer follow-ups below), each merged by the hardening rule of D-037: setup met at all corners, utilisation under 40%, precheck 9 of 9, `gl_test` passing. Nothing is started after this date that cannot be merged by the freeze. |
+| until Fri 2026-12-04 | **First D-046 (the `ttihp27a` flow) and then D-045 (8x4), each one hardening run on a branch, as soon as Ahan answers; both must be merged or dropped before the freeze week.** Then feature work on branches (PLAN.md's stretch list, the serializer follow-ups below), each merged by the hardening rule of D-037: setup met at all corners, utilisation under 40%, precheck 9 of 9, `gl_test` passing. Nothing is started after this date that cannot be merged by the freeze. |
 | Mon 2026-12-07 to Fri 2026-12-11 | Freeze week. On the candidate commit: the full `check` suite on the runner, a full mutation campaign (`mutation` workflow, every survivor processed), a master hardening run logged in AREA. **RTL freeze Fri 2026-12-11**: tag `rtl-freeze`; from then on nothing under `src/`, `info.yaml` or `macro/` changes. |
 | Sat 2026-12-12 to Wed 2026-12-30 | Docs only: `docs/SUBMISSION.md` and `docs/info.md` final (every number from the freeze run and the freeze campaign), README, the datasheet render checked on the `docs` workflow, VERIFICATION and AREA refreshed. Tools, firmware and tests may still change if the datasheet stays true; they do not touch silicon. An RTL fault found in this period reopens the freeze: fix, re-run the freeze week's checks, re-tag, and the docs period restarts from the new run; the last date on which that still fits is Mon 2026-12-21. |
 | Thu 2026-12-31 | The final hardening run, started by hand (`gds` workflow, dispatch) on the exact commit to be submitted (tag `submission`), logged in AREA with `scripts/gds_report.py`; it must equal the freeze run in every number. `gl_test` and precheck green on it. |
@@ -74,29 +92,37 @@ run confirmed it (0 max-cap); D-044 merged it.
 
 ## Next tasks, in order
 
-1. Log the master `gds` run that the merge of `d043` started (run
-   37549369058, `gh run list --workflow gds --branch master`) in
-   docs/AREA.md and WORKLOG.md with `scripts/gds_report.py`; it should
-   equal 37534398328. One download per run (about 1 GB now; the account
-   has an egress limit).
-2. The 23 documented equivalents the miter did not settle in 1,200 s
-   (`tools/mutate_equivalents.md`, Proof column): a longer timeout, or
-   `abc`'s `dprove`/`&pdr` variants, may close more of them; each proof
-   that closes moves a row from "reason only" to proved (run
-   `prove-equivalents --only ID --timeout N --update` and re-mark the
-   table). Not required: every reason stands and no row got a
-   counterexample.
-3. Serializer follow-ups worth weighing: the receiver needs all eight SYNC
-   bits (check what a low-speed hub may drop); the round-trip proof covers
-   one message byte.
-4. Run `--check-timing` on each program at its smallest supported divider
-   (`-D NAME=VALUE`), not only at the defaults.
+1. Ask Ahan D-046, then D-045 (one at a time, each with its
+   recommendation), and carry out the answers: a branch, a hardening run
+   logged in AREA.md with `scripts/gds_report.py`, the merge rule of D-037.
+   Fetch the post and the template again first (FACTS rule: they change).
+   If the tile size changes, every "6x4" and utilisation figure in
+   CLAUDE.md, README, PLAN, info.yaml, SUBMISSION and info.md follows.
+2. The 23 documented equivalents without a miter verdict: session 8's
+   campaign (abc variants, then PDR at 3,600 s) is recorded in WORKLOG and
+   `tools/mutate_equivalents.md`. The lead that is left: the miter
+   strengthened with "every register pair except the mutated one is
+   equal" (prototype described in WORKLOG, session 8; bounded check clean,
+   PDR needs invariants that count SCK edges). Not required: every reason
+   stands and no row got a counterexample.
+3. The unverified rows of FACTS.md that matter most for the datasheet:
+   IEEE 802.3 (E1 to E6, E9 to E11; needs an IEEE account for the GET
+   programme) and the SWD connect sequence (O5). If Ahan can supply the
+   PDFs, check the rows and turn them to verified.
+4. Serializer follow-up still open: the round-trip proof covers one message
+   byte. (The SYNC question is closed: a hub may not shorten a low-speed
+   SYNC, FACTS U3.)
 5. Then the rest of PLAN.md's stretch list (CRC engine as a
    firmware-visible unit, Hardcaml port) within the schedule above, and
    the datasheet polish before the freeze: the `How to test` steps have
-   never run on a board (D-035); the RP2350 UART1 pin claim (GP20 TX,
-   GP37 RX) is from the RP2350 datasheet's GPIO function table and should
-   be confirmed on the demo board's SDK before the final text.
+   never run on a board (D-035). The pin claim (GP20 UART1 TX on `ui[3]`,
+   GP37 UART1 RX on `uo[4]`) is now confirmed against the SDK's
+   `GPIOMapTTDBv3` and the RP2350 datasheet (FACTS T8, T9).
+
+Notes for whoever logs a run: artifacts expire 90 days after the run
+(FACTS G3; the October runs on 2027-01-04). "The account has an egress
+limit", as session 7 wrote here, has no source (FACTS G4, unverified);
+`GDS_logs` is 147 MB compressed and one download per run is still enough.
 
 Rules that proved their worth: a lockstep harness cannot see a wrong
 program load or a host action sent outside its loop, so keep functional
@@ -113,4 +139,7 @@ written from memory is checked by an independent computation before it
 goes into a test; a formal flow is trusted only after its controls behave
 (a fault that must fail and a change that must prove, both quick): four
 broken flows this session each looked like "hard proofs" until a control
-failed to prove in seconds (WORKLOG, step 2).
+failed to prove in seconds (WORKLOG, step 2); a waiver or an allowance is
+written for one cause and must not cover another (BUGS 55); an outside
+fact is fetched, not remembered, and the post and the template are fetched
+again before they are relied on (FACTS, session 8).
