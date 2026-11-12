@@ -558,3 +558,75 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   77 cocotb, lint, the unit bench, five formal groups). Pushed. The merge
   of `d043` started master `gds` run 37549369058; not logged yet (HANDOFF).
 
+## 2026-11-12 (session 8: external-facts audit, master run logged, timing check at the smallest dividers, proof variants)
+
+- **Step 1.** Master run 37549369058 (501d9d5, the merge of `d043`) logged
+  in AREA.md: success, equal to branch run 37534398328 in every number
+  (15,109 cells, 27.2%, +12.43 / +8.24 / +1.09 ns, 0 max-slew, 0 max-cap,
+  139 max-fanout, wire length 617,009 um, precheck 9/9, gl_test passing).
+- **Audit of external facts: `docs/FACTS.md`.** 87 rows in eight tables
+  (USB low speed 24, 10BASE-T 14, UART/SPI/I2C 8, other protocols 8, IHP 9,
+  Tiny Tapeout 11, the competition 9, GitHub Actions 4; one of them, P6,
+  only records that a model parameter is not an external fact), each with
+  where it is used, the source, the source's words and a status. Fetched
+  that day: the USB 2.0 specification and the USB-IF CRC paper (PDF text
+  extracted with pypdf in a scratch venv), the CRC catalogue, fpga4fun's
+  10BASE-T pages, the UNH-IOL MAU test suite, the IEEE EtherType registry,
+  pid.codes, NXP UM10204, the WS2812B datasheet, ARM IHI 0031G, the RP2350
+  datasheet, the Tiny Tapeout SDK, template, support tools and gds action,
+  the IHP PDK's CMOS5L liberty, GitHub's limits page and the Jane Street
+  post. Not reachable: IEEE 802.3 (Xplore needs an account), IEEE 1149.1,
+  a PS/2 primary source, smbus.org. Result: 63 verified, 3 computed, 20
+  unverified (each marked in the file that uses it), P6 not a fact.
+  What came out wrong or changed:
+  - `fw/usb_ls_device.s` said the host has 6.5 bit times to answer a
+    device; USB 2.0 7.1.18.1 gives it 7.5 (6.5 is the device's limit with a
+    detachable cable). A comment only: the firmware passes with every host
+    handshake at 7.5 (and at 8; it fails from 9). New test, BUGS 52.
+  - **A hub may not shorten a low-speed SYNC** (7.1.10's allowance is the
+    high-speed sentence; 7.1.7.4.1 limits a hub to 5 ns on the first bit;
+    11.7.2.2 keeps the first edge). So the receiver's eight-bit SYNC rule
+    is not a spec bug and nothing under `src/` changed: no hardening run
+    was needed this session.
+  - The USB host model's 6.5-bit response limit and 25 ns jitter limit are
+    stricter than what USB asks of a low-speed device (7.5, 95 ns): kept as
+    margin and labelled.
+  - PLAN.md's first tile estimate (720,000 um^2) marked superseded (BUGS 53).
+  - **The competition post changed on 2026-11-09**: the maximum is now 8x4
+    tiles ("Set the tile size in info.yaml to 8x4"), and the template's
+    `main` branch targets CMOS5L with `tt-gds-action@ttihp27a` (LibreLane
+    3.1.0.dev4, a tenth precheck). Both are open decisions for Ahan (D-045,
+    D-046); nothing was changed for them. The post also asks entrants to
+    describe their use of AI tools: SUBMISSION.md section 5 is a draft
+    (BUGS 54).
+  - Confirmed on the way: the demo board's pin claim of info.md (GP20 is
+    UART1 TX and `ui[3]`, GP37 is UART1 RX and `uo[4]`) holds on the SDK's
+    `GPIOMapTTDBv3` and the RP2350 datasheet's function table; D-028's
+    `TIMING_VIOLATION_CORNERS` `*typ*` is in the run's `resolved.json`; run
+    artifacts expire after 90 days (the October runs on 2027-01-04).
+  CLAUDE.md has the rule: no external fact without a FACTS row from a
+  fetched source.
+- **Step 4 (`--check-timing` at the smallest dividers).** Ten
+  program/divider pairs (UART 12, SPI 10 and 12, I2C 30, JTAG 18, SWD 12,
+  PS/2 tick 2500, WS2812 6/10/26, USB 16, Ethernet at 20 MHz), now a
+  parametrised test. One finding: at `SPI_HALF` 10 and 11 the SPI master's
+  wait before CS_n rises is one slot late on every frame, and the check
+  exited 0 because a waiver written for the blocking `PUSH` also waived
+  LATE. Harmless there (CS_n rises 12 cycles after SCK fell), but the
+  masking was not: `keytiming.py` now waives LATE only for a reason that
+  says "late", and a setting below a program's minimum is reported even
+  under another waiver (`ws2812.s` control). BUGS 55.
+- **Step 2 (the 23 unsettled equivalence proofs).** `prove-equivalents
+  --engine` runs abc variants on the reset-sequence miter (dprove, `scorr
+  -F 2`, retiming, interpolation), with controls. Why the 23 are hard, from
+  the kept models: when one register differs, signal correspondence merges
+  almost nothing (2,935 to 3,028 latches left of 3,107; it is all or
+  nothing, the 20 proved rows are the ones it merges completely), and PDR
+  then has to rediscover the equality of 1,500 register pairs. Also tried
+  by hand on three rows: the miter strengthened with "every register pair
+  but the mutated one is equal" (bounded check clean to 91 frames, PDR
+  still without a verdict in 150 to 240 s, its frames growing by hundreds
+  of clauses: the invariants count SCK edges). The campaign on all 23 (the
+  variants at 240 s each, then PDR at 3,600 s on what is left) is logged
+  below.
+

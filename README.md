@@ -16,7 +16,7 @@ for the overview and [docs/isa.md](docs/isa.md) for the instruction set.
 | Path | What |
 |---|---|
 | `src/` | Verilog RTL. `tt_um_ahan17x_keyer.v` is the top. `keyer_isa.vh` is generated. |
-| `docs/` | Datasheet source (`info.md`), the ISA reference (`isa.md`), the cycle-exact contract (`SEMANTICS.md`), the serializer guide (`SERIALIZER.md`), decisions and bug ledger. |
+| `docs/` | Datasheet source (`info.md`), the ISA reference (`isa.md`), the cycle-exact contract (`SEMANTICS.md`), the serializer guide (`SERIALIZER.md`), the external facts with their sources and status (`FACTS.md`), decisions and bug ledger. |
 | `tools/keyer_isa.py` | Encoding table, the single source of truth for opcodes. |
 | `tools/keyerasm.py` | Assembler. `--check-timing` (`tools/keytiming.py`) bounds the slots before every `WAITD` on all paths and compares them with the deadline distance. |
 | `tools/keyersim.py` | Cycle-exact instruction-set simulator (the golden model). |
