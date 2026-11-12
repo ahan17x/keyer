@@ -328,6 +328,7 @@ routing, which took twice as long. Both conditions for the merge hold
 | 37339746749 | the above + D-039 and the slew margin of D-041 (103b52d, `d039`) | 15,085 + macro | 27.1% | +12.39 / +8.25 / +0.99 (0) | 54 min | 9/9 | pass |
 | 37363511492 | the same design as 37339746749 (71d8a6d, master after D-042) | 15,085 + macro | 27.1% | +12.39 / +8.25 / +0.99 (0) | 55 min | 9/9 | pass |
 | 37534398328 | the same RTL with the capacitance repair margin of D-043 (19440d7, `d043`) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
+| 37549369058 | the same design as 37534398328 (501d9d5, master after D-044) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
 
 ### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
 
@@ -449,3 +450,21 @@ merged as D-044. The sign-off checks now report nothing: no setup or hold
 violation at any corner, no slew, capacitance or routing DRC entry, LVS and
 antenna clean.
 
+### Run 37549369058, 2026-10-06, commit 501d9d5 (master after the merge of `d043`, D-044)
+
+Started by the push of the merge; logged 2026-11-12 (session 8) from
+`python3 scripts/gds_report.py 37549369058` (downloaded once). Jobs: `gds`
+success (1 h 40 min), `gl_test` success, `viewer` success, `precheck`
+success (36 min, all nine checks). **Equal to branch run 37534398328 in
+every number**: 15,109 standard cells (1,601 flops, 3,292 timing-repair
+buffers) plus the macro, 73,054 instances with fill, 216,888 um^2 + 28,127
+um^2 macro, 27.2% (standard cells 24.8%); setup +12.43 / +8.24 / +1.09 ns
+(fast / typical / slow) with no violating endpoint, hold +0.104 / +0.285 /
++0.607 ns; detailed routing 55 min (ten iterations, the same DRC counts per
+iteration), DRC 0, wire length 617,009 um; Magic DRC 29,294 and 10 illegal
+overlaps (as before); LVS 0, antenna 0; 0 max-slew, 0 max-cap, 139
+max-fanout; power 5.9 mW, worst IR drop 0.3 mV. `resolved.json`:
+`DESIGN_REPAIR_MAX_SLEW_PCT` 50, `DESIGN_REPAIR_MAX_CAP_PCT` 30,
+`TIMING_VIOLATION_CORNERS` `['*typ*']`, `DEFAULT_CORNER`
+`nom_typ_1p20V_25C` (docs/FACTS.md T5). The run's artifacts expire on
+2027-01-04 (FACTS G3).
