@@ -33,14 +33,19 @@ tuples (kind, cycle, detail); nothing here asserts):
   - "response early" / "response late": the device's SYNC must start 2 to
     6.5 bit times after the host's end of packet, measured as USB 2.0
     7.1.18 defines it, from the SE0-to-J transition of the host's EOP to
-    the device's first J-to-K transition. A response that has not started
+    the device's first J-to-K transition. (6.5 is the limit for a device
+    with a detachable cable; a low-speed device has a captive cable and
+    USB allows it 7.5. The model keeps the tighter figure as margin:
+    docs/FACTS.md U9.) A response that has not started
     18 bit times after that point is a time-out (not an error by itself:
     the device may be ignoring the packet on purpose; the transaction
     layer decides). Every measured delay is kept in `delays` (bit times).
   - "bit timing": every symbol of the device's packet is a whole number of
     bit periods: the device's bit rate, fitted over the packet, is within
     1.5 % of 1.5 Mbit/s, and every transition lies within `jitter_ns` of
-    the ideal grid at that rate.
+    the ideal grid at that rate. (USB allows a low-speed function 95 ns
+    to the next transition, Table 7-10 TUDJ1; the default 25 ns is the
+    downstream port's figure and stricter: docs/FACTS.md U24.)
   - "sync", "bit stuffing" (a seventh 1, or six 1s right before the EOP
     with no stuffed 0), "bytes" (not a whole number of bytes), "pid"
     (complement nibble wrong, or a PID a device must not send), "length"
@@ -91,7 +96,8 @@ PID_NAME = {v: k for k, v in PID.items()}
 BIT_RATE = 1.5e6
 RATE_TOL = 0.015                # low-speed data rate tolerance
 EOP_MIN, EOP_MAX = 1.875, 2.25  # source EOP width 1.25 to 1.50 us, in bit times
-RESP_MIN, RESP_MAX = 2.0, 6.5   # device inter-packet delay, bit times
+RESP_MIN, RESP_MAX = 2.0, 6.5   # device inter-packet delay, bit times (7.5 for a captive cable: FACTS U9)
+HOST_RESP_MAX = 7.5             # the host's own inter-packet delay limit, bit times (USB 2.0 7.1.18.1)
 TIMEOUT = 18                    # host gives up waiting for a response, bit times
 LS_MAXPKT = 8
 

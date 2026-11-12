@@ -309,6 +309,17 @@ def test_enumeration_at_24_mhz():
     assert outbox(m) == [6, 5, 6, 6, 6, 9]
 
 
+def test_host_handshake_at_the_latest_allowed_time():
+    """USB 2.0 7.1.18.1 gives the host 7.5 bit times to answer a device's
+    packet (docs/FACTS.md U10; the firmware header once said 6.5). The
+    whole enumeration with every host handshake that late, at both clocks:
+    ACK_TMO still catches each one."""
+    for T in (32, 16):
+        for seed in (1, 2, 3):
+            _, h, e, _, _ = enumerate_once(T=T, seed=seed, turnaround_bits=usb.HOST_RESP_MAX)
+            assert h.errors == [] and e.ok and e.config == CFG, (T, seed)
+
+
 def test_enumeration_with_full_length_reset():
     """The first bus reset is the real 10 ms (15000 bit times) followed by
     the real 10 ms recovery; keep-alives every 1 ms throughout."""

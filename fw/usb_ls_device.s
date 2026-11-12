@@ -63,7 +63,8 @@
 ;   DATA_TMO  140: the whole DATA packet of a SETUP or OUT after the token
 ;             (11 bytes and up to 15 stuffed bits = 103, plus the host's gap).
 ;   ACK_TMO   24: the host's handshake PID after our packet's tail; USB
-;             gives the host 6.5 bit times, its PID is complete 15.5 later.
+;             gives the host 7.5 bit times (USB 2.0 7.1.18.1; docs/FACTS.md
+;             U10), its PID is complete 15.5 later: 23 of the 24.
 ;
 ; Response timing (the slot and cycle counts are from the listing).
 ;   The host's SE0 starts at a bit boundary h. The receiver samples it at
@@ -76,7 +77,8 @@
 ;   takes it at the next tick and the first K is on D+/D- T + 1 cycles
 ;   later. Relative to the host's SE0-to-J transition at h + 2T, the
 ;   response starts (RESP - 0.5) T + 7 to (RESP + 0.5) T + 7 cycles later:
-;   3.72 to 4.72 bit times at T = 32 (USB: 2 to 6.5), 1.72 bit times (27
+;   3.72 to 4.72 bit times at T = 32 (USB: 2 to 6.5; 6.5 is the limit for a
+;   detachable cable, a low-speed device's own limit is 7.5, FACTS U9), 1.72 bit times (27
 ;   slots) of margin early and 1.78 (28 slots) late. At T = 16: 3.94 to
 ;   4.94.
 ;   Firmware budget between `setd RESP` and `waitd 0`: at least 3T + 1
