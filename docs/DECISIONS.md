@@ -941,3 +941,13 @@ flow say what D-037 already required.
 **Recommendation.** Option 1 now; if its slow corner is under +0.5 ns or
 negative, option 3 with `AREA 1` and `AREA 2` before anything else. The
 D-045 run (8x4) follows on whichever setting wins.
+
+## D-048 (resolved) 2026-11-12 Ahan: yes, `SYNTH_STRATEGY` `AREA 0`
+
+Ahan's answer to the OPEN entry: option 1. `"SYNTH_STRATEGY": "AREA 0"` is
+set in `src/config.json` on `flow-ttihp27a`, with a comment naming this
+entry, and the branch is hardened again; merge by D-037 (setup met at every
+corner, under 40%, every precheck check passing, `gl_test` passing). If the
+slow corner comes back under +0.5 ns or negative, the entry's fallback is
+option 3 (`AREA 1`, `AREA 2`) before anything else; that is a new entry.
+Rejected: options 2 to 4, for the reasons the OPEN entry gives.
