@@ -1053,3 +1053,56 @@ slow corner as a repair target, the slow-corner slack of this design is
 noise of about +-1 ns around zero. That supports D-049's premise (repair
 must target the slow corner) and says the old flow's +1.09 ns was a
 margin of the same size as the noise. Branch `d047` is closed.
+
+## D-051 2026-11-12 OPEN: the `ttihp27a` flow still misses the slow corner after D-049 (not implemented; for Ahan)
+
+**What happened.** D-049's run (43241587919: `PNR_CORNERS` = all three
+corners, `DELAY 4`) failed at -1.56 ns, 2 endpoints, at
+`nom_slow_1p08V_125C`; typical +6.68, fast +11.44; 29.3%. Practically the
+first run on this flow (-1.61). Per Ahan's instruction there is no further
+flow iteration in this session. Why the setting did not help, from the
+run's logs: post-CTS setup repair loads the slow corner and reports "No
+setup violations found" (RSZ-0098); the paths become violating only once
+routed, and the flow has no post-route setup repair step in its list.
+That is a lead, not a tested fix: LibreLane's post-global-route resizer
+(`RUN_POST_GRT_RESIZER_TIMING`) or a larger setup margin for the post-CTS
+repair are the obvious next runs, each a `config.json` change for Ahan.
+
+**The fallback Ahan named.** State in the datasheet the slow-corner
+frequency the run supports, alongside 50 MHz at the sign-off corner:
+period 20 ns + 1.56 ns = 21.56 ns, **46.4 MHz at `nom_slow_1p08V_125C`**
+(1.08 V, 125 C), and 50 MHz at `nom_typ_1p20V_25C` (the CMOS5L sign-off
+corner, FACTS T5). Consequence to state with it: the low-speed USB
+device needs 48 MHz (20.83 ns), so at the slow corner it would be out of
+specification; the Ethernet transmitter's 40 and 20 MHz and every other
+program are inside it.
+
+**State of master now.** Master is still hardened on the old flow, where
+the D-047 merge run (43237692551) meets every corner (+1.93 ns slow). The
+new flow lives only on `flow-ttihp27a`, unmerged. Whether TTIHP27a
+accepts the old flow is not stated anywhere (D-050).
+
+**Options for Ahan.**
+
+1. The fallback above: keep master on the old flow for now, and if the
+   submission must use the new flow, harden it there and put the two
+   frequencies in the datasheet.
+2. One or two more runs on `flow-ttihp27a` with the post-route repair (or a
+   setup margin), in a later session.
+3. Ask Tiny Tapeout (D-050) first, and choose between 1 and 2 on the answer.
+
+Not decided here.
+
+## D-052 2026-11-12 Claude, applying the D-037 rule: `d047a` is merged into master
+
+Ahan asked for `d047a` to merge on its own result by the D-037 rule. Run
+43237692551 on the branch (master + the D-047 RTL line, old flow): setup
++11.85 / +8.83 / +1.93 ns (fast / typical / slow), no violating endpoint,
+hold clean, 27.2%, routing DRC, LVS and antenna 0, precheck 9 of 9,
+`gl_test` passing; `check` (43242077988) green with 78 cocotb tests. The
+rule is met; merged. Not in the rule and reported: one max-cap entry, the
+macro's `A_DOUT[8]` at 66.4 fF against 64 fF at all corners (the D-043 kind
+of entry, on a neighbouring pin; D-043's margin of 30 did not hold it this
+time). The documented equivalents proved on the old RTL that the change
+could touch (`host-37c45961`, `host-bf048322`) and the five proved today
+are proved again on the merged RTL (15 to 16 s each). Rejected: nothing.

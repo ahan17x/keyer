@@ -332,6 +332,8 @@ routing, which took twice as long. Both conditions for the merge hold
 | 43211201559 | the same RTL and `config.json` on the template's `ttihp27a` flow (5e12596, `flow-ttihp27a`, D-046) | 16,480 + macro | 29.3% | +11.42 / +6.64 / **-1.61 (2)** | 25 min | not run | not run |
 | 43227914573 | the above with `SYNTH_STRATEGY` `AREA 0` (1645837, `flow-ttihp27a`, D-048) | 15,057 + macro | 27.1% | +11.03 / +6.00 / **-2.52 (146)** | 18 min | not run | not run |
 | 43232242925 | the above + the D-047 RTL line (a32ec41, `d047`; a timing sample, not for merging) | 14,961 + macro | 27.0% | +11.67 / +7.15 / **-0.59 (47)** | 19 min | not run | not run |
+| 43241587919 | `flow-ttihp27a` with `PNR_CORNERS` = all three corners, default `DELAY 4` (afc9aef, D-049) | 16,485 + macro | 29.3% | +11.44 / +6.68 / **-1.56 (2)** | 22 min | not run | not run |
+| 43237692551 | master + the D-047 RTL line, old flow (0271d86, `d047a`) | 15,136 + macro | 27.2% | +11.85 / +8.83 / +1.93 (0) | 31 min | 9/9 | pass |
 
 ### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
 
@@ -556,4 +558,39 @@ slow-corner slack of this design varies by about that much with
 placement alone, which is the size of the old flow's +1.09 ns margin.
 Recorded in DECISIONS (D-049 addendum). Branch `d047` deleted afterwards;
 its RTL change is on `d047a`.
+
+### Run 43241587919, 2026-11-12, commit afc9aef (branch `flow-ttihp27a`, D-049): **failed**
+
+The new flow with `PNR_CORNERS` set to the three STA corners and D-048's
+`AREA 0` removed (`resolved.json`: `PNR_CORNERS` all three, `SYNTH_STRATEGY`
+`DELAY 4`). Job `gds` failed after 1 h 3 min (slow corner); the others
+were skipped. 16,485 cells (2,603 repair buffers), 29.3%, wire length
+816,247 um; setup +11.44 / +6.68 / **-1.56 ns** (2 endpoints, the macro's
+`A_DOUT[10]`, as in 43211201559), hold +0.106 / +0.287 / +0.611; Magic DRC
+29,294, 10 overlaps, LVS 0, antenna 0, 0 slew, 1 max-cap. Practically the
+first run again (-1.61): with the slow corner loaded, post-CTS setup
+repair still reports "No setup violations found" (RSZ-0098), because the
+paths only become violating after routing, and the flow has no post-route
+setup repair step (none in the step list). Per Ahan's instruction no
+further flow iteration this session; open as DECISIONS D-051.
+
+| 43241587919 | `flow-ttihp27a` with `PNR_CORNERS` = all three corners, default `DELAY 4` (afc9aef, D-049) | 16,485 + macro | 29.3% | +11.44 / +6.68 / **-1.56 (2)** | 22 min | not run | not run |
+| 43237692551 | master + the D-047 RTL line, old flow (0271d86, `d047a`) | 15,136 + macro | 27.2% | +11.85 / +8.83 / +1.93 (0) | 31 min | 9/9 | pass | (branch `d047a`, D-047): merged
+
+Master's RTL with the one-line D-047 change in `keyer_host.v` (the
+IMEM_DATA high byte from `wdata_q`), on the old flow (`@ihp-cmos5l`), so
+it compares with 37549369058. Jobs: `gds` success (1 h 0 min), `gl_test`
+success, `viewer` success, `precheck` success (all nine checks). 15,136
+standard cells (1,601 flops, 3,314 repair buffers) plus the macro, 73,036
+instances with fill, 217,035 um^2, 27.2% (standard cells 24.8%); setup
++11.85 / +8.83 / +1.93 ns (fast / typical / slow), no violating endpoint;
+hold +0.111 / +0.292 / +0.610 ns; routing DRC 0, wire length 610,459 um;
+Magic DRC 29,294 and 10 overlaps (as before), LVS 0, antenna 0; 0
+max-slew, **1 max-cap**, 141 max-fanout; power 5.9 mW. The max-cap entry is
+the macro's `A_DOUT[8]` at 66.4 fF against its 64 fF limit at all three
+corners: the D-043 kind of entry on a neighbouring pin (D-043 cleared
+`A_DOUT[7]` at 68.4 fF with `DESIGN_REPAIR_MAX_CAP_PCT` 30). Not part of
+the D-037 rule; reported to Ahan. Against 37549369058: +27 cells, slow
+corner +1.93 instead of +1.09 (placement; compare the 1.9 ns spread of
+the new flow's two samples). Merged into master (DECISIONS D-052).
 
