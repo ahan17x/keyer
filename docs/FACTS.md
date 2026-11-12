@@ -47,6 +47,7 @@ the commit that added this file.
 | S19 | Tiny Tapeout, "PCB - ETR" | <https://tinytapeout.com/specs/pcb-etr/> | fetched 2026-11-12 |
 | S20 | RFC 9542 (IANA considerations and IETF use of IEEE 802 parameters; secondary for IEEE 802) | <https://www.rfc-editor.org/rfc/rfc9542.txt> | fetched 2026-11-12 |
 | S21 | LibreLane source, `librelane/steps/pyosys.py` at tags `3.1.0.dev3` (ca6adb1) and `3.1.0.dev4` (dcea37e) | <https://github.com/librelane/librelane> (raw files at the two tags) | fetched 2026-11-12; sha256 `92d4717b…` (dev3), `3a6c785c…` (dev4) |
+| S22 | LibreLane source, `librelane/steps/openroad.py` at tag `3.1.0.dev4`; IHP-Open-PDK `ihp-sg13cmos5l/libs.tech/librelane/config.tcl`, `sg13cmos5l_stdcell/config.tcl`, the slow standard-cell library and `sg13cmos5l_tech.lef` at commits `2bbec755` and `89d42ee6` | <https://github.com/librelane/librelane>, <https://github.com/IHP-GmbH/IHP-Open-PDK> (raw files) | fetched 2026-11-12; `openroad.py` sha256 `10886693…`; the library `3ee222c5…` and the extraction rules `ffe5f85e…` at both commits |
 
 **Not reachable.** IEEE Std 802.3 (any revision): IEEE Xplore returns an
 empty response without a signed-in account, and the IEEE GET programme
@@ -165,6 +166,7 @@ the standard-cell liberty was fetched from the PDK's `dev` branch (S16).
 | T10 | A deselected design is powered down and loses its state | `docs/info.md` (How to test: load after select), `tools/keyerhost.py` (`setup`) | S18 FAQ | "When your design is deselected it's powered down and loses its state" | verified |
 | T11 | The template's `gds` workflow uses `TinyTapeout/tt-gds-action@ttihp27a` | `.github/workflows/gds.yaml:30-60` (this repo: `@ihp-cmos5l`) | S13 `.github/workflows/gds.yaml`; S15 | "uses: TinyTapeout/tt-gds-action@ttihp27a" | verified. **Changed upstream since session 7**: the repo's jobs are the template's of September. Open for Ahan as D-046 |
 | T12 | LibreLane's default synthesis strategy changed from `AREA 0` (3.1.0.dev3, the old flow) to `DELAY 4` (3.1.0.dev4, the `ttihp27a` flow) | `docs/AREA.md` (run 43211201559), DECISIONS D-048 | S21, the `SYNTH_STRATEGY` variable | dev3: `default="AREA 0"`; dev4: `default="DELAY 4"` | verified; the two runs' `resolved.json` agree (`AREA 0`, `DELAY 4`) |
+| T13 | Placement and resizing use `PNR_CORNERS`, else the default corner only; the CMOS5L PDK leaves it unset and sets `DEFAULT_CORNER` `nom_typ_1p20V_25C`; since 89d42ee6 it sets `TIMING_VIOLATION_CORNERS` `*` (was `*typ*`) | `docs/AREA.md` (run 43227914573), DECISIONS D-049 | S22 | `corners: List[str] = self.config["PNR_CORNERS"] or [self.config["DEFAULT_CORNER"]]`; PDK: `set ::env(TIMING_VIOLATION_CORNERS) "*"` | verified; both runs' `resolved.json` have `PNR_CORNERS` None. The variable's own description says the PDK's `STA_CORNERS` is the fallback; the code uses the default corner |
 
 ## 7. The competition
 

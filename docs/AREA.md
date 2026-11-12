@@ -330,6 +330,7 @@ routing, which took twice as long. Both conditions for the merge hold
 | 37534398328 | the same RTL with the capacitance repair margin of D-043 (19440d7, `d043`) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
 | 37549369058 | the same design as 37534398328 (501d9d5, master after D-044) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
 | 43211201559 | the same RTL and `config.json` on the template's `ttihp27a` flow (5e12596, `flow-ttihp27a`, D-046) | 16,480 + macro | 29.3% | +11.42 / +6.64 / **-1.61 (2)** | 25 min | not run | not run |
+| 43227914573 | the above with `SYNTH_STRATEGY` `AREA 0` (1645837, `flow-ttihp27a`, D-048) | 15,057 + macro | 27.1% | +11.03 / +6.00 / **-2.52 (146)** | 18 min | not run | not run |
 
 ### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
 
@@ -509,4 +510,35 @@ changed, from the two runs' `resolved.json`:
   our values (67.44 / 26.36 / 3.52 / 2.1).
 
 Not merged (D-037). What to do is open as DECISIONS D-048.
+
+### Run 43227914573, 2026-11-12, commit 1645837 (branch `flow-ttihp27a`, D-048): **failed**
+
+The same as 43211201559 with `"SYNTH_STRATEGY": "AREA 0"`. Job `gds` failed
+after 56 min (setup violations at `nom_slow_1p08V_125C`); the other jobs
+were skipped. 15,057 standard cells (1,601 flops, 3,262 repair buffers),
+27.1%, wire length 603,652 um: the netlist is the size of the old flow's
+(15,109, 27.2%, 617,009 um), and still setup is +11.03 / +6.00 / **-2.52
+ns** (146 endpoints at the slow corner, all from the macro's `A_DOUT`),
+hold +0.104 / +0.286 / +0.614; Magic DRC 29,294, 10 overlaps, LVS 0,
+antenna 0, 0 slew, 0 cap. So `AREA 0` is worse than `DELAY 4` on this flow
+and D-048's premise was wrong. What it is not, from files fetched or
+downloaded on 2026-11-12:
+
+- not the cell timing: the slow standard-cell library and the technology LEF
+  are byte-identical at the two PDK commits (old flow `2bbec755`, from
+  its `pdk.json`; new `89d42ee6`), and so are the extraction rules (the
+  CMOS5L file is a link to SG13G2's, identical);
+- not the constraints: LibreLane's default SDC is identical in dev3 and dev4,
+  and the worst path's clock uncertainty (0.25 ns), clock arrival and setup
+  time are the same;
+- not the steps: the two runs have the same 72 steps, and setup repair in
+  both works at the typical corner only.
+
+The worst path is longer (84 pins against 78, cell delay 22.74 ns against
+19.31; wire delay 0.2 ns in both), with weaker buffering: the placement and
+the repair of the new tools build a slower path, and nothing repairs the
+slow corner because LibreLane places and repairs for `PNR_CORNERS or
+[DEFAULT_CORNER]`, the typical corner here (docs/FACTS.md T13). The old
+flow's +1.09 ns at the slow corner was never optimised for either. Open as
+DECISIONS D-049.
 

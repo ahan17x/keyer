@@ -968,3 +968,34 @@ hardening run, D-037 rule, and the `keyer_host.v` mutants on the changed
 line judged again. The golden model has no SPI timing and does not change.
 Rejected: option 1 alone (Ahan wants the margin in silicon), option 2
 alone (the contract needs the sentence in any case).
+
+## D-049 2026-11-12 OPEN: the slow corner on the `ttihp27a` flow, after D-048 did not help (not implemented; for Ahan)
+
+**What happened.** D-048's run (43227914573, `AREA 0`) is worse than the
+default (`DELAY 4`, 43211201559): -2.52 ns and 146 endpoints at the slow
+corner against -1.61 and 2. The netlist is the old flow's size, the cell
+libraries, LEF, extraction rules and SDC are identical (docs/AREA.md), so
+the difference is in the new tools' placement and repair, and LibreLane
+repairs only at the typical corner unless `PNR_CORNERS` says otherwise
+(FACTS T13). Our +1.09 ns at the slow corner on the old flow was luck of
+placement, never an optimisation target.
+
+**Options.**
+
+1. On `flow-ttihp27a`: `"PNR_CORNERS"` = the three STA corners in
+   `src/config.json`, so placement and setup repair see the slow corner,
+   and remove D-048's `SYNTH_STRATEGY` (back to the flow's default, which
+   started from 2 violators instead of 146). One run; merge by D-037.
+   Costs: repair buffers and some area (we are at 27%, the limit is 40%),
+   a longer run.
+2. The same with `AREA 0` kept: changes one thing instead of two, but
+   starts repair from the worse netlist.
+3. Leave `flow-ttihp27a` unmerged and stay on `@ihp-cmos5l` (D-046
+   reversed): the old flow passes, and the post allows re-hardening for a
+   newer flow after the deadline. But the template's flow would then fail
+   on our design, and the organisers' own hardening is on that flow.
+
+**Recommendation.** Option 1. It is the setting that makes the tool
+optimise what the merge rule checks; the D-045 run (8x4) should carry it
+too. If it does not close, option 3 for the submission, with the finding
+written up for the organisers.
