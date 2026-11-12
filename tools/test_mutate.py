@@ -174,3 +174,32 @@ def test_reset_miter_controls(tmp_path, monkeypatch):
         v, detail = verdict(variant("assign dbg_retire = commit;", "assign dbg_retire = ~commit;"), engine=engine)
         assert v == "proved", (engine, v, detail)
 
+
+
+@pytest.mark.skipif(shutil.which("yosys") is None or shutil.which("yosys-abc") is None or shutil.which("iverilog") is None,
+                    reason="yosys, yosys-abc or iverilog not installed")
+def test_miter_counterexample_replays(tmp_path, monkeypatch):
+    """tools/miter_cex.py: a counterexample of the reset-sequence miter is
+    reproduced on the unreduced miter and on the RTL, at the same frame, with
+    the difference where the fault is (MISO, uo_out[0], high after reset). A
+    trace with the fault removed from the mutant shows no difference: the
+    replay compares the two designs and does not just echo abc."""
+    import miter_cex as X
+    monkeypatch.setattr(M, "WORK", str(tmp_path))
+    src = open(os.path.join(M.SRC, "keyer_host.v")).read().split("\n")
+    n = [i for i, l in enumerate(src) if "tx_shift <= 8'd0; miso <= 1'b0;" in l]
+    assert len(n) == 1
+    mt = dict(id="ctl", file="keyer_host.v", line=n[0] + 1, define=None,
+              text=src[n[0]].replace("miso <= 1'b0;", "miso <= 1'b1;"))
+    work = os.path.join(str(tmp_path), "w")
+    M.prepare(work, mt)
+    v, detail = M.reset_miter(work, mt, 600, "pdr")
+    assert v == "cex", (v, detail)
+    r = X.replay(work)
+    assert r["aig_frame"] is not None and r["constraint_broken"] is None, r["aig_frame"]
+    d = r["first_difference"]
+    assert d == r["aig_frame"], (d, r["aig_frame"])
+    assert r["gold"][d][0][-1] == "0" and r["mut"][d][0][-1] == "1", (r["gold"][d], r["mut"][d])
+    assert r["gold"][d][1:] == r["mut"][d][1:]
+    shutil.copy(os.path.join(M.SRC, "keyer_host.v"), os.path.join(work, "src", "keyer_host.v"))
+    assert X.replay(work)["first_difference"] is None

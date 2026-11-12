@@ -36,8 +36,10 @@ mutant and the design agree at the pads and at the program memory's port
 in every cycle from the release of reset on, for every input sequence the
 host contract allows. --update rewrites the result rows: a proved mutant
 becomes `equivalent` with the proof in its note, a counterexample is a
-survivor again (the mutant is not equivalent: it needs a test), a timeout
-leaves the row as it is (reason only). The macro instantiation
+survivor again with a note to replay it (tools/miter_cex.py) and judge the
+trace: the miter knows SEMANTICS 10.1's pad timing and no other rule, so a
+trace may be one the contract leaves unspecified (BUGS 58) or one in which
+the design itself is wrong (BUGS 56); a timeout leaves the row as it is. The macro instantiation
 (keyer_imem.v without KEYER_IMEM_FLOPS) is outside the miter and is skipped.
 
 Mutation operators (all confined to one source line):
@@ -1105,7 +1107,10 @@ def cmd_prove_equivalents(args):
                 if res and res["verdict"] == "proved":
                     r["status"], r["note"] = "equivalent", "proved by the reset-sequence miter (%s)" % res["detail"]
                 elif res and res["verdict"] == "cex":
-                    r["status"], r["note"] = "survived", "reset-sequence miter: %s; not equivalent, needs a test" % res["detail"]
+                    # a trace of the miter, not a verdict: the miter knows only
+                    # SEMANTICS 10.1's pad timing (BUGS 58); replay and judge it
+                    r["status"], r["note"] = "survived", ("reset-sequence miter: %s; replay it with tools/miter_cex.py and "
+                                                          "judge the trace against SEMANTICS" % res["detail"])
                 lines.append(json.dumps(r, sort_keys=True))
             open(p, "w").write("\n".join(lines) + "\n")
             print("updated " + p)
