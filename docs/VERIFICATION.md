@@ -412,22 +412,33 @@ of the first reset on, for every input sequence SEMANTICS 10.1 allows the
 host (reset asserted at power-up and held at least three cycles, CS_n high
 in the two cycles before a release, SCK half-periods of at least four
 cycles, CS_n high at least four cycles between transactions, SCK low when
-CS_n falls and when it rises, D-047); the power-up state is all zeros on both sides and every later
-reset is checked from every reachable state. Engine: abc's signal
-correspondence (which merges the registers of the two copies that stay
-equal by induction) and PDR on the AIGER model; 1,200 s per mutant.
-Controls in `tools/test_mutate.py`: a fault visible at a pad after reset
-gets a counterexample, a change on an output the top does not use is
-proved, the macro branch is skipped.
+CS_n falls and when it rises, D-047); the power-up state is all zeros on
+both sides and every later reset is checked from every reachable state.
+Engines: abc's signal correspondence (which merges the registers of the
+two copies that stay equal by induction), then PDR on the AIGER model
+(1,200 s per mutant in session 7, 3,600 s in session 8), or with
+`--engine` one of `dprove`, `scorr -F 2`, retiming and interpolation;
+when correspondence merges every register, a combinational check after
+the same reduction decides (BUGS 60). Controls in `tools/test_mutate.py`:
+for every engine, a fault visible at a pad after reset gets a
+counterexample and a change on an output the top does not use is proved;
+the macro branch is skipped. A counterexample is replayed on the
+unreduced miter and on the RTL with `tools/miter_cex.py` before it is
+believed (BUGS 58).
 
 | Verdict | Mutants | What they are |
 |---|---|---|
-| proved by the miter (`docs/mutation_full.jsonl` now carries them as `equivalent` with the proof in the note) | 20 | write pulses and values that reset leaves at 1 for one cycle with a value of 0 (`host-*_we`, `run_val`, `rst_pulse`, `pc_we`, `outbox_pop`, `fifo_clr`, `wdata_q`, `fetch_ok`, `blocked`), the capture queue words `q0`, `q1`, the `uo` edge history (`uo_d1`, `uo_d2`), all in 10 to 25 s |
-| no verdict in 1,200 s: the row stands on its written reason | 23 | registers whose stale value is overwritten only by a later host byte or edge (`is_write`, `reg_sel`, `shift_in`, `rx_byte`, `imem_hi`, `imem_lo`, the synchroniser resets, the replay prefetch words and `pf_fly`, `level2` and `lvl_d*`, the `IMEM_DATA` read register of D-038) |
+| proved by the miter (`docs/mutation_full.jsonl` now carries them as `equivalent` with the proof in the note) | 26 (20 in session 7; session 8: `host-37c45961` after D-047, and five rows with `scorr -F 2`) | write pulses and values that reset leaves at 1 for one cycle with a value of 0 (`host-*_we`, `run_val`, `rst_pulse`, `pc_we`, `outbox_pop`, `fifo_clr`, `wdata_q`, `fetch_ok`, `blocked`), the capture queue words `q0`, `q1`, the `uo` edge history (`uo_d1`, `uo_d2`), all in 10 to 25 s |
+| no verdict from any engine and no counterexample: the row stands on its written reason | 17 (16 after session 8's campaign, and `host-07c66559`, whose counterexample is a read SEMANTICS 10.4 leaves unspecified) | registers whose stale value is overwritten only by a later host byte or edge (`is_write`, `reg_sel`, `shift_in`, `rx_byte`, `imem_hi`, `imem_lo`, the synchroniser resets, the replay prefetch words and `pf_fly`, `level2` and `lvl_d*`, the `IMEM_DATA` read register of D-038) |
 | outside the miter | 7 | the BIST tie-offs inside the macro instantiation, argued from the macro's transistor netlist |
 
-No row got a counterexample, so the 30 reasons stand unchallenged by the
-proof as far as it went. What the miter cannot see: a register that the
+Session 8's campaign refuted two rows: `host-37c45961` exposed a real
+fault, an IMEM_DATA pair losing its high byte when CS_n rose one cycle
+after the last SCK edge (BUGS 56; SEMANTICS 0.5.1 forbids that timing and
+the RTL writes the pair whole anyway, D-047), and `host-07c66559`'s trace
+is the read while a thread runs that SEMANTICS 10.4 leaves unspecified
+(BUGS 58). The 24 remaining reasons stand unchallenged as far as the
+proofs went. What the miter cannot see: a register that the
 design resets but never writes otherwise, read with a non-zero power-up
 value (the power-up state is zero on both sides); the macro's inside.
 
