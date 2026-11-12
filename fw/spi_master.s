@@ -3,7 +3,12 @@
 ; Every received byte is pushed to the outbox.
 ;
 ; SPI_HALF = half an SCK period in core cycles. Minimum 10 (the low half of
-; the loop is 5 slots), so SCK <= clk / 20.
+; the loop is 5 slots), so SCK <= clk / 20. At 10 and 11 the wait before
+; CS_n rises is reached one slot after its tick on every frame (6 slots from
+; the last SCK fall against 5): it completes at once and CS_n rises 12
+; cycles after SCK fell, not on the tick grid; SCK is already low and the
+; next frame restarts the timer (SETT), so nothing else moves. From 12 up
+; it is on the grid.
 
 .equ SPI_HALF, 15
 .equ SCK,  uo3
@@ -42,6 +47,6 @@ spi_bit:                        ; high phase is a full half period
         push  r4
         dec   r3
         bne   spi_byte
-        waitd 1                   ; timing: PUSH blocks only while the host leaves the outbox full; SCK is low then and CSN just rises later
+        waitd 1                   ; timing: PUSH blocks only while the host leaves the outbox full; SCK is low then and CSN just rises later. At SPI_HALF 10 and 11 this wait is always one slot late (header): CSN rises 12 cycles after SCK fell
         set   CSN
         bra   spi_frame

@@ -3,6 +3,8 @@ Run: python3 -m pytest tools/test_fw.py -q
 """
 
 import os
+
+import pytest
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -119,8 +121,29 @@ def test_uart_full_duplex_loopback():
 
 # ---------------------------------------------------------------- SPI
 
-def test_spi_master_mode0():
-    H = 15
+class _CsAfterSck:
+    """Cycles from the last SCK fall to each CS_n rise (pads 19 and 21)."""
+
+    def __init__(self):
+        self.prev, self.fall, self.delays = None, None, []
+
+    def on_cycle(self, m):
+        v = m.pad()
+        if self.prev is not None:
+            if (self.prev >> 19) & 1 and not (v >> 19) & 1:
+                self.fall = m.cycle
+            if not (self.prev >> 21) & 1 and (v >> 21) & 1 and self.fall is not None:
+                self.delays.append(m.cycle - self.fall)
+        self.prev = v
+
+
+@pytest.mark.parametrize("H", [15, 12, 11, 10])
+def test_spi_master_mode0(H):
+    """At the default half period and down to the minimum the header names
+    (10). At 10 and 11 the wait before CS_n rises is one slot late on every
+    frame (keyerasm --check-timing reports it, BUGS 55): CS_n then rises
+    off the tick grid but still a full half period after SCK fell, and
+    every frame and every SCK period is as at 15."""
     words, syms = load_fw("spi_master.s", {"SPI_HALF": H})
     m = Machine()
     m.load(words)
@@ -132,9 +155,14 @@ def test_spi_master_mode0():
     m.host_run(0, True)
     slave = pm.SpiSlaveModel(sck=19, mosi=20, csn=21, miso_ui_bit=4,
                              reply=[0xEF, 0x40, 0x18, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
-    run(m, 2 * H * 8 * 12 + 2000, [slave])
+    cs = _CsAfterSck()
+    run(m, 2 * H * 8 * 12 + 2000, [slave, cs])
     assert slave.errors == []
     assert slave.frames == frames
+    # on the grid CS_n rises one tick after SCK fell, give or take the slot the tick falls in
+    assert len(cs.delays) == len(frames) and all(H - 1 <= d <= 2 * H + 2 for d in cs.delays), cs.delays
+    if H in (10, 11):
+        assert set(cs.delays) == {12}, cs.delays        # six slots: one slot past the tick
     got = []
     while m.threads[0].outbox:
         got.append(m.host_outbox_pop(0))

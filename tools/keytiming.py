@@ -52,9 +52,12 @@ fault until the source says why it is intended:
 
     waitd 1                 ; timing: the slave may stretch SCL here
 
-`; timing: reason` on a `WAITD` line waives WAITS, LATE, MARGIN and
-UNBOUNDED for that line; the report still prints the numbers, marked
-`waived`, with the reason.
+`; timing: reason` on a `WAITD` line waives WAITS, MARGIN and UNBOUNDED
+for that line; the report still prints the numbers, marked `waived`, with
+the reason. LATE is waived only by a reason that speaks of it (it must
+contain the word "late"): a waiver written for a blocking instruction says
+nothing about a path that is too long at another divider, and used to hide
+one (fw/spi_master.s at SPI_HALF = 10, BUGS 55).
 
 Not modelled: the other thread (it has its own slots), a slot lost when a
 thread is started in a cycle the capture or replay engine uses its fetch
@@ -637,6 +640,9 @@ def report(prog, results, verbose=False, name=""):
             faults += 1
             continue
         waiver = prog.waive.get(r.waitd)
+        unheard = None
+        if r.status == "LATE" and waiver and not re.search(r"\blate\b", waiver, re.I):
+            waiver, unheard = None, waiver         # that reason is about something else
         fault = r.status in FAULTS or r.status == "MARGIN"
         tag = r.status + (" (waived)" if waiver and fault else "")
         if r.status in FAULTS and not waiver:
@@ -659,6 +665,8 @@ def report(prog, results, verbose=False, name=""):
             lines.append("  %-18s   waits at %s" % ("", where(w)))
         if waiver and fault:
             lines.append("  %-18s   waiver: %s" % ("", waiver))
+        if unheard:
+            lines.append("  %-18s   the waiver on this line does not mention lateness and does not cover it: %s" % ("", unheard))
         if verbose and r.path:
             ls = []
             for pc in r.path:

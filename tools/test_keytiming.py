@@ -164,6 +164,30 @@ def test_blocking_instruction_is_named_and_can_be_waived():
     assert "WAITS (waived)" in text and "waiver: the peer holds the line at most a bit time" in text
 
 
+def test_a_waiver_for_a_wait_does_not_cover_lateness():
+    """A waiver written for a blocking instruction must not hide a path that
+    is too long (fw/spi_master.s at SPI_HALF = 10 did, BUGS 55): LATE is
+    waived only by a reason that says "late"."""
+    src = """
+        ldi   r1, 8
+        sett  r1
+        waitd 1
+        push  r4
+        nop
+        nop
+        nop
+        nop
+        waitd 1%s
+        halt
+    """
+    late = [x for x in check(src % "")[0].values() if x.status == "LATE"]
+    assert late and late[0].slots > late[0].budget
+    r, text, faults = check(src % "         ; timing: PUSH blocks only while the outbox is full")
+    assert faults == 1 and "LATE (waived)" not in text and "does not mention lateness" in text
+    r, text, faults = check(src % "         ; timing: always one slot late at this period, by design")
+    assert faults == 0 and "LATE (waived)" in text
+
+
 def test_unknown_period_reports_the_period_needed():
     r, text, faults = check("""
         pop   r1
@@ -264,3 +288,47 @@ def test_firmware_has_no_timing_fault(path, capsys):
     assert keyerasm.main([path, "--check-timing"]) == 0, capsys.readouterr().out
     out = capsys.readouterr().out
     assert "LATE" not in out and "UNBOUNDED" not in out and "LIMIT" not in out
+
+
+# The smallest divider each program's header supports (HANDOFF task 4 of
+# session 7: the check used to run at the defaults only). `late` lists the
+# programs in which a WAITD is knowingly late there, with a waiver that
+# says so; everywhere else nothing may be late.
+SMALLEST = [
+    ("uart.s", {"BAUD_DIV": 12}, False),
+    ("spi_master.s", {"SPI_HALF": 10}, True),         # the wait before CS_n rises: BUGS 55
+    ("spi_master.s", {"SPI_HALF": 12}, False),
+    ("i2c_master.s", {"I2C_Q": 30}, False),           # 400 kHz at 50 MHz (docs/info.md)
+    ("jtag_master.s", {"JTAG_HALF": 18}, False),
+    ("swd.s", {"SWD_HALF": 12}, False),
+    ("ps2_host.s", {"PS2_TICK": 2500}, False),        # 50 us at 50 MHz: the device's longest CLK low
+    ("ws2812.s", {"WS_T0H": 6, "WS_T1H": 10, "WS_BIT": 26}, False),
+    ("usb_ls_device.s", {"BITT": 16}, False),         # 24 MHz
+    ("eth_10bt_tx.s", {"CLK_KHZ": 20000}, False),
+]
+
+
+@pytest.mark.parametrize("name,symbols,late", SMALLEST)
+def test_firmware_has_no_timing_fault_at_its_smallest_divider(name, symbols, late, capsys):
+    argv = [os.path.join(FW, name), "--check-timing"]
+    for k, v in symbols.items():
+        argv += ["-D", "%s=%d" % (k, v)]
+    assert keyerasm.main(argv) == 0, capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "UNBOUNDED" not in out and "LIMIT" not in out
+    assert ("LATE (waived)" in out) == late and "LATE  " not in out.replace("LATE (waived)", ""), out
+
+
+@pytest.mark.parametrize("name,symbols", [
+    ("swd.s", {"SWD_HALF": 11}),                                   # one below the header's minimum
+    ("ws2812.s", {"WS_T0H": 11, "WS_T1H": 22, "WS_BIT": 34}),      # WS_BIT - WS_T1H under 16
+])
+def test_below_the_smallest_divider_is_a_fault(name, symbols, capsys):
+    """Controls for the table above: a setting the header rules out is
+    reported, also where the late WAITD carries a waiver for something else
+    (ws2812.s: the POPT waiver)."""
+    argv = [os.path.join(FW, name), "--check-timing"]
+    for k, v in symbols.items():
+        argv += ["-D", "%s=%d" % (k, v)]
+    assert keyerasm.main(argv) == 1
+    assert "LATE" in capsys.readouterr().out
