@@ -816,6 +816,12 @@ def flatten_noscope():
     return _NOSCOPE
 
 
+def miter_reduction(engine):
+    """The part of an engine's abc script before `print_stats`: the
+    reduction whose result the combinational fallback must check."""
+    return MITER_ENGINES[engine].split("; print_stats")[0]
+
+
 def reset_miter(work, mt, timeout=1800, engine="pdr"):
     """The reset-sequence miter of the mutant in work/src against src/.
     Returns (verdict, detail): proved / cex (detail: the frame) / unknown
@@ -857,7 +863,10 @@ def reset_miter(work, mt, timeout=1800, engine="pdr"):
     if st and st.group(1) == "0":
         # scorr merged the two copies completely: the properties are constants
         # that pdr does not judge (UNDECIDED); a combinational check does
-        status, res2 = run_cmd(["yosys-abc", "-c", "read_aiger %s/miter.aig; fold; strash; scorr; iprove" % out], out, 600)
+        # with the engine's own correspondence (scorr -F 2 merges more than
+        # scorr: BUGS 60)
+        status, res2 = run_cmd(["yosys-abc", "-c", "read_aiger %s/miter.aig; fold; strash; %s; iprove"
+                                % (out, miter_reduction(engine))], out, 600)
         open(os.path.join(out, "abc.log"), "a").write(res2)
         if "UNSATISFIABLE" in res2:
             return "proved", "%.0f s, every register merged by signal correspondence" % (time.time() - t0)

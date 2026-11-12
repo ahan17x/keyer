@@ -203,3 +203,14 @@ def test_miter_counterexample_replays(tmp_path, monkeypatch):
     assert r["gold"][d][1:] == r["mut"][d][1:]
     shutil.copy(os.path.join(M.SRC, "keyer_host.v"), os.path.join(work, "src", "keyer_host.v"))
     assert X.replay(work)["first_difference"] is None
+
+
+def test_miter_fallback_uses_the_engines_own_reduction():
+    """BUGS 60: when signal correspondence merges every register, the
+    combinational check that decides the miter must run after the same
+    reduction the engine used, or a proof scorr -F 2 reached is lost."""
+    for engine, script in M.MITER_ENGINES.items():
+        red = M.miter_reduction(engine)
+        assert script.startswith(red + "; print_stats"), (engine, red)
+        assert "scorr" in red, engine
+    assert M.miter_reduction("scorr2") == "scorr -F 2"
