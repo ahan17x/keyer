@@ -2,8 +2,8 @@
 
 The text for the Jane Street protocol emulator competition form and for the
 Tiny Tapeout datasheet (`docs/info.md`). Numbers are those of
-`docs/AREA.md` (run 37534398328, merged as D-044) and `docs/VERIFICATION.md` as of
-2026-10-06; update both before the final submission (docs/HANDOFF.md has
+`docs/AREA.md` (run 43237692551, merged as D-052) and `docs/VERIFICATION.md` as of
+2026-11-12; update both before the final submission (docs/HANDOFF.md has
 the schedule). Keep the two texts consistent: the datasheet's "How it
 works" and "Verification" paragraphs are the long form of sections 1 to 3
 here.
@@ -37,10 +37,11 @@ synchroniser with exactly two clocks of latency. The bidirectional pins
 have a per-pin open-drain mode in which the pad can never be driven high,
 which makes I2C and similar buses safe by construction. The program memory
 is 256 words of 16 bits in an SRAM macro; each thread has a 16-byte inbox
-and a 16-byte outbox to the host. The design is 15,109 standard cells plus
+and a 16-byte outbox to the host. The design is 15,136 standard cells plus
 the macro, 27.2% of a 6x4 Tiny Tapeout block on IHP's 130 nm CMOS5L
-process, signed off at 50 MHz with setup met at all three corners (+12.43
-ns fast, +8.24 ns typical, +1.09 ns slow).
+process, signed off at 50 MHz with setup met at all three corners (+11.85
+ns fast, +8.83 ns typical, +1.93 ns slow) on the flow of the September
+template (the newer `ttihp27a` flow is open as DECISIONS D-051).
 
 ## 2. What is unique about it
 
@@ -100,13 +101,13 @@ that reproduces its numbers:
 
 - Lint and compile with Verilator `-Wall` and Icarus; a single encoding
   table generates the header the RTL decodes with.
-- 485 model and tool tests pin the golden model, the assembler and the
+- 504 model and tool tests pin the golden model, the assembler and the
   host driver to the contract instruction by instruction.
 - Every firmware program (twelve) runs against a model of its peer that
-  knows only the protocol, eleven models in all, 313 test cases; the USB
+  knows only the protocol, eleven models in all, 317 test cases; the USB
   and Ethernet models are themselves checked against published CRC values,
   a published Ethernet frame and USB packets built by hand.
-- 77 cocotb tests run the RTL in lockstep with the model, through the pads
+- 78 cocotb tests run the RTL in lockstep with the model, through the pads
   with the real host driver, and with the protocol models attached; the
   pads-only tests also run on the hardened gate-level netlist.
 - Formal proofs with SymbiYosys and abc: the FIFO (occupancy and
@@ -125,19 +126,26 @@ that reproduces its numbers:
   the RTL (operator swaps, removed negations, flipped constants, inverted
   conditions, stuck-at on every condition, enable and strobe); 2,021 are
   killed by a test failure or a formal counterexample, 97 are equivalent
-  (no behaviour at the pins or in any state a test may read differs: 67
-  proved with Yosys and abc, 47 of them from any state and 20 by a
-  sequential miter from reset, 30 argued in writing), none survives. The campaign found no fault in the RTL or the
-  model; it found two holes in the suite, both closed.
+  (no behaviour at the pins or in any state a test may read differs: 73
+  proved with Yosys and abc, 47 of them from any state and 26 by a
+  sequential miter from reset, 24 argued in writing), none survives. The
+  campaign found two holes in the suite, both closed, and the sequential
+  miter found one fault in the RTL behind a row argued in writing: a
+  program-memory write lost its high byte when the host raised CS_n one
+  cycle after the last clock edge, a timing the contract had not ruled
+  out. The contract now rules it out and the RTL writes the word whole
+  anyway (DECISIONS D-047).
 - Static timing: every hardening run is checked at all three process
   corners, and the merge rule for any change under `src/` is a clean run
   (setup met at every corner, hold clean, LVS and antenna clean, precheck
-  passing) under 40% utilisation. The last run (37534398328) reports
-  nothing: no slew, capacitance or routing entry at any corner.
+  passing) under 40% utilisation. The last run (43237692551) reports
+  one capacitance entry (a memory output pin 3.8% over its 64 fF limit)
+  and nothing else: no slew or routing entry at any corner.
 
-Every bug found by any layer is a row in `docs/BUGS.md` (51 rows: five in
-the RTL, found by review against the contract, by a lockstep test and by
-the model's author questioning the spec, the rest in the firmware, the
+Every bug found by any layer is a row in `docs/BUGS.md` (61 rows: six in
+the RTL, found by review against the contract, by a lockstep test, by
+the model's author questioning the spec and by a sequential equivalence
+proof, the rest in the firmware, the
 models, the tests, the harness and the flow), and every design decision is
 an appended, numbered entry in `docs/DECISIONS.md` with the alternatives
 rejected. No board has run the design yet; every protocol claim rests on

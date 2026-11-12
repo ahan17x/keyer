@@ -19,13 +19,13 @@ each other.
 | # | Layer | What it compares | Size | Command |
 |---|---|---|---|---|
 | 1 | Lint and compile | the RTL against the language rules | Verilator `-Wall`, Icarus `-g2005`, header freshness | `bash scripts/check_all.sh quick` |
-| 2 | Model tests | the golden model, the assembler, the encoding table and the host driver against SEMANTICS and isa.md | 485 pytest cases (131 on the model, the serializer scenarios and the host driver with its capture decoders, 7 on the mutation tool, 24 on the timing check of layer 9, and 323 counted in layer 3) | `python3 -m pytest tools/ -q` |
-| 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 313 pytest cases; 10 cases of published and hand-built vectors against the USB and Ethernet models | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py tools/test_protomodels.py -q` |
-| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 77 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
+| 2 | Model tests | the golden model, the assembler, the encoding table and the host driver against SEMANTICS and isa.md | 504 pytest cases (131 on the model, the serializer scenarios and the host driver with its capture decoders, 9 on the mutation tool, 37 on the timing check of layer 9, and 327 counted in layer 3) | `python3 -m pytest tools/ -q` |
+| 3 | Protocol models | every firmware program against a model of its peer that knows only the protocol | 12 programs, 11 models, 317 pytest cases; 10 cases of published and hand-built vectors against the USB and Ethernet models | `python3 -m pytest tools/test_fw.py tools/test_fw_*.py tools/test_protomodels.py -q` |
+| 4 | Lockstep and host tests | the RTL against the golden model, every cycle from reset, with all host traffic mirrored; the host interface through the pads; the serializer unit bench without the model | 78 cocotb tests in 14 modules; `test/ser_unit` | `cd test && make`; `bash test/ser_unit/run.sh` |
 | 5 | Formal | the RTL against properties stated from SEMANTICS, for all inputs | FIFO, pin unit, core (timer, control, thread select), capture and replay, serializer (stuffing, CRC, round trip) | `cd formal && yowasp-sby -f pins.sby && yowasp-sby -f fifo.sby && ./run_core_pdr.sh && yowasp-sby -f capture.sby && yowasp-sby --yosys yowasp-yosys -f ser.sby` |
 | 6 | Equivalence | a restructured core against the core it replaces | every flop input and output bit | `bash formal/equiv_core.sh GIT_REF` |
 | 7 | Gate level | the hardened netlist (and the FPGA netlist) against the pads-only tests | the 25 tests that do not read RTL internals (23 in the runs logged so far, which predate the two capture-decode tests) | `gl_test` job of the `gds` workflow; `bash fpga/alhambra2/sim.sh` |
-| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 2,118 mutants on GitHub (2026-10-05, the design with the serializer, D-038 and D-039); every survivor processed: 2,021 killed, 97 equivalent (67 proved, 30 on a written reason) | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4`; `python3 tools/mutate.py prove-equivalents docs/mutation_full.jsonl` |
+| 8 | Mutation | the test suite and the proofs against single-line faults in the RTL | the full campaign of 2,118 mutants on GitHub (2026-10-05, the design with the serializer, D-038 and D-039); every survivor processed: 2,021 killed, 97 equivalent (73 proved, 24 on a written reason, after session 8's proofs; one of them had exposed an RTL fault, fixed by D-047) | the `mutation` workflow; `python3 tools/mutate.py run --only ID,... -j 4`; `python3 tools/mutate.py prove-equivalents docs/mutation_full.jsonl` |
 | 9 | Static firmware timing | every `WAITD` of every program against the slots the program can spend before it, on all paths | 38 `WAITD` sites in 12 programs | `python3 tools/keyerasm.py fw/NAME.s --check-timing` |
 
 ### 1. Lint and compile
@@ -450,7 +450,7 @@ not against lint or the model tests.
 ### 9. Static firmware timing
 
 `python3 tools/keyerasm.py fw/NAME.s --check-timing [-v]`
-(`tools/keytiming.py`, 24 pytest cases in `tools/test_keytiming.py`). The
+(`tools/keytiming.py`, 37 pytest cases in `tools/test_keytiming.py`). The
 other layers run a program and look at what happened on the paths the
 stimulus took. This one reads the assembled words and, for every `WAITD`,
 bounds the slots the program can spend since the instruction that last set

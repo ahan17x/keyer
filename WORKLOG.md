@@ -630,3 +630,57 @@ Next for me: SRAM macro flow config (copy from Tiny Tapeout's `ttihp-sram-test`)
   variants at 240 s each, then PDR at 3,600 s on what is left) is logged
   below.
 
+- **The campaign on the 23, and what came of it.** Variants at 240 s:
+  two counterexamples, 21 unknown; PDR at 3,600 s: unknown on the 18 rows
+  it reached before the session was paused (Ahan turned the laptop off; the
+  stage was stopped cleanly, logs in `test/sim_build/session8/`). Both
+  counterexamples replayed on the unreduced miter (own AIGER simulator) and
+  on the RTL under Icarus (`tools/miter_cex.py`, new, with a test):
+  - `host-37c45961` was a real fault: an IMEM_DATA pair lost its high byte
+    when CS_n rose one cycle after the last SCK edge, a timing SEMANTICS did
+    not forbid (BUGS 56). D-047 (Ahan: both): SEMANTICS 0.5.1 requires SCK
+    low when CS_n rises (datasheet and miter follow), and the RTL takes the
+    high byte from `wdata_q` (one line by the `rtl` subagent, cycle argument
+    checked against the code; new directed test fails on the old RTL with
+    `01 00` for `0xFF01`). Hardened on `d047a` (old flow, 43237692551):
+    +11.85 / +8.83 / +1.93 ns, 27.2%, precheck 9/9, gl_test pass, one
+    max-cap entry on the macro's `A_DOUT[8]` (66.4 against 64 fF); merged
+    (D-052).
+  - `host-07c66559` is a read while a thread runs, which SEMANTICS 10.4
+    leaves unspecified: the miter does not know 10.4's rule (BUGS 58). The
+    tool no longer calls a counterexample "not equivalent".
+  - BUGS 60: when signal correspondence merges every register the verdict
+    comes from a combinational check, which reran plain `scorr` after an
+    engine had used `scorr -F 2`, so proofs became "unknown". Fixed; a
+    re-run of the 21 with `scorr -F 2` proved five more. Split now 27
+    module, 20 top, 26 miter, 24 written reason (16 without any verdict,
+    no counterexample). The seven rows the D-047 merge could touch are
+    proved again on the merged RTL.
+- **BUGS 59: master's `check` had been red since 2026-10-07.** The miter
+  script used `flatten -noscopeinfo` (Yosys 0.39 on; the runner's Ubuntu
+  Yosys is 0.33, from the CHANGELOG fetched). Fixed and green on the runner
+  (43227914614). CLAUDE.md now makes the master workflows the first thing
+  every session checks. BUGS 61: the D-047 test made 78 cocotb tests and
+  `check_all.sh` still required 77.
+- **D-046 to D-051, the new flow.** Ahan: follow the template to
+  `tt-gds-action@ttihp27a` on `flow-ttihp27a`. Four runs on the new flow,
+  all missing the slow corner: default -1.61 ns (43211201559), `AREA 0`
+  -2.52 (43227914573, D-048, worse), the same plus the D-047 line -0.59
+  (43232242925, a noise sample, D-049 addendum), `PNR_CORNERS` on all
+  corners -1.56 (43241587919, D-049). Cell libraries, LEF, extraction rules
+  and SDC are byte-identical between the old and new PDK commits and
+  LibreLane versions (fetched and compared); the new tools place
+  differently, nothing repairs setup after routing, and the slow corner
+  moves by about 2 ns with placement alone. D-051 is open for Ahan with his
+  fallback (46.4 MHz at the slow corner next to 50 MHz at sign-off) and the
+  lead for a later run. D-050: Tiny Tapeout documents LibreLane 3.1.0.dev4
+  for SG13CMOS5L; no source says the old flow is refused or accepted.
+  Master stays on the old flow; `flow-ttihp27a` is unmerged.
+- Icarus is 13 here (CLAUDE.md said 12; corrected).
+- **End of session.** `bash scripts/check_all.sh` on master after the
+  D-047 merge: all checks passed (504 pytest cases, cocotb 78 of 78, the
+  serializer unit bench, lint, compile, every formal task). Counts
+  refreshed in HANDOFF, SUBMISSION and VERIFICATION (SUBMISSION's numbers
+  now from run 43237692551). Branches: `d047` deleted, `d047a` merged,
+  `flow-ttihp27a` kept unmerged for D-051. The push starts master's
+  `check` (green again after BUGS 59) and a `gds` run to log next session.

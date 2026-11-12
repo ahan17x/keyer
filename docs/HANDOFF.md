@@ -1,41 +1,8 @@
 # Handoff: state of the project and the next task
 
-Updated 2026-11-12 (Claude Code session 8). This is the first file a
+Updated 2026-11-12 (Claude Code session 8, end). This is the first file a
 session reads. Keep it short: what exists, what is decided, what is open,
 what to do next.
-
-## PAUSED mid-session 8 (2026-11-12, Ahan turned the laptop off): resume here
-
-Everything is committed; master is **not pushed** (the full suite has not
-run on it yet). Local jobs were stopped cleanly; GitHub runs continue on
-their own. Logs of the stopped campaign and the run reports are in
-`test/sim_build/session8/` (ignored by git). To resume, in order:
-
-1. `gh run list --limit 20`: read these results.
-   - `flow-ttihp27a` gds 43241587919 (D-049, `PNR_CORNERS`): merge by
-     D-037 if setup is met at all corners; else open D-051 (datasheet
-     states the slow-corner frequency, period 20 ns + the miss) and leave
-     it for Ahan. Log the run in AREA.md with `scripts/gds_report.py`.
-   - `d047a` gds 43237692551 (old flow + the D-047 RTL line) and check
-     43242077988 (cocotb count 78, BUGS 61): merge `d047a` into master by
-     D-037 if both pass; log the run in AREA.md.
-   - `d047` gds 43232242925 (new flow + AREA 0 + the RTL line): the second
-     timing sample of the new flow; record it in D-049 and AREA.md, then
-     delete the branch (`git push origin --delete d047`, local branch too).
-2. The proof campaign: the PDR stage (3,600 s) gave "unknown" on 18 of 21
-   rows before it was stopped (`long.log`); the variants stage had refuted
-   two rows (handled: BUGS 56 to 58, D-047). BUGS 60: re-run
-   `python3 tools/mutate.py prove-equivalents docs/mutation_full.jsonl
-   --only <the 20 reason-only ids> --timeout 240 --engine scorr2 --update`
-   (the fallback was broken when the variants ran), then re-mark
-   `tools/mutate_equivalents.md` and VERIFICATION.
-3. `bash scripts/check_all.sh` once (only when no mutation job is running:
-   it cleans `test/`), refresh the counts in HANDOFF, SUBMISSION and
-   VERIFICATION, WORKLOG entry, push master (it turns `check` green again,
-   BUGS 59).
-4. Report to Ahan with the audit split (FACTS.md header: 92 rows, 68
-   verified, 3 computed, 20 unverified, P6 not a fact) and what was wrong
-   and fixed.
 
 ## What exists (all tests green)
 
@@ -46,21 +13,21 @@ their own. Logs of the stopped campaign and the run reports are in
   D-022), and `mutation` (by hand only, 16 shards, D-031).
   `scripts/gds_report.py RUN_ID` summarises a `gds` run for `docs/AREA.md`.
 - **Master is the macro design with the one-hot thread select, the
-  carry-save `WAITD` (D-034), the serializer engine (D-036, D-037), D-039
-  and the repair margins of D-041 (slew) and D-043 (capacitance).**
-  Hardened on branch `d043` as run 37534398328: 15,109 cells plus the
-  macro, 27.2% utilisation, setup +12.43 / +8.24 / +1.09 ns (fast /
-  typical / slow), no violation at any corner, hold clean, LVS and antenna
-  0, 0 max-slew, 0 max-cap, precheck 9/9, gl_test passing: the sign-off
-  checks report nothing. The master run that the merge started
-  (37549369058) equals it in every number (logged in AREA.md, session 8).
+  carry-save `WAITD` (D-034), the serializer engine (D-036, D-037), D-039,
+  the repair margins of D-041 (slew) and D-043 (capacitance), and the
+  D-047 margin (IMEM_DATA high byte from `wdata_q`).** Hardened on branch
+  `d047a` as run 43237692551 on the old flow (`@ihp-cmos5l`): 15,136 cells
+  plus the macro, 27.2%, setup +11.85 / +8.83 / +1.93 ns (fast / typical /
+  slow), hold clean, LVS and antenna 0, 0 max-slew, **1 max-cap** (the
+  macro's `A_DOUT[8]`, 66.4 against 64 fF, all corners), precheck 9/9,
+  gl_test passing; merged as D-052. The push of session 8 starts the
+  master run, which should equal it: log it in AREA.md.
 - **`docs/FACTS.md`** (session 8): every external fact the project rests
   on, where it is used, its source, the source's words and a status
-  (63 verified, 3 computed, 20 unverified and marked so where they are
-  used). CLAUDE.md: no external fact without a row there from a fetched
-  source. The competition post and the template changed after session 7
-  (FACTS C3, T11): see "Decisions".
-- `docs/SEMANTICS.md` v0.5 is the contract (section 15: the serializer);
+  (92 rows: 68 verified, 3 computed, 20 unverified and marked so where
+  they are used, P6 not an external fact). CLAUDE.md: no external fact
+  without a row there from a fetched source.
+- `docs/SEMANTICS.md` v0.5.1 is the contract (0.5.1: SCK low when CS_n rises, D-047) (section 15: the serializer);
   `docs/SERIALIZER.md` is the serializer's design note and programmer's
   guide; `docs/VERIFICATION.md` describes the nine verification layers.
   ISA version 3.
@@ -73,14 +40,15 @@ their own. Logs of the stopped campaign and the run reports are in
   listing | decode` for UART, SPI, I2C, USB low speed and 10BASE-T on the
   board, from a PC or in simulation; `load FILE.s -D NAME=VALUE`),
   `mutate.py` with `mutate_equivalents.md` and the `prove-equivalents`
-  mode (reset-sequence miter); 485 pytest cases.
+  mode (reset-sequence miter, `--engine`), `miter_cex.py` (replays a miter
+  counterexample on the miter and the RTL); 504 pytest cases.
 - `fw/`: twelve programs. New: `usb_ls_device.s` (253 of 256 words, one
   thread, clock 48 MHz; enumerates against the USB host model, responses
   3.7 to 4.7 bit times after the host's packet) and `eth_10bt_tx.s` (88
   words, one thread, clock 40 MHz or 20 MHz; link pulses and frames with
   CRC-32 checked by the 10BASE-T receiver model). Nothing has run against
   a real device and no hardware bring-up is planned (D-035).
-- `test/`: cocotb, 77 tests in 14 modules (two decode captures of the I2C
+- `test/`: cocotb, 78 tests in 14 modules (two decode captures of the I2C
   master and the UART through the driver); `test/ser_unit` (plain Verilog
   bench of the serializer, no model).
 - `formal/`: FIFO, pins, core, capture, serializer (`ser.sby`, ten tasks),
@@ -88,36 +56,40 @@ their own. Logs of the stopped campaign and the run reports are in
 - `fpga/alhambra2/`: synthesis and post-synthesis simulation only (D-035).
 - Mutation testing: the full campaign on the present RTL (run
   37339747331, 2,118 mutants): 2,021 killed, 97 equivalent (27 proved at
-  the module level, 20 at the top level, 20 by the reset-sequence miter,
-  30 on a written reason: 23 where the miter gave no verdict in 1,200 s
-  and 7 inside the macro), no survivor, no error.
+  the module level, 20 at the top level, 26 by the reset-sequence miter,
+  24 on a written reason: 17 where no engine gave a verdict and 7 inside
+  the macro), no survivor, no error. The campaign predates D-047's line;
+  the freeze-week campaign covers it.
 - `docs/SUBMISSION.md`: the text for the Jane Street form and the
   datasheet; info.md's "How to test" works with the demo board and the
   driver alone.
 
 ## Decisions (docs/DECISIONS.md)
 
-Closed up to D-044. **Two are open for Ahan, both from changes outside the
-repo found by the audit of 2026-11-12:**
+Closed up to D-052 except two, **both for Ahan**:
 
-- **D-046** (ask first): the Tiny Tapeout template's `main` branch now uses
-  `tt-gds-action@ttihp27a` (LibreLane 3.1.0.dev4, the support tools' `main`
-  with a tenth precheck); this repo's `gds` workflow is still on
-  `@ihp-cmos5l`. Recommendation: move on a branch, harden, merge by the
-  D-037 rule, before anything else under `src/`.
-- **D-045**: the post now says the maximum is 8x4 tiles and "Set the tile
-  size in info.yaml to 8x4"; the repo is 6x4 (27.2% used). Recommendation:
-  e-mail the organisers whether a smaller block is acceptable and harden
-  8x4 on a branch meanwhile (`info.yaml` only), after D-046.
+- **D-051** (the new flow): the template's `ttihp27a` flow (branch
+  `flow-ttihp27a`, unmerged) misses the slow corner by about 1.6 ns in
+  every run so far (four runs, AREA.md), with libraries, LEF, extraction
+  and SDC identical to the old flow's; post-CTS repair sees no violation
+  and nothing repairs after routing. Options: Ahan's fallback (state 46.4
+  MHz at the slow corner next to 50 MHz at sign-off), one or two runs with
+  the post-route resizer, or ask Tiny Tapeout first whether the old flow is
+  accepted (D-050: not stated anywhere). Master stays on the old flow.
+- **D-045** (8x4 tiles): the post now says "Set the tile size in info.yaml
+  to 8x4"; the repo is 6x4 (27.2%). Recommendation unchanged: ask the
+  organisers, harden 8x4 on a branch meanwhile, after D-051 settles the
+  flow it is measured on.
 
 Also for Ahan: `docs/SUBMISSION.md` section 5 (how AI tools were used; the
-post asks for it) is a draft to review.
+post asks for it) is a draft to review; the max-cap entry of D-052 (one
+pin, 3.8% over), which D-043's margin no longer clears.
 
 ## Schedule to submission (deadline Monday 2027-01-18, two weeks of margin)
 
 | Date | Milestone |
 |---|---|
-| until Fri 2026-12-04 | **First D-046 (the `ttihp27a` flow) and then D-045 (8x4), each one hardening run on a branch, as soon as Ahan answers; both must be merged or dropped before the freeze week.** Then feature work on branches (PLAN.md's stretch list, the serializer follow-ups below), each merged by the hardening rule of D-037: setup met at all corners, utilisation under 40%, precheck 9 of 9, `gl_test` passing. Nothing is started after this date that cannot be merged by the freeze. |
+| until Fri 2026-12-04 | **First D-051 (the `ttihp27a` flow) and then D-045 (8x4), each settled by hardening runs on a branch as soon as Ahan answers; both must be merged or dropped before the freeze week.** Then feature work on branches (PLAN.md's stretch list, the serializer follow-ups below), each merged by the hardening rule of D-037: setup met at all corners, utilisation under 40%, precheck 9 of 9, `gl_test` passing. Nothing is started after this date that cannot be merged by the freeze. |
 | Mon 2026-12-07 to Fri 2026-12-11 | Freeze week. On the candidate commit: the full `check` suite on the runner, a full mutation campaign (`mutation` workflow, every survivor processed), a master hardening run logged in AREA. **RTL freeze Fri 2026-12-11**: tag `rtl-freeze`; from then on nothing under `src/`, `info.yaml` or `macro/` changes. |
 | Sat 2026-12-12 to Wed 2026-12-30 | Docs only: `docs/SUBMISSION.md` and `docs/info.md` final (every number from the freeze run and the freeze campaign), README, the datasheet render checked on the `docs` workflow, VERIFICATION and AREA refreshed. Tools, firmware and tests may still change if the datasheet stays true; they do not touch silicon. An RTL fault found in this period reopens the freeze: fix, re-run the freeze week's checks, re-tag, and the docs period restarts from the new run; the last date on which that still fits is Mon 2026-12-21. |
 | Thu 2026-12-31 | The final hardening run, started by hand (`gds` workflow, dispatch) on the exact commit to be submitted (tag `submission`), logged in AREA with `scripts/gds_report.py`; it must equal the freeze run in every number. `gl_test` and precheck green on it. |
@@ -125,32 +97,23 @@ post asks for it) is a draft to review.
 
 ## Next tasks, in order
 
-1. Ask Ahan D-046, then D-045 (one at a time, each with its
-   recommendation), and carry out the answers: a branch, a hardening run
-   logged in AREA.md with `scripts/gds_report.py`, the merge rule of D-037.
-   Fetch the post and the template again first (FACTS rule: they change).
-   If the tile size changes, every "6x4" and utilisation figure in
-   CLAUDE.md, README, PLAN, info.yaml, SUBMISSION and info.md follows.
-2. The 23 documented equivalents without a miter verdict: session 8's
-   campaign (abc variants, then PDR at 3,600 s) is recorded in WORKLOG and
-   `tools/mutate_equivalents.md`. The lead that is left: the miter
-   strengthened with "every register pair except the mutated one is
-   equal" (prototype described in WORKLOG, session 8; bounded check clean,
-   PDR needs invariants that count SCK edges). Not required: every reason
-   stands and no row got a counterexample.
-3. The unverified rows of FACTS.md that matter most for the datasheet:
-   IEEE 802.3 (E1 to E6, E9 to E11; needs an IEEE account for the GET
-   programme) and the SWD connect sequence (O5). If Ahan can supply the
-   PDFs, check the rows and turn them to verified.
-4. Serializer follow-up still open: the round-trip proof covers one message
-   byte. (The SYNC question is closed: a hub may not shorten a low-speed
-   SYNC, FACTS U3.)
-5. Then the rest of PLAN.md's stretch list (CRC engine as a
-   firmware-visible unit, Hardcaml port) within the schedule above, and
-   the datasheet polish before the freeze: the `How to test` steps have
-   never run on a board (D-035). The pin claim (GP20 UART1 TX on `ui[3]`,
-   GP37 UART1 RX on `uo[4]`) is now confirmed against the SDK's
-   `GPIOMapTTDBv3` and the RP2350 datasheet (FACTS T8, T9).
+1. First, as CLAUDE.md says: the master workflows. Session 8's push starts
+   `check`, `test`, `docs` and `gds` on master; read them, log the `gds`
+   run in AREA.md (it should equal 43237692551).
+2. Ask Ahan D-051, then D-045 (one at a time, each with its
+   recommendation), and carry out the answers. Fetch the post and the
+   template again first (FACTS rule: they change).
+3. The 17 documented equivalents without a verdict: nothing more is
+   expected from the engines tried (WORKLOG, session 8). The lead left is
+   the strengthened miter (scratch prototype in WORKLOG, session 8). Not
+   required: every reason stands and the one refuted reason was a real
+   fault, now fixed.
+4. The unverified rows of FACTS.md that matter most for the datasheet:
+   IEEE 802.3 (E1 to E6, E9 to E11, E13) and the SWD connect sequence (O5).
+   If Ahan can supply the PDFs, check the rows and turn them to verified.
+5. Serializer follow-up still open: the round-trip proof covers one message
+   byte.
+6. Then PLAN.md's stretch list within the schedule above.
 
 Notes for whoever logs a run: artifacts expire 90 days after the run
 (FACTS G3; the October runs on 2027-01-04). "The account has an egress
@@ -175,4 +138,8 @@ broken flows this session each looked like "hard proofs" until a control
 failed to prove in seconds (WORKLOG, step 2); a waiver or an allowance is
 written for one cause and must not cover another (BUGS 55); an outside
 fact is fetched, not remembered, and the post and the template are fetched
-again before they are relied on (FACTS, session 8).
+again before they are relied on (FACTS, session 8); a counterexample from a
+proof is replayed on the RTL before it is believed, and a written reason is
+a claim to test with a proof, not a verdict (BUGS 56, 58); read the result
+of every workflow your push starts (BUGS 59); a test added changes the
+count the check script expects in the same commit (BUGS 61).
