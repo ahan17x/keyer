@@ -855,3 +855,52 @@ Merge rule (D-037): setup met at all corners, utilisation under 40%,
 precheck with every check passing (ten on this flow, FACTS T6), `gl_test`
 passing; the run is logged in AREA.md next to 37549369058. Rejected:
 option 1 (stay on `@ihp-cmos5l`), for the reason the OPEN entry gives.
+
+## D-047 2026-11-12 OPEN: CS_n rising right after the last SCK edge loses the high byte of a memory write (not implemented; for Ahan)
+
+**What was found.** BUGS 56. Let e be the cycle of the pad rising edge of
+the eighth SCK pulse of a data byte. If CS_n rises on the pad
+
+- in cycle e or earlier: the RTL drops the byte (the interface sees CS_n
+  high no later than it sees the edge);
+- in cycle e + 1: the byte completes in e + 3, but an IMEM_DATA pair is
+  written as `{0x00, lo}`: the high byte is lost, silently;
+- in cycle e + 2 or later: everything is as SEMANTICS says.
+
+Replayed on the RTL with lo = 0x01, hi = 0xFF: no write, 0x0001, 0xFF01,
+0xFF01 for e, e + 1, e + 2, e + 3. Only the IMEM_DATA write is affected.
+The golden model has no SPI timing (host actions are calls), so lockstep
+cannot see it.
+
+**Why it is a spec question.** SEMANTICS 10.1 constrains the SCK
+half-period, SCK at the fall of CS_n, the gap between transactions and
+CS_n around reset, and says "Outside these constraints the behaviour is
+undefined". It says nothing about when CS_n may rise. 10.2 says the byte is
+complete in e + 3 and 10.3 that the pair is written `{hi, lo}`. So as
+written the first two cases are inside the contract and the RTL breaks it.
+No test, driver or board transport produces them: `tools/keyerhost.py`
+lowers SCK and waits half a period before raising CS_n, and a mode 0
+master has SCK low at both ends of a transaction.
+
+**Options.**
+
+1. Constrain the host in 10.1: "SCK must be low when CS_n falls and when it
+   rises". With the half-period rule CS_n then rises at least four cycles
+   after any rising edge. No RTL change, no hardening run. The
+   reset-sequence miter gets the same assumption, the driver's docstring
+   and the datasheet's host timing say it, and mutant `host-37c45961`
+   goes back to a reason that is true.
+2. Keep 10.1 and change the RTL: `imem_wdata = {wdata_q, imem_lo}` (the
+   register the other two-byte writes already use) makes case e + 1 right;
+   10.2 must then also say that a byte whose eighth edge comes in the cycle
+   CS_n rises, or after, is not received. One line under `src/`: the `rtl`
+   subagent, a hardening run on a branch, the D-037 rule, and the
+   `keyer_host.v` shard of the mutation campaign again.
+3. Both: the constraint in the contract and the one-line change as margin.
+
+**Recommendation.** Option 1. The contract needs a sentence about the rise
+of CS_n in every case (option 2 needs one too, for case e), the sentence
+that every mode 0 master already obeys is the simplest, and it costs no
+silicon change six weeks before the freeze. Option 3's one line can ride
+on the next change that touches `keyer_host.v` for another reason, if
+there is one; it is not worth a hardening run of its own.
