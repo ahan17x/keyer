@@ -311,6 +311,47 @@ async def test_imem_data_writes_dropped_while_a_thread_runs(dut):
         assert await spi.read(R_IMEM_DATA, 4) == [0x34, 0x12, 0xCD, 0xAB], mask
 
 
+async def _imem_pair_cs_rises_after(dut, pads, spi, word, d):
+    """One IMEM_DATA transaction carrying `word`, ended with SCK still high:
+    CS_n rises on the pad d cycles after the eighth SCK rising edge of the
+    high byte, then SCK falls."""
+    pads.set_spi(0, 0, 0)
+    await ClockCycles(dut.clk, spi.half)
+    await spi._byte(0x80 | R_IMEM_DATA)
+    await spi._byte(word & 0xFF)
+    hi = word >> 8
+    for i in range(7, -1, -1):
+        pads.set_spi(0, (hi >> i) & 1, 0)
+        await ClockCycles(dut.clk, spi.half)
+        pads.set_spi(1, (hi >> i) & 1, 0)
+        await ClockCycles(dut.clk, spi.half if i else d)
+    pads.set_spi(1, 0, 1)                                       # CS_n rises while SCK is high
+    await ClockCycles(dut.clk, spi.half)
+    pads.set_spi(0, 0, 1)
+    await ClockCycles(dut.clk, 2 * spi.half)
+
+
+@cocotb.test()
+async def test_imem_pair_written_whole_when_cs_rises_right_after_the_last_edge(dut):
+    """DECISIONS D-047 (BUGS 56): SEMANTICS 0.5.1, 10.1 forbids CS_n rising
+    while SCK is high, and the RTL writes an IMEM_DATA pair whole even when
+    CS_n rises one cycle after the high byte's last rising edge, as margin
+    (the high byte comes from `wdata_q`). Before the change that case wrote
+    {0x00, lo}. CS_n rising in the same cycle as the edge stays outside
+    everything (the byte may be dropped) and is not tested."""
+    pads = await start(dut)
+    spi = SpiMaster(dut, pads, half=4)
+    words = {1: 0xFF01, 2: 0xA55A, 3: 0x8001, 4: 0x7FFE}
+    for d, word in words.items():
+        await spi.write(R_IMEM_ADDR, [0x40 + d, 0])
+        await _imem_pair_cs_rises_after(dut, pads, spi, word, d)
+        assert await spi.read(R_IMEM_ADDR, 2) == [0x41 + d, 0], d     # the pair was written
+    await spi.write(R_IMEM_ADDR, [0x41, 0])
+    got = await spi.read(R_IMEM_DATA, 8)
+    want = sum(([w & 0xFF, w >> 8] for w in words.values()), [])
+    assert got == want, (["%02X" % b for b in got], ["%02X" % b for b in want])
+
+
 @cocotb.test()
 async def test_capture_writes_while_the_host_reads_registers(dut):
     """SEMANTICS 10.5 and 14.1: the host owns the memory port only for
