@@ -1,6 +1,6 @@
 # Keyer semantics: the cycle-exact contract
 
-Version 0.5, 2026-10-05 (0.5: DECISIONS D-038 and D-039: MISO is 0 except while a read data byte is shifted out, CS_n is high across the release of reset, the fourth byte of a PINS read is 0; the serializer gains `rx_drop` (status bit 10) and a `SERCFG` that aborts a frame returns the pair to idle. 0.4: section 15 added: the serializer; ISA version 3. 0.3.1: 10.1 states the idle level of MISO. 0.3: section 14, capture and replay). This document is the reference for the golden model
+Version 0.5.1, 2026-11-12 (0.5.1: DECISIONS D-047: SCK must be low when CS_n rises. 0.5: DECISIONS D-038 and D-039: MISO is 0 except while a read data byte is shifted out, CS_n is high across the release of reset, the fourth byte of a PINS read is 0; the serializer gains `rx_drop` (status bit 10) and a `SERCFG` that aborts a frame returns the pair to idle. 0.4: section 15 added: the serializer; ISA version 3. 0.3.1: 10.1 states the idle level of MISO. 0.3: section 14, capture and replay). This document is the reference for the golden model
 (`tools/keyersim.py`) and the RTL (`src/`). Where it disagrees with
 `docs/isa.md`, this document wins; `docs/isa.md` is the programmer's
 reference and is kept consistent with it. The encodings are in
@@ -362,7 +362,8 @@ bits 6:0 = register. Multi-byte values are little-endian. Register map:
 `docs/isa.md` section 6.
 
 Constraints: each SCK half-period must be at least 4 core cycles (SCK <=
-clk / 8); SCK must be low when CS_n falls; CS_n must stay high for at least 4
+clk / 8); SCK must be low when CS_n falls and when it rises (DECISIONS
+D-047), so CS_n rises at least four cycles after the last SCK rising edge; CS_n must stay high for at least 4
 core cycles between transactions; no transaction is in progress when reset
 is released: CS_n must be high from two cycles before `rst_n` rises
 (DECISIONS D-038; `tools/keyerhost.py` enforces it in every transport). The

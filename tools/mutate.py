@@ -735,6 +735,7 @@ RESET_WRAP = r"""module eqwrap(input wire clk, input wire rst_n, input wire ena,
         if (release) assume(rh == 3'b000 && ch == 2'b11);
         if (sck != sck_q) assume(sck_hold == 3'd4);
         if (csn_q && !csn) assume(csn_hold == 3'd4 && !sck);
+        if (!csn_q && csn) assume(!sck);                     // D-047: SCK low when CS_n rises
         if (live || release) begin
             assert(g_uo == m_uo);
             assert(g_uio_out == m_uio_out);

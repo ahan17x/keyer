@@ -951,3 +951,20 @@ corner, under 40%, every precheck check passing, `gl_test` passing). If the
 slow corner comes back under +0.5 ns or negative, the entry's fallback is
 option 3 (`AREA 1`, `AREA 2`) before anything else; that is a new entry.
 Rejected: options 2 to 4, for the reasons the OPEN entry gives.
+
+## D-047 (resolved) 2026-11-12 Ahan: option 3, the rule in the contract and the RTL fixed as margin
+
+Ahan's answer to the OPEN entry: both. SEMANTICS 0.5.1, 10.1: "SCK must be
+low when CS_n falls and when it rises", so CS_n rises at least four cycles
+after the last SCK rising edge; the datasheet (`docs/info.md`) says it, and
+the reset-sequence miter assumes it (`tools/mutate.py`, VERIFICATION). In
+the RTL, `imem_wdata` takes the high byte from `wdata_q`, the register the
+other two-byte writes already use, so an IMEM_DATA pair whose last edge
+comes one cycle before CS_n rises is written whole; this is outside the
+contract now and no host may rely on it. The `rtl` subagent makes the
+change on branch `d047` (master with `flow-ttihp27a` merged, so it is
+measured on the new flow), with a directed cocotb test of the margin case;
+hardening run, D-037 rule, and the `keyer_host.v` mutants on the changed
+line judged again. The golden model has no SPI timing and does not change.
+Rejected: option 1 alone (Ahan wants the margin in silicon), option 2
+alone (the contract needs the sentence in any case).

@@ -89,7 +89,8 @@ that use it need their own clock setting, both inside the signed-off
 **Host interface**
 
 SPI slave, mode 0, MSB first, up to clk/8, on `ui[0]` (SCK), `ui[1]` (MOSI),
-`ui[2]` (CS_n) and `uo[0]` (MISO), with an interrupt output on `uo[1]`. A
+`ui[2]` (CS_n) and `uo[0]` (MISO), with an interrupt output on `uo[1]`. SCK
+must be low whenever CS_n changes. A
 transaction is a command byte (bit 7 = write, bits 6:0 = register) and data
 bytes. Registers: thread run/stop and soft reset, status (running, halted,
 blocked), PCs, program memory address and data, the four FIFOs and their

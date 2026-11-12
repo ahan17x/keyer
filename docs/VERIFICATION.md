@@ -412,7 +412,7 @@ of the first reset on, for every input sequence SEMANTICS 10.1 allows the
 host (reset asserted at power-up and held at least three cycles, CS_n high
 in the two cycles before a release, SCK half-periods of at least four
 cycles, CS_n high at least four cycles between transactions, SCK low when
-CS_n falls); the power-up state is all zeros on both sides and every later
+CS_n falls and when it rises, D-047); the power-up state is all zeros on both sides and every later
 reset is checked from every reachable state. Engine: abc's signal
 correspondence (which merges the registers of the two copies that stay
 equal by induction) and PDR on the AIGER model; 1,200 s per mutant.
