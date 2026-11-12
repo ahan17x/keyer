@@ -1040,3 +1040,16 @@ on a statement. The question can be put to Tiny Tapeout (Discord) or to
 the organisers (asic-competition@janestreet.com) in one line; sending it
 is Ahan's call. Until then: if D-049 merges, master uses the new flow
 anyway, and the old one is a fallback whose acceptance is unconfirmed.
+
+## D-049 (addendum) 2026-11-12 Claude: the second timing sample of the new flow
+
+As Ahan asked, the run of branch `d047` (43232242925: the `ttihp27a` flow
+with `AREA 0`, plus the one-line D-047 RTL change) is recorded here: slow
+corner -0.59 ns with 47 violating endpoints, against -2.52 ns and 146 for
+43227914573 on the same flow and settings. Typical +7.15 (was +6.00), fast
++11.67 (+11.03). The two netlists differ in one multiplexer input, so the
+1.9 ns between them is placement, not design: on this flow, without the
+slow corner as a repair target, the slow-corner slack of this design is
+noise of about +-1 ns around zero. That supports D-049's premise (repair
+must target the slow corner) and says the old flow's +1.09 ns was a
+margin of the same size as the noise. Branch `d047` is closed.

@@ -331,6 +331,7 @@ routing, which took twice as long. Both conditions for the merge hold
 | 37549369058 | the same design as 37534398328 (501d9d5, master after D-044) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
 | 43211201559 | the same RTL and `config.json` on the template's `ttihp27a` flow (5e12596, `flow-ttihp27a`, D-046) | 16,480 + macro | 29.3% | +11.42 / +6.64 / **-1.61 (2)** | 25 min | not run | not run |
 | 43227914573 | the above with `SYNTH_STRATEGY` `AREA 0` (1645837, `flow-ttihp27a`, D-048) | 15,057 + macro | 27.1% | +11.03 / +6.00 / **-2.52 (146)** | 18 min | not run | not run |
+| 43232242925 | the above + the D-047 RTL line (a32ec41, `d047`; a timing sample, not for merging) | 14,961 + macro | 27.0% | +11.67 / +7.15 / **-0.59 (47)** | 19 min | not run | not run |
 
 ### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
 
@@ -541,4 +542,18 @@ slow corner because LibreLane places and repairs for `PNR_CORNERS or
 [DEFAULT_CORNER]`, the typical corner here (docs/FACTS.md T13). The old
 flow's +1.09 ns at the slow corner was never optimised for either. Open as
 DECISIONS D-049.
+
+### Run 43232242925, 2026-11-12, commit a32ec41 (branch `d047`): a second sample of the new flow
+
+`flow-ttihp27a` as in 43227914573 (`ttihp27a`, `AREA 0`) plus the one-line
+D-047 change in `keyer_host.v`. Job `gds` failed (slow corner). 14,961
+cells (3,225 repair buffers), 27.0%, wire length 615,917 um; setup +11.67 /
++7.15 / **-0.59 ns** (47 endpoints, from the macro's `A_DOUT[3]`), hold
++0.106 / +0.291 / +0.619; Magic DRC 29,294, 10 overlaps, LVS 0, antenna 0,
+0 slew, 0 cap. Against 43227914573 (the same flow and settings, the RTL
+one mux input apart) the slow corner moved by 1.9 ns: on this flow the
+slow-corner slack of this design varies by about that much with
+placement alone, which is the size of the old flow's +1.09 ns margin.
+Recorded in DECISIONS (D-049 addendum). Branch `d047` deleted afterwards;
+its RTL change is on `d047a`.
 
