@@ -4,6 +4,16 @@ Ahan Shah owns this project. Deadline: Monday 2027-01-18. Target: IHP 130 nm
 CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle. Named Keyer
 (DECISIONS D-017; it was "Loom" until 2026-10-02).
 
+## First action, every session: the master workflows
+
+Before reading or changing anything else, check the latest run of each
+workflow on `master` (`check`, `test`, `docs`, `gds`):
+`gh run list --branch master --limit 12`. A red one is fixed before any
+other work, and the fix is logged in `docs/BUGS.md`. A red `check` on
+master went unnoticed from 2026-10-07 to 2026-11-12 because no session was
+running and none looked (BUGS 59). Read the result of every workflow a
+push of yours starts before you end the session.
+
 ## Read order, every session
 
 1. `docs/HANDOFF.md`: where the project stands and the next task.
@@ -40,7 +50,7 @@ CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle. Named Keyer
   what found it, what now covers it. Bugs in tests and in the model count.
 - **Decisions go in `docs/DECISIONS.md`**, append-only, numbered, with the
   alternatives rejected. Reversing one is a new entry.
-- **Verilog subset:** Verilog-2005 that Icarus 12, Verilator 5 `-Wall` and
+- **Verilog subset:** Verilog-2005 that Icarus 13, Verilator 5 `-Wall` and
   Yosys accept. `default_nettype none` in every file. Synchronous active-low
   reset. No `initial` in synthesisable code (simulation-only under
   `ifndef SYNTHESIS`). One module per file, file name = module name.
