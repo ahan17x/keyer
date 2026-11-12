@@ -827,3 +827,31 @@ it is the base every later run (D-045 included) should be measured on.
 `test/Makefile` and the `test` and `docs` workflows should be compared with
 the template's in the same step, without touching `src/config.json`.
 
+
+## D-046 (resolved) 2026-11-12 Ahan: yes, on a branch
+
+Ahan's answer to the OPEN entry: option 2. Branch `flow-ttihp27a`, cut from
+`origin/master` (0f9faaa, the commit of run 37549369058, so the run on the
+branch differs from that run in the flow only). The template and the action
+were fetched again before the change (template `main` still 4b1204a of
+2026-10-28; `tt-gds-action` tag `ttihp27a`). What the comparison with the
+template gave, all of it taken on the branch and nothing else:
+
+- `gds.yaml`: the four `uses:` lines `@ihp-cmos5l` -> `@ttihp27a`. The jobs
+  are otherwise the template's line for line; our trigger and concurrency
+  block (D-022) stays.
+- `docs.yaml`, `fpga.yaml`: one `uses:` line each, the same change of tag.
+- `test.yaml`: the template now ends the run with
+  `python -m cocotb_tools.check_results results.xml` where it had
+  `! grep failure results.xml` (the check D-023 and D-027 worked around in
+  `test/Makefile`). Taken; the Makefile's step that drops `failures="0"`
+  stays, because it is harmless to the new check (tried on a results file
+  of this repo: exit 0) and `gl_test` falls back to a grep on cocotb 1.
+- `test/Makefile`: the template now takes the PDK name from `$(PDK)` and
+  includes `*_udp.v` by wildcard; ours names `ihp-sg13cmos5l` and the same
+  three files outright. No change. `src/config.json`: not touched.
+
+Merge rule (D-037): setup met at all corners, utilisation under 40%,
+precheck with every check passing (ten on this flow, FACTS T6), `gl_test`
+passing; the run is logged in AREA.md next to 37549369058. Rejected:
+option 1 (stay on `@ihp-cmos5l`), for the reason the OPEN entry gives.
