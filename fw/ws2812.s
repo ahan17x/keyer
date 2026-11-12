@@ -44,7 +44,9 @@
 ;   WS_BIT    bit period              62 = 1.24 us  (1.25 +/- 0.60); the low
 ;             times follow: 42 = 0.84 us after a 0, 22 = 0.44 us after a 1
 ;   WS_RESET  latch time            3000 = 60 us    (above 50 us; at most
-;             65535. Later WS2812B revisions ask for 280 us: use 15000)
+;             65535. Later WS2812B revisions ask for 280 us: use 15000;
+;             the 280 us is unverified, the rest is the datasheet's:
+;             docs/FACTS.md O1 to O3)
 ; For another clock divide the datasheet times by the clock period.
 ;
 ; Limits, in cycles: WS_T0H >= 6, WS_T1H - WS_T0H >= 4, WS_BIT - WS_T1H >= 16,

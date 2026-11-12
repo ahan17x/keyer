@@ -7,7 +7,9 @@ before each Machine.step(): it reads m.pad() (TCK, TMS and TDI are pad
 pins), drives TDO through m.ext_ui, and keeps `errors`, a list of protocol
 violations with their cycle numbers.
 
-What the standard fixes and this model implements:
+What the standard fixes and this model implements (written from memory:
+IEEE 1149.1 is not freely available, so this list is UNVERIFIED against
+its text, docs/FACTS.md O7):
   - the 16-state TAP controller, advancing on TMS at every rising TCK edge;
   - TMS and TDI are sampled at the rising edge of TCK (the model takes
     their level in the cycle before the one in which TCK reads high);

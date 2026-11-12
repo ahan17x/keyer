@@ -5,6 +5,9 @@ Same contract as tools/protomodels.py: on_cycle(m) is called before each
 Machine.step(); the model reads m.pad() (bits 0-7 uio, 8-15 ui, 16-23 uo),
 drives m.ext_uio and reads m.cycle. It knows only the protocol; its
 parameters are the two pin numbers and timing limits in core cycles.
+Checked against ARM IHI 0031G: parity, the ACK's bit order and the
+turnarounds (docs/FACTS.md O4). The connect sequence the firmware sends is
+not judged here and is unverified (O5).
 
 The protocol as the target sees it. Everything happens on rising SWCLK
 edges: the target samples SWDIO there (the level just before the edge) and

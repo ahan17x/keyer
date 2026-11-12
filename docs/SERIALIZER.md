@@ -63,6 +63,13 @@ the bits on the wire.
 | Receive sync | the eight decoded bits `0x80` (KJKJKJKK) | the eight decoded bits `0xD5` (the start frame delimiter) |
 | Receive end | SE0 at a sample point | no mid-bit transition for about 1.75 bit times |
 
+Sources: the USB column is checked against the USB 2.0 specification
+(docs/FACTS.md U2 to U6: SYNC, NRZI, stuffing, EOP; a hub may not shorten a
+low-speed SYNC, U3, so the receiver's eight-bit rule stands). The
+Manchester column's 10BASE-T figures (the convention, `0xD5`, the start of
+idle) are **unverified** against IEEE 802.3, which could not be fetched
+(FACTS E2, E5, E10); they agree with the secondary sources named there.
+
 ## 3. How threads use it
 
 Ten instructions, all in the existing XFER and MISC majors (ISA version 3):

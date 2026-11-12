@@ -1,5 +1,7 @@
 ; JTAG (IEEE 1149.1) master, one thread: TAP reset, DR scans and IR scans of
 ; 1 to 256 bits. Reading IDCODE is a reset followed by a 32-bit DR scan.
+; (The 1149.1 rules used here are unverified against the standard, which is
+; not freely available: docs/FACTS.md O7.)
 ;
 ; Pins: TCK uo3, TMS uo4, TDI uo5 (outputs); TDO ui4 (input, pulled up).
 ;

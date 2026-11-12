@@ -751,3 +751,79 @@ capacitance repair margin; the master run that the merge starts should
 equal 37534398328 and is logged by the next session. Rejected: nothing;
 the rule was met.
 
+## D-045 2026-11-12 OPEN: the tile size, now that the competition allows and asks for 8x4 (not implemented; for Ahan)
+
+**What changed outside.** The Jane Street post was updated on 2026-11-09
+(docs/FACTS.md C3, fetched 2026-11-12): "8x4 tiles are now confirmed for
+the March 2027 shuttle", "The maximum area is 8x4 tiles per design", and,
+in the paragraph on the template, "Set the tile size in info.yaml to 8x4."
+This project was planned and hardened at 6x4 (`info.yaml`, PLAN.md,
+CLAUDE.md, README, SUBMISSION.md); the design fills 27.2% of it.
+
+**What is not clear from the post.** Whether a smaller block than the
+maximum is acceptable as an entry, or whether every entry is expected in an
+8x4 slot. "Maximum" reads as the first; "Set the tile size … to 8x4" reads
+as the second.
+
+**Options.**
+
+1. Stay at 6x4 and ask the organisers (asic-competition@janestreet.com)
+   whether a smaller block is fine. No run, no risk; the answer may still
+   send us to 8x4, later.
+2. Move to 8x4: `info.yaml` `tiles: "8x4"` and nothing else. The block
+   becomes 1724.16 x 710.64 um (FACTS T2), utilisation falls to about 20%,
+   the macro's placement `[12, 40]` in `src/config.json` is still inside
+   the block and both branches of the flow carry `tt_block_8x4_pgvdd.def`.
+   Costs: one hardening run on a branch (about 2.5 h on the runner), merged
+   only by the D-037 rule; the pins move, so timing to the pads changes and
+   the slow corner's +1.09 ns is not guaranteed; every "6x4" and every
+   utilisation figure in the docs changes.
+3. Move to 8x4 and spend the area (512 words, D-040; a third thread). Not
+   proposed: D-040 was decided on its merits and the schedule has no room
+   for new architecture.
+
+**Recommendation.** Send the question (option 1's e-mail) now and, without
+waiting, harden 8x4 on a branch `tiles-8x4` so that either answer is ready
+before the freeze week of 2026-12-07: merge it if the organisers want 8x4
+and the run meets the D-037 rule; drop it if they say a smaller block is
+welcome. Do it after D-046, so that the two changes are measured one at a
+time.
+
+## D-046 2026-11-12 OPEN: follow the template to `tt-gds-action@ttihp27a` (not implemented; for Ahan)
+
+**What changed outside.** The Tiny Tapeout IHP template's `main` branch
+now targets CMOS5L and its `gds` workflow uses
+`TinyTapeout/tt-gds-action@ttihp27a` for all four jobs (FACTS T11; template
+commit 4b1204a of 2026-10-28; the post: "Its main branch now targets
+CMOS5L, so you no longer need the cmos5l branch"). This repository's
+`.github/workflows/gds.yaml` has the jobs of the template's `cmos5l` branch
+as of September, on `@ihp-cmos5l` (a branch that still exists, last commit
+2026-09-14). Differences read from the two `action.yml` files: LibreLane
+3.1.0.dev3 becomes 3.1.0.dev4; the PDK is installed by the support tools
+instead of the action's own script; the support tools come from `main`
+instead of the `ihp-sg13cmos5l` branch, whose precheck has a tenth check on
+this technology, "Verilog syntax check" (FACTS T6).
+
+**Why it matters.** The entry must show "a passing GDS/precheck from the
+Tiny Tapeout flow", and the flow of the shuttle is `ttihp27a`. The post
+allows "small non-functional fixes, like re-hardening for a newer flow"
+after the deadline, so staying is not fatal; but a result on the old flow
+says less, and a surprise (a new precheck failing, a placement that moves
+the slow corner) is cheaper to meet in November than in January.
+
+**Options.**
+
+1. Stay on `@ihp-cmos5l` until someone asks. Nothing to do; the risk above.
+2. Replace the four `uses:` lines with the template's (`@ttihp27a`), keep
+   our trigger block (D-022), on a branch `flow-ttihp27a`; harden; merge by
+   the D-037 rule (setup met at all corners, under 40%, precheck all
+   passing, `gl_test` passing) and log the run in AREA.md next to
+   37549369058 so the flow's effect on the numbers is on record. CLAUDE.md's
+   rule against editing the template's jobs is kept in spirit: the jobs
+   stay the template's, of a newer date.
+
+**Recommendation.** Option 2, now, before any other change under `src/`:
+it is the base every later run (D-045 included) should be measured on.
+`test/Makefile` and the `test` and `docs` workflows should be compared with
+the template's in the same step, without touching `src/config.json`.
+

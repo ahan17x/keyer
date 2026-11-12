@@ -11,6 +11,7 @@ CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle. Named Keyer
 3. `docs/isa.md`: the ISA and timing rules. Until `docs/SEMANTICS.md` exists,
    this is the contract; once it exists, SEMANTICS wins.
 4. `docs/BUGS.md` and `WORKLOG.md` (newest entries at the bottom).
+   `docs/FACTS.md` before stating or using anything from outside the repo.
 5. `PLAN.md` for scope and milestones.
 
 ## Rules
@@ -28,6 +29,13 @@ CMOS5L through Tiny Tapeout, 6x4 tiles, March 2027 shuttle. Named Keyer
   edits one does not open the other. The subagents in `.claude/agents/` carry
   that restriction; use them for any rewrite of either side. Tests
   (`test/`, `tools/test_*.py`) may read both.
+- **External facts go in `docs/FACTS.md`.** No fact from outside this repo
+  (a protocol number, a PDK or Tiny Tapeout figure, a competition rule, a
+  tool limit) enters a spec, test, model or doc without a FACTS row that
+  names the primary source, quotes it and was written from a copy fetched
+  in that session. A fact from memory is entered as `unverified`, and the
+  file that uses it says so, until it has a fetched source. The competition
+  post and the template change: fetch them again before relying on them.
 - **Every bug goes in `docs/BUGS.md`**: date, module, symptom, root cause,
   what found it, what now covers it. Bugs in tests and in the model count.
 - **Decisions go in `docs/DECISIONS.md`**, append-only, numbered, with the

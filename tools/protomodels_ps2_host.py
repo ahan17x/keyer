@@ -2,7 +2,9 @@
 
 Used like the models in protomodels.py: on_cycle(m) is called before each
 Machine.step(); the model reads m.pad() and drives m.ext_uio. It knows only
-the PS/2 protocol, nothing about the firmware that plays the host.
+the PS/2 protocol, nothing about the firmware that plays the host. The
+protocol facts here are written from memory; no primary source (IBM's
+technical reference) was found, so they are UNVERIFIED: docs/FACTS.md O8.
 
 The bus. CLK and DATA are open-drain with pull-ups; either side can pull a
 line low. The device generates the clock in both directions. All times are

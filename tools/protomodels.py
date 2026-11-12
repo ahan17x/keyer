@@ -6,6 +6,11 @@ pad vector for this cycle) and drive external levels through m.ext_ui /
 m.ext_uio. They are deliberately independent of the firmware: a UART decoder
 only knows the baud rate, an SPI slave only knows mode 0, an I2C slave only
 knows the bus rules.
+
+Where the rules come from (docs/FACTS.md section 3): the I2C bus rules are
+checked against NXP UM10204 (P4, P5). The 8N1 UART framing, SPI mode 0 and
+the 24Cxx EEPROM behaviour are conventions written from memory, with no
+primary source fetched: UNVERIFIED (P1, P3, P8).
 """
 
 

@@ -1,5 +1,9 @@
 ; 10BASE-T transmitter (10 Mbit/s Manchester, IEEE 802.3 clause 14), one
 ; thread, on the serializer engine (docs/SERIALIZER.md, SEMANTICS 15).
+; The 802.3 figures in this header (bit rate tolerance, link pulse interval
+; and width, preamble, frame lengths, inter-frame gap, start of idle) are
+; UNVERIFIED against the standard, which could not be fetched: docs/FACTS.md
+; E1 to E11. EtherType 0x88B5 is verified (E12); the CRC-32 is recomputed (E7).
 ; Start thread 0 at address 0; thread 1 is not used. Transmit only: the
 ; engine's receiver is off and nothing is decoded from the line (receive
 ; would need a second pair, the receiver on, and a 10BASE-T clock recovery

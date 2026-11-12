@@ -8,6 +8,12 @@ the schedule). Keep the two texts consistent: the datasheet's "How it
 works" and "Verification" paragraphs are the long form of sections 1 to 3
 here.
 
+Competition facts (deadline, what to submit, how entries are judged) are
+rows C1 to C9 of `docs/FACTS.md`, checked against the post on 2026-11-12;
+questions go to asic-competition@janestreet.com. The post was updated on
+2026-11-09 (8x4 tiles; the template's `main` branch): DECISIONS D-045 and
+D-046 are open on it, and section 1's "6x4" follows D-045.
+
 ## 1. What the chip is
 
 Keyer is a small processor built to bit-bang wire protocols, named after
@@ -149,3 +155,39 @@ same protocol models that verify the firmware. Written from a cycle-exact
 spec with an independent golden model run in lockstep with the RTL, formal
 proofs, equivalence proofs on every refactor and a mutation score of 2,021
 of 2,021 non-equivalent faults.
+
+## 5. How AI tools were used (draft for Ahan to review; the post asks for this)
+
+The post's FAQ says AI tools are allowed and asks entrants to describe how
+they were used (FACTS C6). This is the description the repository itself
+supports; Ahan should correct anything that does not match his own account.
+
+The design was built by Ahan Shah with Claude (Anthropic), mostly in Claude
+Code sessions working in this repository. The method was chosen to keep an
+AI-written design checkable:
+
+- **A written contract first.** `docs/SEMANTICS.md` defines the chip cycle
+  by cycle. When the contract was silent or wrong the session stopped and
+  wrote a numbered entry in `docs/DECISIONS.md`; Ahan decided, and the
+  entries name who decided what (D-001 to D-046; the questions the model's
+  author put to the spec are in `docs/spec-questions.md`).
+- **Two implementations that could not read each other.** The golden model
+  (`tools/keyersim.py`) and the RTL (`src/`) were written from the
+  contract by separate agent sessions, each barred from opening the other
+  side (`.claude/agents/`, `CLAUDE.md`). They run in lockstep every cycle;
+  a disagreement is a bug in one of them or a hole in the contract (BUGS
+  8, 12 to 15).
+- **Protocol models that know only the protocol** judge the firmware, and
+  the external facts they rest on are listed with their sources and a
+  status in `docs/FACTS.md`; where a primary source could not be fetched
+  the row and the file that uses it say "unverified".
+- **Checks that do not depend on trusting the author**: formal proofs,
+  equivalence proofs on every refactor, mutation testing of the test suite,
+  and three-corner static timing on every hardening run. Every bug any of
+  them found, including bugs in the tests and the tools, is a row in
+  `docs/BUGS.md`.
+- `CLAUDE.md` is the standing instruction file the sessions worked under;
+  `WORKLOG.md` is the running log of what each session did and verified.
+
+No board has run the design (D-035); every protocol claim rests on the
+models, and section 3 says so.

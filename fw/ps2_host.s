@@ -23,6 +23,8 @@
 ; two-instruction loop (4 cycles a turn): CLK low starts a receive, a byte in
 ; the inbox starts a send. Polling is enough because the first CLK low phase
 ; of a frame lasts 30 us or more and the start bit is on DATA for all of it.
+; (Every PS/2 figure in this header, 10 to 16.7 kHz, 30 to 50 us, the 100 us
+; inhibit, is unverified: no primary source was found, docs/FACTS.md O8.)
 ; A receive in progress is always finished before a command is sent. If a
 ; frame starts while the host is pulling CLK low for a command, the device
 ; aborts it and sends it again later, as the protocol requires.

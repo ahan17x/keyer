@@ -56,7 +56,7 @@
 ; the bus and there is no limit.) Releasing SDA while SCL is stuck high
 ; looks like a STOP, which is the point: the bus is free again. Defaults:
 ; 30 ticks of 50000 cycles, 29 to 30 ms at 50 MHz (SMBus asks for 25 to 35
-; ms); TMO_PERIOD at most 65535. Choose it longer than the slowest clock
+; ms: unverified, docs/FACTS.md P7); TMO_PERIOD at most 65535. Choose it longer than the slowest clock
 ; pulse (low phase plus high phase) a healthy master may produce.
 ;
 ; Timing. The thread sees a pin two cycles late and runs every other cycle.

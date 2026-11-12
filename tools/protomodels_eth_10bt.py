@@ -16,7 +16,13 @@ driver produces (reported). An undriven pair reads zero: the model's
 termination sets both external levels to 0.
 
 What it checks (the `errors` list, tuples (kind, time_ns, detail); nothing
-here asserts). Limits, where they come from, and how sure:
+here asserts). Limits, where they come from, and how sure. NOTE: IEEE
+802.3 itself could not be fetched (docs/FACTS.md section 2), so every
+clause number and figure below is UNVERIFIED against the standard's text:
+"sure" means the author's confidence, backed where FACTS says so by the
+UNH-IOL MAU test suite and fpga4fun.com, not a check of the primary source.
+Only the CRC-32 (recomputed with zlib), the published frame and its FCS
+are confirmed (FACTS E7, E8).
   - "illegal state": both pads high, at any time.
   - Silence is zero differential. An excursion from silence that is one
     single level and returns to zero is a link test pulse; anything with a

@@ -189,8 +189,6 @@ the standard-cell liberty was fetched from the PDK's `dev` branch (S16).
 
 ## What changed because of this audit
 
-**Session 8 stopped early (usage limit). Applied so far:**
-
 - U10: `fw/usb_ls_device.s` said the host has 6.5 bit times to answer; USB
   gives it 7.5. Comment corrected; `test_host_handshake_at_the_latest_allowed_time`
   holds the firmware at 7.5 (BUGS 52). No instruction changed.
@@ -198,22 +196,27 @@ the standard-cell liberty was fetched from the PDK's `dev` branch (S16).
   (25 ns) are stricter than what the specification asks of a low-speed
   device (7.5 and 95 ns). Kept, and labelled in the model's header.
 - U3: the question HANDOFF carried ("check what a low-speed hub may drop")
-  is closed: nothing. The receiver keeps its eight-bit SYNC rule.
+  is closed: nothing. The receiver keeps its eight-bit SYNC rule; no spec,
+  model or RTL change.
+- T1: `PLAN.md`'s early tile estimate is marked superseded (BUGS 53).
+- T5: D-028's `TIMING_VIOLATION_CORNERS` claim, which could not be found in
+  the tool source, is confirmed from a run's `resolved.json`.
+- C6, C8: `docs/SUBMISSION.md` gains a draft of the description of AI use
+  the post asks for, and the contact address (BUGS 54).
+- C3, T11: two upstream changes of 2026-10-28 to 2026-11-09 (8x4 tiles; the
+  template's `ttihp27a` action with a tenth precheck) are open decisions
+  D-045 and D-046. Nothing under `src/`, `info.yaml` or `.github/` was
+  changed by the audit.
+- Every `unverified` row is marked in the file that uses it:
+  `tools/protomodels_eth_10bt.py`, `fw/eth_10bt_tx.s`, `docs/SERIALIZER.md`
+  (802.3: E1 to E6, E9 to E11, E13); `tools/protomodels.py` (UART, SPI,
+  24Cxx: P1, P3, P8); `fw/i2c_slave.s` (SMBus: P7); `fw/ws2812.s` (280 us:
+  O3); `fw/swd.s`, `tools/protomodels_swd.py` (connect sequence: O5);
+  `fw/jtag_master.s`, `tools/protomodels_jtag_master.py` (1149.1: O7);
+  `fw/ps2_host.s`, `tools/protomodels_ps2_host.py` (PS/2: O8);
+  `docs/HANDOFF.md` (egress: G4). O6 and I9's dated message have nothing
+  depending on them.
 
-**Found but NOT yet applied (rows above that mention them describe the
-intended state, not the present one):**
-
-- T1: `PLAN.md:69`'s early tile estimate (720,000 um^2) is still unmarked
-  (BUGS 53 not written).
-- C6, C8: `docs/SUBMISSION.md` still has no description of AI use and no
-  contact address (BUGS 54 and "section 5" not written).
-- C3, T11: the two upstream changes (8x4 tiles; the template's `ttihp27a`
-  action and its tenth precheck) are for Ahan to decide; the DECISIONS
-  entries D-045 and D-046 are not written yet.
-- The `unverified` rows are not yet marked in the files that use them
-  (`tools/protomodels_eth_10bt.py`, `fw/eth_10bt_tx.s`, `docs/SERIALIZER.md`,
-  `tools/protomodels.py`, `fw/i2c_slave.s`, `fw/ws2812.s`, `fw/swd.s`,
-  `tools/protomodels_swd.py`, `fw/jtag_master.s`,
-  `tools/protomodels_jtag_master.py`, `fw/ps2_host.s`,
-  `tools/protomodels_ps2_host.py`, `docs/HANDOFF.md`).
-- The rule is not in CLAUDE.md yet.
+No row came out wrong in a way that touches the contract, the model or the
+RTL: the wrong rows were a firmware comment (U10), a planning estimate (T1)
+and the picture of the competition's rules (C3, C6, T11).

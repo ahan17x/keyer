@@ -10,6 +10,9 @@
 ; Host protocol on the inbox, a small bytecode:
 ;   0x01            CONNECT: 64 clocks with SWDIO high (line reset), 0xE79E
 ;                   LSB first, 64 clocks high, 8 clocks low. Pushes nothing.
+;                   (The line-reset length and 0xE79E are unverified against
+;                   ADIv5: docs/FACTS.md O5. Parity, ACK order and the
+;                   turnarounds are verified: O4.)
 ;   0x02 req [d0 d1 d2 d3]
 ;                   TRANSFER. req is the 8-bit SWD request as it goes on the
 ;                   wire, LSB first: bit 0 start (1), bit 1 APnDP, bit 2 RnW,

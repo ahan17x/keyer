@@ -66,7 +66,7 @@ Deliberately out: data memory (registers + FIFOs are enough for these protocols)
 
 ## 4. Area budget (from the CMOS5L liberty file)
 
-- 6x4 tiles = 24 x 200 um x 150 um = 720,000 um^2. At the template's 60% placement density, roughly 430,000 um^2 of cells.
+- 6x4 tiles = 24 x 200 um x 150 um = 720,000 um^2. At the template's 60% placement density, roughly 430,000 um^2 of cells. (Superseded: this was the estimate before the first hardening run. A tile is about 202 x 155 um and the 6x4 block is 1289.28 x 710.64 um = 916,214 um^2, core 902,417 um^2: docs/AREA.md, docs/FACTS.md T1. Since 2026-11-09 the competition's maximum is 8x4: FACTS C3, DECISIONS D-045.)
 - Flip-flop with reset: 49 um^2. mux2: 18 um^2. NAND2: 7.3 um^2.
 - SRAM macro 256x16: 28,127 um^2.
 - Estimated core: ~1,200 flops (two register files 256, PCs/flags/LR ~40, timers 64, four FIFOs 512, host interface ~120, pin unit ~110, sync ~50) = ~60,000 um^2 of flops plus logic. Expect 150,000-200,000 um^2 total. Leaves room for every stretch item.
