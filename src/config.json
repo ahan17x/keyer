@@ -91,6 +91,11 @@
   "//": "37363511492), 1.34 times the repair target; 30 puts the expected routed value about 6% under the limit.",
   "DESIGN_REPAIR_MAX_CAP_PCT": 30,
 
+  "//": "Synthesis strategy (DECISIONS D-048): LibreLane 3.1.0.dev4, the ttihp27a flow, defaults to DELAY 4",
+  "//": "(dev3 defaulted to AREA 0); on this design DELAY 4 gave 1,371 more cells and -1.61 ns at the slow",
+  "//": "corner (run 43211201559) where AREA 0 gave +1.09 ns (run 37549369058). Pinned to the old default.",
+  "SYNTH_STRATEGY": "AREA 0",
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
