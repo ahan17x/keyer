@@ -5,7 +5,7 @@
     python3 tools/mutate.py run    [FILE ...] [-j N] [--out F.jsonl] [--resume] [--sample N --seed S]
                                    [--shard I/N] [--only ID,...] [--timeout SECONDS]
     python3 tools/mutate.py report [F.jsonl ...] [--md FILE]
-    python3 tools/mutate.py prove-equivalents [F.jsonl ...] [-j N] [--only ID,...] [--timeout SECONDS]
+    python3 tools/mutate.py prove-equivalents [F.jsonl ...] [-j N] [--only ID,...] [--timeout SECONDS] [--engine E,...]
                                    [--out F.jsonl] [--update]
 
 A mutant is the design with one single-line fault. `run` first takes the
@@ -779,11 +779,28 @@ write_aiger -zinit -map {out}/miter.aim {out}/miter.aig
 """
 
 
-def reset_miter(work, mt, timeout=1800):
+# What abc runs on the miter after `read_aiger; fold; strash`. Every engine
+# starts with signal correspondence (the two copies share almost all their
+# state); they differ in what settles the rest. `pdr` is the default and the
+# one session 7 used. A verdict of any engine is a verdict: each is a
+# complete proof or a concrete counterexample.
+MITER_ENGINES = {
+    "pdr": "scorr; print_stats; pdr",
+    "dprove": "scorr; print_stats; dprove",
+    "scorr2": "scorr -F 2; print_stats; pdr",
+    "retime": "scorr; dretime; scorr -F 2; dc2; print_stats; pdr",
+    "int": "scorr; print_stats; int",
+}
+_PROVED = ("Property proved", "Networks are equivalent")
+_REFUTED = re.compile(r"was asserted in frame (\d+)|Networks are NOT EQUIVALENT|Output \d+ of miter .* was asserted")
+
+
+def reset_miter(work, mt, timeout=1800, engine="pdr"):
     """The reset-sequence miter of the mutant in work/src against src/.
     Returns (verdict, detail): proved / cex (detail: the frame) / unknown
     (timeout, or the engine gave no verdict) / error (the model did not
-    build) / skipped (the macro instantiation)."""
+    build) / skipped (the macro instantiation). `engine` names one entry
+    of MITER_ENGINES."""
     if mt["file"] == "keyer_imem.v" and not mt["define"]:
         return "skipped", "the macro instantiation is outside the miter"
     out = os.path.join(work, "reset_miter")
@@ -805,16 +822,16 @@ def reset_miter(work, mt, timeout=1800):
     if status != "ok" or not os.path.exists(os.path.join(out, "miter.aig")):
         return "error", "the model did not build (%s): see %s/yosys.log" % (status, out)
     left = timeout - (time.time() - t0)
-    status, res = run_cmd(["yosys-abc", "-c", "read_aiger %s/miter.aig; fold; strash; scorr; print_stats; pdr; write_cex -a %s/cex.txt" % (out, out)],
-                          out, max(60, left))
+    status, res = run_cmd(["yosys-abc", "-c", "read_aiger %s/miter.aig; fold; strash; %s; write_cex -a %s/cex.txt"
+                           % (out, MITER_ENGINES[engine], out)], out, max(60, left))
     open(os.path.join(out, "abc.log"), "w").write(res)
-    if "Property proved" in res:
-        return "proved", "%.0f s" % (time.time() - t0)
-    m = re.search(r"was asserted in frame (\d+)", res)
-    if m:
-        return "cex", "counterexample at frame %s (the inputs are in %s/cex.txt)" % (m.group(1), out)
+    m = _REFUTED.search(res)
+    if m:                       # a refutation outranks anything else the log says
+        return "cex", "counterexample%s (the inputs are in %s/cex.txt)" % (" at frame " + m.group(1) if m.group(1) else "", out)
+    if any(w in res for w in _PROVED):
+        return "proved", "%.0f s%s" % (time.time() - t0, "" if engine == "pdr" else ", abc " + engine)
     if status == "timeout":
-        return "unknown", "timeout after %d s" % timeout
+        return "unknown", "timeout after %d s (abc %s)" % (timeout, engine)
     st = re.search(r"lat =\s*(\d+)\s+and =\s*(\d+)", res)
     if st and st.group(1) == "0":
         # scorr merged the two copies completely: the properties are constants
@@ -1051,7 +1068,10 @@ def cmd_prove_equivalents(args):
         t0 = time.time()
         try:
             prepare(wdir, mt)
-            verdict, detail = reset_miter(wdir, mt, args.timeout)
+            for engine in args.engine.split(","):       # in order, until one gives a verdict
+                verdict, detail = reset_miter(wdir, mt, args.timeout, engine)
+                if verdict != "unknown":
+                    break
         except Exception as e:                      # a harness fault is not a verdict
             verdict, detail = "error", "harness: %r" % (e,)
         rec = dict(id=mt["id"], file=mt["file"], line=mt["line"], verdict=verdict, detail=detail,
@@ -1083,7 +1103,7 @@ def cmd_prove_equivalents(args):
                     continue
                 res = results.get(r["id"])
                 if res and res["verdict"] == "proved":
-                    r["status"], r["note"] = "equivalent", "proved by the reset-sequence miter (%.0f s)" % res["seconds"]
+                    r["status"], r["note"] = "equivalent", "proved by the reset-sequence miter (%s)" % res["detail"]
                 elif res and res["verdict"] == "cex":
                     r["status"], r["note"] = "survived", "reset-sequence miter: %s; not equivalent, needs a test" % res["detail"]
                 lines.append(json.dumps(r, sort_keys=True))
@@ -1120,7 +1140,8 @@ def main(argv=None):
     p.add_argument("results", nargs="*", help="result files (default test/sim_build/mutation/results.jsonl)")
     p.add_argument("--only", help="comma-separated mutant ids (default: every documented equivalent with status survived)")
     p.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
-    p.add_argument("--timeout", type=float, default=1800, help="seconds per mutant for the model build and the proof (default 1800)")
+    p.add_argument("--timeout", type=float, default=1800, help="seconds per mutant and engine for the model build and the proof (default 1800)")
+    p.add_argument("--engine", default="pdr", help="abc engines to try in order, comma-separated: %s (default pdr)" % ", ".join(MITER_ENGINES))
     p.add_argument("--out", help="JSONL file for the verdicts (one line per mutant)")
     p.add_argument("--resume", action="store_true", help="append to --out instead of truncating it")
     p.add_argument("--update", action="store_true", help="rewrite the result rows with the verdicts (see the module docstring)")

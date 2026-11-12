@@ -154,10 +154,10 @@ def test_reset_miter_controls(tmp_path, monkeypatch):
         assert len(n) == 1, (needle, n)
         return dict(id="ctl", file=file, line=n[0] + 1, define=define, text=src[n[0]].replace(needle, replacement))
 
-    def verdict(mt, timeout=600):
+    def verdict(mt, timeout=600, engine="pdr"):
         work = os.path.join(str(tmp_path), "w")
         M.prepare(work, mt)
-        return M.reset_miter(work, mt, timeout)
+        return M.reset_miter(work, mt, timeout, engine)
 
     v, detail = verdict(variant("tx_shift <= 8'd0; miso <= 1'b0;", "tx_shift <= 8'd0; miso <= 1'b1;", file="keyer_host.v"))
     assert v == "cex", (v, detail)                     # MISO high after reset (SEMANTICS 10.1)
@@ -165,4 +165,12 @@ def test_reset_miter_controls(tmp_path, monkeypatch):
     assert v == "proved", (v, detail)
     v, detail = verdict(variant(".A_DLY      (1'b1),", ".A_DLY      (1'b0),", file="keyer_imem.v"))
     assert v == "skipped", (v, detail)
+    # every other abc engine on the same two controls: the fault is refuted
+    # (or at least never proved), the invisible change is never refuted
+    for engine in sorted(set(M.MITER_ENGINES) - {"pdr"}):
+        v, detail = verdict(variant("tx_shift <= 8'd0; miso <= 1'b0;", "tx_shift <= 8'd0; miso <= 1'b1;", file="keyer_host.v"),
+                            engine=engine)
+        assert v == "cex", (engine, v, detail)
+        v, detail = verdict(variant("assign dbg_retire = commit;", "assign dbg_retire = ~commit;"), engine=engine)
+        assert v == "proved", (engine, v, detail)
 
