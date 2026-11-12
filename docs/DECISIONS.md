@@ -1011,3 +1011,32 @@ the slow corner, no further iteration on the flow in this session: D-051 is
 opened with the fallback of stating in the datasheet the slow-corner
 frequency the run supports (period = 20 ns + the miss) next to 50 MHz at
 the sign-off corner, and left for Ahan. Rejected: options 2 and 3.
+
+## D-050 2026-11-12 Claude, at Ahan's request: which flow TTIHP27a requires (answer recorded; the choice stays open)
+
+Ahan asked for Tiny Tapeout's own word on the flow version the TTIHP27a
+shuttle requires at submission. What their sources say (fetched
+2026-11-12, docs/FACTS.md T11, T14 to T16):
+
+- The documented flow for IHP SG13CMOS5L is LibreLane 3.1.0.dev4, the
+  default of `tt-gds-action@ttihp27a`: the local-hardening guide gives
+  "export LIBRELANE_TAG = 3.1.0.dev4" and says the values may change. The
+  template's `main` uses `@ttihp27a`.
+- The submission app checks the PDK (FAQ: "This project was hardened for
+  sky130A, but you are trying to submit it to a shuttle using
+  ihp-sg13g2."). Both flows harden for `ihp-sg13cmos5l`.
+- The submission records `FLOW_VERSION` and `PDK_VERSION` (`pdk.json`,
+  written by the support tools); whether the app compares them is not
+  public.
+- No reachable source says a design hardened on the old flow
+  (`@ihp-cmos5l`, LibreLane 3.1.0.dev3, PDK `2bbec755`) is refused, and
+  none says it is accepted. The shuttle has no page yet
+  (`tinytapeout.com/runs/ttihp27a/` is a 404).
+
+**Answer.** The new flow is the documented one; that the old one is still
+accepted is neither stated nor ruled out. Under Ahan's instruction this
+is the "choose later" case, with the caveat that it rests on silence, not
+on a statement. The question can be put to Tiny Tapeout (Discord) or to
+the organisers (asic-competition@janestreet.com) in one line; sending it
+is Ahan's call. Until then: if D-049 merges, master uses the new flow
+anyway, and the old one is a fallback whose acceptance is unconfirmed.
