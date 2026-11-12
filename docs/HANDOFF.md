@@ -4,6 +4,39 @@ Updated 2026-11-12 (Claude Code session 8). This is the first file a
 session reads. Keep it short: what exists, what is decided, what is open,
 what to do next.
 
+## PAUSED mid-session 8 (2026-11-12, Ahan turned the laptop off): resume here
+
+Everything is committed; master is **not pushed** (the full suite has not
+run on it yet). Local jobs were stopped cleanly; GitHub runs continue on
+their own. Logs of the stopped campaign and the run reports are in
+`test/sim_build/session8/` (ignored by git). To resume, in order:
+
+1. `gh run list --limit 20`: read these results.
+   - `flow-ttihp27a` gds 43241587919 (D-049, `PNR_CORNERS`): merge by
+     D-037 if setup is met at all corners; else open D-051 (datasheet
+     states the slow-corner frequency, period 20 ns + the miss) and leave
+     it for Ahan. Log the run in AREA.md with `scripts/gds_report.py`.
+   - `d047a` gds 43237692551 (old flow + the D-047 RTL line) and check
+     43242077988 (cocotb count 78, BUGS 61): merge `d047a` into master by
+     D-037 if both pass; log the run in AREA.md.
+   - `d047` gds 43232242925 (new flow + AREA 0 + the RTL line): the second
+     timing sample of the new flow; record it in D-049 and AREA.md, then
+     delete the branch (`git push origin --delete d047`, local branch too).
+2. The proof campaign: the PDR stage (3,600 s) gave "unknown" on 18 of 21
+   rows before it was stopped (`long.log`); the variants stage had refuted
+   two rows (handled: BUGS 56 to 58, D-047). BUGS 60: re-run
+   `python3 tools/mutate.py prove-equivalents docs/mutation_full.jsonl
+   --only <the 20 reason-only ids> --timeout 240 --engine scorr2 --update`
+   (the fallback was broken when the variants ran), then re-mark
+   `tools/mutate_equivalents.md` and VERIFICATION.
+3. `bash scripts/check_all.sh` once (only when no mutation job is running:
+   it cleans `test/`), refresh the counts in HANDOFF, SUBMISSION and
+   VERIFICATION, WORKLOG entry, push master (it turns `check` green again,
+   BUGS 59).
+4. Report to Ahan with the audit split (FACTS.md header: 92 rows, 68
+   verified, 3 computed, 20 unverified, P6 not a fact) and what was wrong
+   and fixed.
+
 ## What exists (all tests green)
 
 - GitHub: <https://github.com/ahan17x/keyer>, public, branch `master`.
