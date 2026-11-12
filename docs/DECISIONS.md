@@ -999,3 +999,15 @@ placement, never an optimisation target.
 optimise what the merge rule checks; the D-045 run (8x4) should carry it
 too. If it does not close, option 3 for the submission, with the finding
 written up for the organisers.
+
+## D-049 (resolved) 2026-11-12 Ahan: yes, `PNR_CORNERS` on all three corners, `AREA 0` reverted
+
+Ahan's answer: option 1. On `flow-ttihp27a`, `src/config.json` gets
+`"PNR_CORNERS"` = `nom_fast_1p32V_m40C`, `nom_slow_1p08V_125C`,
+`nom_typ_1p20V_25C`, and D-048's `"SYNTH_STRATEGY": "AREA 0"` is removed
+(the flow's default `DELAY 4` again). One hardening run, recorded in
+AREA.md with the two before it; merge by D-037. If that run still misses
+the slow corner, no further iteration on the flow in this session: D-051 is
+opened with the fallback of stating in the datasheet the slow-corner
+frequency the run supports (period = 20 ns + the miss) next to 50 MHz at
+the sign-off corner, and left for Ahan. Rejected: options 2 and 3.
