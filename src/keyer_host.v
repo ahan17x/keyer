@@ -215,7 +215,12 @@ module keyer_host (
     assign inbox_wdata = wdata_q;
     assign pinmode_val = wdata_q;
     assign imem_addr   = imem_addr_q;
-    assign imem_wdata  = {rx_byte, imem_lo};
+    // D-047: the high byte comes from wdata_q, not rx_byte. imem_we is high
+    // in e + 4; wdata_q then holds the byte rx_byte held in e + 3, whereas
+    // rx_byte is cleared at the end of e + 3 if CS_n rose on the pad in e + 1
+    // (outside SEMANTICS 10.1, kept as margin). Same register as the other
+    // two-byte writes below.
+    assign imem_wdata  = {wdata_q, imem_lo};
     assign cr_ctrl_val = wdata_q;
     assign rep_cfg_val = wdata_q;
     assign cap_cfg_val = {wdata_q, imem_lo};
