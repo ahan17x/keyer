@@ -46,6 +46,7 @@ the commit that added this file.
 | S18 | Jane Street blog, "Can you design a chip? Announcing the protocol emulator ASIC competition" (dated Sep 10, 2026, with an update of November 9th) | <https://blog.janestreet.com/protocol-emulator-asic-competition/> | sha256 `3e9ae6ad…` as fetched 2026-11-12 |
 | S19 | Tiny Tapeout, "PCB - ETR" | <https://tinytapeout.com/specs/pcb-etr/> | fetched 2026-11-12 |
 | S20 | RFC 9542 (IANA considerations and IETF use of IEEE 802 parameters; secondary for IEEE 802) | <https://www.rfc-editor.org/rfc/rfc9542.txt> | fetched 2026-11-12 |
+| S21 | LibreLane source, `librelane/steps/pyosys.py` at tags `3.1.0.dev3` (ca6adb1) and `3.1.0.dev4` (dcea37e) | <https://github.com/librelane/librelane> (raw files at the two tags) | fetched 2026-11-12; sha256 `92d4717b…` (dev3), `3a6c785c…` (dev4) |
 
 **Not reachable.** IEEE Std 802.3 (any revision): IEEE Xplore returns an
 empty response without a signed-in account, and the IEEE GET programme
@@ -163,6 +164,7 @@ the standard-cell liberty was fetched from the PDK's `dev` branch (S16).
 | T9 | On the RP2350, GP20 can be UART1 TX and GP37 UART1 RX | `docs/info.md:182-198` | S11, "GPIO Bank 0 Functions" table, function F2 | "20 SPI0 RX UART1 TX I2C0 SDA PWM2 A"; "37 SPI0 CSn UART1 RX I2C0 SCL PWM10 B" | verified. With T8 this closes HANDOFF's open item: the pin claim holds on the SDK's map, not on the datasheet alone. GP37 exists only on the 80-pin RP2350B; S12's map uses GPIOs up to 40, so the board has one |
 | T10 | A deselected design is powered down and loses its state | `docs/info.md` (How to test: load after select), `tools/keyerhost.py` (`setup`) | S18 FAQ | "When your design is deselected it's powered down and loses its state" | verified |
 | T11 | The template's `gds` workflow uses `TinyTapeout/tt-gds-action@ttihp27a` | `.github/workflows/gds.yaml:30-60` (this repo: `@ihp-cmos5l`) | S13 `.github/workflows/gds.yaml`; S15 | "uses: TinyTapeout/tt-gds-action@ttihp27a" | verified. **Changed upstream since session 7**: the repo's jobs are the template's of September. Open for Ahan as D-046 |
+| T12 | LibreLane's default synthesis strategy changed from `AREA 0` (3.1.0.dev3, the old flow) to `DELAY 4` (3.1.0.dev4, the `ttihp27a` flow) | `docs/AREA.md` (run 43211201559), DECISIONS D-048 | S21, the `SYNTH_STRATEGY` variable | dev3: `default="AREA 0"`; dev4: `default="DELAY 4"` | verified; the two runs' `resolved.json` agree (`AREA 0`, `DELAY 4`) |
 
 ## 7. The competition
 

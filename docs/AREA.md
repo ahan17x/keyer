@@ -329,6 +329,7 @@ routing, which took twice as long. Both conditions for the merge hold
 | 37363511492 | the same design as 37339746749 (71d8a6d, master after D-042) | 15,085 + macro | 27.1% | +12.39 / +8.25 / +0.99 (0) | 55 min | 9/9 | pass |
 | 37534398328 | the same RTL with the capacitance repair margin of D-043 (19440d7, `d043`) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
 | 37549369058 | the same design as 37534398328 (501d9d5, master after D-044) | 15,109 + macro | 27.2% | +12.43 / +8.24 / +1.09 (0) | 55 min | 9/9 | pass |
+| 43211201559 | the same RTL and `config.json` on the template's `ttihp27a` flow (5e12596, `flow-ttihp27a`, D-046) | 16,480 + macro | 29.3% | +11.42 / +6.64 / **-1.61 (2)** | 25 min | not run | not run |
 
 ### Run 37286790227, 2026-10-05, commit da3e126 (master after the serializer merge, D-037)
 
@@ -468,3 +469,44 @@ max-fanout; power 5.9 mW, worst IR drop 0.3 mV. `resolved.json`:
 `TIMING_VIOLATION_CORNERS` `['*typ*']`, `DEFAULT_CORNER`
 `nom_typ_1p20V_25C` (docs/FACTS.md T5). The run's artifacts expire on
 2027-01-04 (FACTS G3).
+
+### Run 43211201559, 2026-11-12, commit 5e12596 (branch `flow-ttihp27a`, D-046): **failed**
+
+The first run on `tt-gds-action@ttihp27a` (LibreLane 3.1.0.dev4, the PDK
+installed by ciel, version 89d42ee6). The RTL and `src/config.json` are those
+of 37549369058; only the workflow tags differ. Numbers from
+`python3 scripts/gds_report.py 43211201559`. Job `gds` **failed** after 1 h
+14 min ("Setup violations found in the following corners: *
+nom_slow_1p08V_125C"); `precheck`, `gl_test` and `viewer` were skipped.
+
+| | 37549369058 (old flow) | 43211201559 (`ttihp27a`) |
+|---|---|---|
+| Standard cells | 15,109 (3,292 repair buffers) | 16,480 (2,603 repair buffers) |
+| Utilisation | 27.2% | 29.3% |
+| Setup fast / typical / slow | +12.43 / +8.24 / +1.09 | +11.42 / +6.64 / **-1.61** (2 endpoints, TNS -3.19) |
+| Hold fast / typical / slow | +0.104 / +0.285 / +0.607 | +0.107 / +0.289 / +0.614 |
+| Wire length | 617,009 um | 816,431 um |
+| Routing | 55 min, DRC 0 | 25 min, DRC 0 |
+| Magic DRC, overlaps, LVS, antenna | 29,294, 10, 0, 0 | 29,294, 10, 0, 0 |
+| Slew / cap / fanout | 0 / 0 / 139 | 0 / 0 / 125 |
+
+The two violators are the macro's `A_DOUT[10]` into two flops (arrival
+22.09 ns at the slow corner against 19.45 ns for the worst path of the old
+run, the same kind of path: memory output through the decode). What
+changed, from the two runs' `resolved.json`:
+
+- `SYNTH_STRATEGY` `AREA 0` -> `DELAY 4`: LibreLane's default changed
+  between 3.1.0.dev3 and dev4 (docs/FACTS.md T12). Our `config.json` does
+  not set it. Here the delay script gives more cells, longer wires and a
+  worse slow corner (weak `buf_1` fanout buffers with up to 1.8 ns slew on
+  the critical path).
+- `TIMING_VIOLATION_CORNERS` `['*typ*']` -> `['*']`: the flow now fails on a
+  violation at any corner, which is what our own merge rule (D-037) already
+  asked for.
+- `CTS_ROOT_BUFFER` `buf_8` -> `buf_16`; the PDK comes from ciel; IO
+  liberty files are now read for timing (`PAD_LIBS`). The `FP_PDN_*` keys of
+  `config.json` are reported deprecated and were translated to `PDN_*` with
+  our values (67.44 / 26.36 / 3.52 / 2.1).
+
+Not merged (D-037). What to do is open as DECISIONS D-048.
+

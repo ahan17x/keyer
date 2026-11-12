@@ -904,3 +904,40 @@ that every mode 0 master already obeys is the simplest, and it costs no
 silicon change six weeks before the freeze. Option 3's one line can ride
 on the next change that touches `keyer_host.v` for another reason, if
 there is one; it is not worth a hardening run of its own.
+
+## D-048 2026-11-12 OPEN: the `ttihp27a` flow misses the slow corner by 1.61 ns (not implemented; for Ahan)
+
+**What happened.** The first run on the new flow (D-046), 43211201559, on
+the RTL and `config.json` of master, failed: setup -1.61 ns at
+`nom_slow_1p08V_125C` (2 endpoints, both from the macro's `A_DOUT[10]`),
+where the old flow gave +1.09 ns; typical +6.64 (was +8.24), fast +11.42
+(was +12.43); 16,480 cells (was 15,109), 29.3% (was 27.2%). Details in
+docs/AREA.md. The largest change is synthesis: LibreLane 3.1.0.dev4
+defaults to `SYNTH_STRATEGY` `DELAY 4`, dev3 to `AREA 0` (FACTS T12), and
+our `config.json` has never set it. The new flow also fails on a violation
+at any corner (`TIMING_VIOLATION_CORNERS` `['*']`), which only makes the
+flow say what D-037 already required.
+
+**Options.**
+
+1. Set `"SYNTH_STRATEGY": "AREA 0"` in `src/config.json` on
+   `flow-ttihp27a`, with a comment naming this entry: the strategy every
+   signed-off run of this design used. One hardening run; merge by D-037 if
+   it meets all corners. Not proved to be enough: the PDK version, the CTS
+   root buffer and the IO timing also changed, so the slow corner may come
+   back below +1.09. `config.json` beyond `CLOCK_PERIOD` and
+   `PL_TARGET_DENSITY_PCT` needs your word (CLAUDE.md), as D-041 and D-043
+   had it.
+2. `CLOCK_PERIOD` 20 -> 22 ns (allowed by CLAUDE.md with an entry).
+   Rejected as a proposal: the USB device needs 48 MHz (20.83 ns) and the
+   Ethernet transmitter 40 or 20 MHz; the datasheet's 50 MHz goes with it.
+3. Try several strategies (`AREA 1` to `3`, `DELAY 0` to `3`), one run each,
+   and keep the best. Two hours of the runner per try, for a margin option 1
+   may already give.
+4. Stay on `@ihp-cmos5l` (reverse D-046) and record that the shuttle's flow
+   does not meet the slow corner with our settings. The organisers re-harden
+   on their flow; a silent violation there is worse than one found now.
+
+**Recommendation.** Option 1 now; if its slow corner is under +0.5 ns or
+negative, option 3 with `AREA 1` and `AREA 2` before anything else. The
+D-045 run (8x4) follows on whichever setting wins.
