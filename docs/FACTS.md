@@ -18,6 +18,10 @@ without a row here with a fetched source. A fact from memory is entered as
 - `unverified`: no primary source could be reached; the row says what was
   relied on instead. A fetched secondary source is still `unverified`.
 
+**Count (end of session 8).** 92 rows: 68 verified, 3 computed (E7, E14,
+P2), 20 unverified (E1 to E6, E9 to E11, E13, P1, P3, P7, P8, O3, O5 to
+O8, G4), and P6, which is not an external fact. 25 sources (S1 to S25).
+
 Quotes are held to the few words that carry the fact (the documents are
 copyrighted); the section number finds the rest. Line numbers are those of
 the commit that added this file.
@@ -214,9 +218,21 @@ the standard-cell liberty was fetched from the PDK's `dev` branch (S16).
 - C6, C8: `docs/SUBMISSION.md` gains a draft of the description of AI use
   the post asks for, and the contact address (BUGS 54).
 - C3, T11: two upstream changes of 2026-10-28 to 2026-11-09 (8x4 tiles; the
-  template's `ttihp27a` action with a tenth precheck) are open decisions
-  D-045 and D-046. Nothing under `src/`, `info.yaml` or `.github/` was
-  changed by the audit.
+  template's `ttihp27a` action with a tenth precheck) became decisions
+  D-045 (open) and D-046 (Ahan: follow the template, on branch
+  `flow-ttihp27a`).
+- T12, T13: following the template exposed two changes nobody had
+  written down: LibreLane 3.1.0.dev4 synthesises with `DELAY 4` where dev3
+  used `AREA 0`, and the flow places and repairs for the typical corner
+  only unless `PNR_CORNERS` is set, while the new PDK fails a run on a
+  violation at any corner. The design missed the slow corner on the new
+  flow (-1.61 ns; -2.52 with `AREA 0`, D-048) with identical cell
+  libraries, LEF, extraction rules and SDC (all compared at both PDK
+  commits). D-049 sets `PNR_CORNERS` on the branch. Master's `src/` and
+  `.github/` are unchanged until that branch merges.
+- T14 to T16: Tiny Tapeout documents LibreLane 3.1.0.dev4 for SG13CMOS5L;
+  no source says whether the old flow is still accepted for TTIHP27a
+  (D-050).
 - Every `unverified` row is marked in the file that uses it:
   `tools/protomodels_eth_10bt.py`, `fw/eth_10bt_tx.s`, `docs/SERIALIZER.md`
   (802.3: E1 to E6, E9 to E11, E13); `tools/protomodels.py` (UART, SPI,
@@ -229,4 +245,6 @@ the standard-cell liberty was fetched from the PDK's `dev` branch (S16).
 
 No row came out wrong in a way that touches the contract, the model or the
 RTL: the wrong rows were a firmware comment (U10), a planning estimate (T1)
-and the picture of the competition's rules (C3, C6, T11).
+and the picture of the competition's rules and the flow (C3, C6, T11 to
+T13). The contract change of this session (SEMANTICS 0.5.1, D-047) came
+from the proof campaign, not from an external fact.
